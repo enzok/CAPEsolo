@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PoetryConfigService">
+    <option name="poetryVirtualenvPaths">
+      <set>
+        <option value="C:\Users\lkuca\AppData\Local\pypoetry\Cache\virtualenvs\capesolo-4uwPESC4-py3.10\Scripts\python.exe" />
+        <option value="$USER_HOME$/AppData/Local/pypoetry/Cache/virtualenvs/capesolo-4uwPESC4-py3.10/Scripts/python.exe" />
+      </set>
+    </option>
+  </component>
+</project>
