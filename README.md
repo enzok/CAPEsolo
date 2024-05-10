@@ -9,7 +9,7 @@ Python GUI to run capemon in standalone VM.
 * Snapshot your VM.
 
 Quick Start 
-* Type capesolo <return> to run
+* Type capesolo <return> to run.
 
 Alternatively, create a shortcut to CAPEsolo.exe, which will be in the same location as your python.exe file.
 * Under Advanced, check 'Run as administrator'
