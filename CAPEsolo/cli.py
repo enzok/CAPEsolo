@@ -24,6 +24,7 @@ import re
 import shutil
 import sys
 import textwrap
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from threading import Thread
@@ -44,6 +45,7 @@ from capelib.cape_utils import (
 from capelib.behavior import BehaviorAnalysis
 from capelib.objects import File
 from capelib.parse_pe import IsPEImage, PortableExecutable
+from capelib.path_utils import path_mkdir
 from capelib.resultserver import ResultServer
 from capelib.utils import convert_to_printable
 from capelib.yaralib import YaraProcessor
@@ -66,16 +68,16 @@ CONFIG_HITS = []
 RESULTS = {}
 
 
-def GetPreviousTarget():
+def GetPreviousTarget(analysisDir):
     global TARGET_FILE
-    for path in Path(ANALYSIS_DIR).glob("s_*"):
+    for path in Path(analysisDir).glob("s_*"):
         if path.is_file():
             return path
     return None
 
 
-def LoadFilesJson():
-    filePath = Path(ANALYSIS_DIR) / "files.json"
+def LoadFilesJson(analysisDir):
+    filePath = Path(analysisDir) / "files.json"
     if filePath.exists():
         content = {}
         try:
@@ -110,10 +112,11 @@ class KeyEventHandlerMixin:
 
 
 class ProcessYara:
-    def __init__(self):
+    def __init__(self, analysisDir):
         self.yara = YaraProcessor()
         self.yara.init_yara()
         self.yara_results = []
+        self.analysisDir = analysisDir
 
     def Scan(self, target):
         hits = {}
@@ -122,11 +125,11 @@ class ProcessYara:
 
     def ScanDumps(self):
         hits = {}
-        content = LoadFilesJson()
+        content = LoadFilesJson(self.analysisDir)
         if "error" not in content.keys():
             for file in content.keys():
                 if content[file].get("category", "") in ("files", "CAPE", "procdump"):
-                    path = os.path.join(ANALYSIS_DIR, file)
+                    path = os.path.join(self.analysisDir, file)
                     hits[file] = self.yara.get_yara(path)
                     self.yara_results.append({file: hits[file]})
 
@@ -218,7 +221,7 @@ class PayloadsPanel(wx.Panel):
     def LoadAndDisplayContent(self):
         if self.payloadsLoaded:
             return
-        data = LoadFilesJson()
+        data = LoadFilesJson(self.analysisDir)
         if "error" in data:
             return
         for key, value in data.items():
@@ -1472,8 +1475,9 @@ class StartPanel(wx.Panel):
         super().__init__(parent)
         self.parent = parent
         self.curDir = True
-        self.analysisDir = self.parent.analysisDir
-        TARGET_FILE = GetPreviousTarget()
+        self.analysisDir = parent.analysisDir
+        self.debug = parent.debug
+        TARGET_FILE = GetPreviousTarget(self.analysisDir)
         self.InitUi()
         self.LoadAnalysisConfFile()
         self.Bind(EVT_ANALYZER_COMPLETE, self.OnAnalyzerComplete)
@@ -1799,7 +1803,7 @@ class StringsPanel(wx.Panel, KeyEventHandlerMixin):
     def __init__(self, parent):
         super(StringsPanel, self).__init__(parent)
         self.parent = parent
-        self.analysisDir = self.parent.analysisDir
+        self.analysisDir = parent.analysisDir
         self.BindKeyEvents()
         self.InitUI()
 
@@ -1829,7 +1833,7 @@ class StringsPanel(wx.Panel, KeyEventHandlerMixin):
 
     def PopulateFileDropdown(self):
         stringFiles = [str(TARGET_FILE)]
-        data = LoadFilesJson()
+        data = LoadFilesJson(self.analysisDir)
         if "error" not in data:
             for file in data.keys():
                 if data[file].get("category", "") in ("files", "CAPE", "procdump"):
@@ -1945,7 +1949,6 @@ class MainFrame(wx.Frame):
         kwargs["title"] = f"Capesolo - v{self.version}"
         super(MainFrame, self).__init__(*args, **kwargs)
         self.logger_window = None
-        self.analysisDir = os.path.join(os.getcwd(), "analysis")
         self.GetConfig()
         self.CreateAnalysisDirectory()
         self.InitUi()
@@ -1955,7 +1958,8 @@ class MainFrame(wx.Frame):
         self.panel = wx.Panel(self)
         self.notebook = wx.Notebook(self.panel)
         self.notebook.analysisDir = self.analysisDir
-        self.notebook.yara = ProcessYara()
+        self.notebook.debug = self.debug
+        self.notebook.yara = ProcessYara(self.analysisDir)
         self.startTab = StartPanel(self.notebook)
         self.notebook.AddPage(self.startTab, "Start")
         self.infoTab = TargetInfoPanel(self.notebook)
@@ -2001,14 +2005,13 @@ class MainFrame(wx.Frame):
         event.Skip()
 
     def CreateAnalysisDirectory(self):
-        apath = Path(self.analysisDir)
-        if not apath.exists():
-            apath.mkdir()
+       with suppress(FileExistsError):
+           path_mkdir(self.analysisDir)
 
     def GetConfig(self):
         configFile = os.path.join(CAPESOLO_ROOT, "cfg.ini")
         g_config = ConfigReader(configFile)
-        analysisDir = g_config.analysis_dir.analysis
+        analysisDir = g_config.analysis_directory.analysis
         if analysisDir:
             self.analysisDir = analysisDir
         self.debug = g_config.debug.enabled
