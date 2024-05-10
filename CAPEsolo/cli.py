@@ -342,7 +342,7 @@ class PayloadsPanel(wx.Panel):
 class YaraPanel(wx.Panel):
     def __init__(self, parent):
         super(YaraPanel, self).__init__(parent)
-        self.parent = parent
+        self.yara = parent.yara
         self.analysisDir = parent.analysisDir
         self.yaraComplete = False
         self.filesjson = Path(self.analysisDir) / "files.json"
@@ -366,7 +366,7 @@ class YaraPanel(wx.Panel):
 
     def PrintResults(self):
         global CONFIG_HITS
-        yaras = self.parent.yara.yara_results
+        yaras = self.yara.yara_results
         content = ""
         for filehits in yaras:
             paths = filehits.keys()
@@ -392,10 +392,10 @@ class YaraPanel(wx.Panel):
 
     def ProcessYara(self, event):
         try:
-            self.parent.yara.Scan(str(TARGET_FILE))
+            self.yara.Scan(str(TARGET_FILE))
         except FileNotFoundError:
             print("Target not found. This may be normal.")
-        self.parent.yara.ScanDumps()
+        self.yara.ScanDumps()
         content = self.PrintResults()
         self.resultsWindow.SetValue(content)
         self.yaraButton.Disable()
@@ -411,7 +411,6 @@ class YaraPanel(wx.Panel):
 class ConfigsPanel(wx.Panel):
     def __init__(self, parent):
         super(ConfigsPanel, self).__init__(parent)
-        self.parent = parent
         self.analysisDir = parent.analysisDir
         self.configsComplete = False
         self.InitUI()
@@ -498,7 +497,7 @@ class GridSearchDialog(wx.Dialog):
             size=(400, 100),
             style=wx.DEFAULT_DIALOG_STYLE | wx.STAY_ON_TOP,
         )
-        self.parent = parent
+        self.grid = parent.grid
         self.InitUi()
         self.lastRow = 0
         self.lastCol = -1
@@ -534,8 +533,8 @@ class GridSearchDialog(wx.Dialog):
 
     def Search(self, searchText, findNext=True):
         if searchText:
-            rows = self.parent.grid.GetNumberRows()
-            cols = self.parent.grid.GetNumberCols()
+            rows = self.grid.GetNumberRows()
+            cols = self.grid.GetNumberCols()
             start_row, start_col = (
                 self.lastRow,
                 self.lastCol + 1,
@@ -545,13 +544,13 @@ class GridSearchDialog(wx.Dialog):
                 for col in range(start_col if row == start_row else 0, cols):
                     if (
                         searchText.lower()
-                        in self.parent.grid.GetCellValue(row, col).lower()
+                        in self.grid.GetCellValue(row, col).lower()
                     ):
-                        self.parent.grid.SetGridCursor(row, col)
-                        self.parent.grid.SelectBlock(row, col, row, col)
-                        self.parent.grid.MakeCellVisible(row, col)
-                        self.parent.grid.SetFocus()
-                        self.parent.grid.ForceRefresh()
+                        self.grid.SetGridCursor(row, col)
+                        self.grid.SelectBlock(row, col, row, col)
+                        self.grid.MakeCellVisible(row, col)
+                        self.grid.SetFocus()
+                        self.grid.ForceRefresh()
                         self.lastRow, self.lastCol = (row, col)
                         return
                 start_col = 0
@@ -570,7 +569,6 @@ class GridSearchDialog(wx.Dialog):
 class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
     def __init__(self, parent):
         super(BehaviorPanel, self).__init__(parent)
-        self.parent = parent
         self.analysisDir = parent.analysisDir
         self.BindKeyEvents()
         self.behaviorComplete = False
@@ -906,7 +904,7 @@ class SearchDialog(wx.Dialog):
             size=(400, 100),
             style=wx.DEFAULT_DIALOG_STYLE | wx.STAY_ON_TOP,
         )
-        self.parent = parent
+        self.resultsWindow = parent.resultsWindow
         self.lastFoundPos = -1
         self.InitUi()
         self.findWindow.Bind(wx.EVT_TEXT_ENTER, self.OnFind)
@@ -938,7 +936,7 @@ class SearchDialog(wx.Dialog):
 
     def FindText(self, startPos=0):
         searchText = self.findWindow.GetValue()
-        content = self.parent.resultsWindow.GetValue()
+        content = self.resultsWindow.GetValue()
         self.lastFoundPos = content.find(searchText, startPos)
         self.HighlightText()
 
@@ -946,7 +944,7 @@ class SearchDialog(wx.Dialog):
         if self.lastFoundPos != -1:
             searchText = self.findWindow.GetValue()
             searchTextLength = len(searchText)
-            textCtrl = self.parent.resultsWindow
+            textCtrl = self.resultsWindow
             backgroundColor = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW)
             textCtrl.SetStyle(
                 self.lastFoundPos,
@@ -996,7 +994,6 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         **kwargs,
     ):
         super(PeWindow, self).__init__(parent, title=title, *args, **kwargs)
-        self.parent = parent
         self.data = PortableExecutable(str(filepath)).run()
         self.panel = scrolled.ScrolledPanel(self, -1)
         self.panel.SetAutoLayout(1)
@@ -1333,7 +1330,6 @@ class LoggerWindow(wx.Frame, KeyEventHandlerMixin):
         self, parent, title, main_window_position, main_window_size, *args, **kwargs
     ):
         super(LoggerWindow, self).__init__(parent, title=title, *args, **kwargs)
-        self.parent = parent
         self.BindKeyEvents()
         self.main_window_position = main_window_position
         self.main_window_size = main_window_size
@@ -1473,7 +1469,6 @@ class StartPanel(wx.Panel):
     def __init__(self, parent):
         global TARGET_FILE
         super().__init__(parent)
-        self.parent = parent
         self.curDir = True
         self.analysisDir = parent.analysisDir
         self.debug = parent.debug
@@ -1802,7 +1797,6 @@ class StartPanel(wx.Panel):
 class StringsPanel(wx.Panel, KeyEventHandlerMixin):
     def __init__(self, parent):
         super(StringsPanel, self).__init__(parent)
-        self.parent = parent
         self.analysisDir = parent.analysisDir
         self.BindKeyEvents()
         self.InitUI()
@@ -1890,7 +1884,6 @@ class StringsPanel(wx.Panel, KeyEventHandlerMixin):
 class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
     def __init__(self, parent):
         super(DebuggerPanel, self).__init__(parent)
-        self.parent = parent
         self.analysisDir = parent.analysisDir
         self.BindKeyEvents()
         self.InitUI()
@@ -1948,6 +1941,7 @@ class MainFrame(wx.Frame):
         self.version = Path("version.txt").read_text()
         kwargs["title"] = f"Capesolo - v{self.version}"
         super(MainFrame, self).__init__(*args, **kwargs)
+        self.SetAppIcon()
         self.logger_window = None
         self.GetConfig()
         self.CreateAnalysisDirectory()
@@ -2015,6 +2009,12 @@ class MainFrame(wx.Frame):
         if analysisDir:
             self.analysisDir = analysisDir
         self.debug = g_config.debug.enabled
+
+    def SetAppIcon(self):
+        icon = wx.Icon()
+        iconPath = os.path.join(CAPESOLO_ROOT, "capesolo.png")
+        icon.LoadFile(iconPath, wx.BITMAP_TYPE_PNG)
+        self.SetIcon(icon)
 
     def OnClose(self, event):
         self.Destroy()
