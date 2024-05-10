@@ -24,12 +24,14 @@ import re
 import shutil
 import sys
 import textwrap
+import time
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from threading import Thread
 
 import wx
+import wx.adv
 import wx.grid as gridlib
 import wx.lib.scrolledpanel as scrolled
 
@@ -96,6 +98,31 @@ def LoadFilesJson(analysisDir):
             return {"error": "Corrupt analysis/files.json"}
     else:
         return {"error": "No dump files"}
+
+
+class SplashScreen(wx.adv.SplashScreen):
+    def __init__(self):
+        bitmap = wx.Bitmap(os.path.join(CAPESOLO_ROOT, "capesolo.png"))
+        super().__init__(
+            bitmap,
+            wx.adv.SPLASH_CENTRE_ON_SCREEN | wx.adv.SPLASH_TIMEOUT,
+            3000,
+            None,
+            -1,
+        )
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
+        self.fc = wx.CallLater(1000, self.UpdateCountdown, 2)
+
+    def OnClose(self, event):
+        self.fc.Stop()
+        event.Skip()
+
+    def UpdateCountdown(self, count):
+        if count > 0:
+            self.fc.Restart(1000, self.UpdateCountdown, count - 1)
+            print(f"{count}...")
+        else:
+            self.Close()
 
 
 class KeyEventHandlerMixin:
@@ -175,6 +202,9 @@ class CapesoloApp(wx.App):
         FONT_COURIER = wx.Font(
             10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL
         )
+        splash = SplashScreen()
+        splash.Show()
+        time.sleep(3)
         frame = MainFrame(None, size=(600, 800))
         frame.Show()
         return True
@@ -542,10 +572,7 @@ class GridSearchDialog(wx.Dialog):
 
             for row in range(start_row, rows):
                 for col in range(start_col if row == start_row else 0, cols):
-                    if (
-                        searchText.lower()
-                        in self.grid.GetCellValue(row, col).lower()
-                    ):
+                    if searchText.lower() in self.grid.GetCellValue(row, col).lower():
                         self.grid.SetGridCursor(row, col)
                         self.grid.SelectBlock(row, col, row, col)
                         self.grid.MakeCellVisible(row, col)
@@ -1495,7 +1522,7 @@ class StartPanel(wx.Panel):
         self.PackageDropdown()
         self.packageDropdown.SetValue("exe")
         self.runFromCurrentDirCheckbox = wx.CheckBox(
-            self, label="Run from current directory"
+            self, label="Run sample from current directory"
         )
         self.runFromCurrentDirCheckbox.Bind(wx.EVT_CHECKBOX, self.OnCheckboxClick)
         hbox2.Add(package_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10)
@@ -1506,7 +1533,7 @@ class StartPanel(wx.Panel):
 
         # Optional Arguments Input
         hbox3 = wx.BoxSizer(wx.HORIZONTAL)
-        args_label = wx.StaticText(self, label="Options:")
+        args_label = wx.StaticText(self, label="Options")
         self.optionsCtrl = wx.TextCtrl(
             self,
             value="option1=value, option2=value, etc...",
@@ -1559,9 +1586,7 @@ class StartPanel(wx.Panel):
         self.SetSizer(vbox)
 
     def OnCheckboxClick(self, event):
-        # Update self.curDir based on the checkbox state
         self.curDir = self.runFromCurrentDirCheckbox.GetValue()
-        print("Run from current directory:", self.curDir)
 
     def OnAnalyzerComplete(self, event):
         from analyzer import (
@@ -1687,7 +1712,9 @@ class StartPanel(wx.Panel):
 
     def CopyTarget(self):
         global TARGET_FILE
-        TARGET_FILE = Path(self.analysisDir) / f"s_{hash_file(hashlib.sha256, self.target)}"
+        TARGET_FILE = (
+            Path(self.analysisDir) / f"s_{hash_file(hashlib.sha256, self.target)}"
+        )
         shutil.copy(self.target, TARGET_FILE)
 
     def StartAnalysis(self):
@@ -1999,8 +2026,8 @@ class MainFrame(wx.Frame):
         event.Skip()
 
     def CreateAnalysisDirectory(self):
-       with suppress(FileExistsError):
-           path_mkdir(self.analysisDir)
+        with suppress(FileExistsError):
+            path_mkdir(self.analysisDir)
 
     def GetConfig(self):
         configFile = os.path.join(CAPESOLO_ROOT, "cfg.ini")
