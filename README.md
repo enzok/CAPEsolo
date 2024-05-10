@@ -6,10 +6,15 @@ Python GUI to run capemon in standalone VM.
 * Download package file from Releases.
 * pip install capesolo-[version]-py3-none.any.whl
 * Copy bin\libmagic.dll and bin\magic.mgc to Windows syswow64 directory.
+* Snapshot your VM.
 
 Quick Start 
-* Specify ANALYSIS_DIR in cfg.ini ([python path]\site-packages\CAPEsolo)
 * Type capesolo <return> to run
 
 Alternatively, create a shortcut to CAPEsolo.exe, which will be in the same location as your python.exe file.
-*   Under Advanced, check 'Run as administrator'
+* Under Advanced, check 'Run as administrator'
+
+Analysis results are found in C:\Users\Public\CAPEsolo\analysis.
+* Can be configured in python-path\site-packages\CAPEsolo\cfg.ini
+
+Revert the VM after each analysis.
