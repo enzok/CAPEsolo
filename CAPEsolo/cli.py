@@ -106,7 +106,7 @@ class SplashScreen(wx.adv.SplashScreen):
         super().__init__(
             bitmap,
             wx.adv.SPLASH_CENTRE_ON_SCREEN | wx.adv.SPLASH_TIMEOUT,
-            3000,
+            2000,
             None,
             -1,
         )
@@ -204,7 +204,7 @@ class CapesoloApp(wx.App):
         )
         splash = SplashScreen()
         splash.Show()
-        time.sleep(3)
+        time.sleep(2)
         frame = MainFrame(None, size=(600, 800))
         frame.Show()
         return True
