@@ -3,13 +3,15 @@
 # See the file 'docs/LICENSE' for copying permission.
 
 import errno
+import json
 import logging
 import os
 import string
 import time
+from pathlib import Path
 
-from .path_utils import path_is_dir, path_mkdir
 from . import utils_dicts, utils_pretty_print_funcs as pp_funcs
+from .path_utils import path_is_dir, path_mkdir
 
 log = logging.getLogger(__name__)
 PRINTABLE_CHARACTERS = (
@@ -375,3 +377,25 @@ def default_converter(v):
     if isinstance(v, int) or issubclass(type(v), int):
         return v & 0xFFFFFFFFFFFFFFFF if v & 0xFFFFFFFF00000000 else v & 0xFFFFFFFF
     return v
+
+
+def LoadFilesJson(analysisDir):
+    filePath = Path(analysisDir) / "files.json"
+    if filePath.exists():
+        content = {}
+        try:
+            for line in open(filePath, "rb"):
+                entry = json.loads(line)
+                filePath = os.path.join(entry["path"])
+                content[filePath] = {
+                    "pids": entry.get("pids"),
+                    "ppids": entry.get("ppids"),
+                    "filepath": entry.get("filepath", ""),
+                    "metadata": entry.get("metadata", {}),
+                    "category": entry.get("category", ""),
+                }
+            return content
+        except Exception as e:
+            return {"error": "Corrupt analysis/files.json"}
+    else:
+        return {"error": "No dump files"}
