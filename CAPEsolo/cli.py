@@ -26,6 +26,7 @@ import sys
 import textwrap
 import time
 from contextlib import suppress
+from ctypes import windll
 from datetime import datetime
 from pathlib import Path
 from threading import Thread
@@ -202,10 +203,18 @@ class CapesoloApp(wx.App):
         FONT_COURIER = wx.Font(
             10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL
         )
+        hWnd = windll.kernel32.GetConsoleWindow()
+        windll.user32.ShowWindow(hWnd, 6)
         splash = SplashScreen()
         splash.Show()
         time.sleep(2)
-        frame = MainFrame(None, size=(600, 800))
+        screenWidth, screenHeight = wx.DisplaySize()
+        frameWidth = int(screenWidth * 0.3)
+        frameHeight = int(screenHeight * 0.75)
+        frame = MainFrame(None, size=(frameWidth, frameHeight))
+        frameX = int(screenWidth * 0.01)
+        frameY = int(screenHeight * 0.02)
+        frame.SetPosition((frameX, frameY))
         frame.Show()
         return True
 
@@ -1384,7 +1393,7 @@ class LoggerWindow(wx.Frame, KeyEventHandlerMixin):
         )
 
         self.main_window_position.x += self.main_window_size.x
-        self.SetSize(self.main_window_size)
+        self.SetSize(int(self.main_window_size.x * 2.25), self.main_window_size.y)
         self.SetPosition(self.main_window_position)
 
     def OnSaveLog(self, event):
@@ -2039,7 +2048,7 @@ class MainFrame(wx.Frame):
 
     def SetAppIcon(self):
         icon = wx.Icon()
-        iconPath = os.path.join(CAPESOLO_ROOT, "capesolo.png")
+        iconPath = os.path.join(CAPESOLO_ROOT, "cape_logo.png")
         icon.LoadFile(iconPath, wx.BITMAP_TYPE_PNG)
         self.SetIcon(icon)
 
