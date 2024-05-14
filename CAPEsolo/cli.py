@@ -211,6 +211,8 @@ class CapesoloApp(wx.App):
         screenWidth, screenHeight = wx.DisplaySize()
         frameWidth = int(screenWidth * 0.3)
         frameHeight = int(screenHeight * 0.75)
+        if frameWidth < 460:
+            frameWidth = 460
         frame = MainFrame(None, size=(frameWidth, frameHeight))
         frameX = int(screenWidth * 0.01)
         frameY = int(screenHeight * 0.02)
@@ -1061,7 +1063,8 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
 
         self.panel.SetSizer(self.vbox)
         self.main_window_position.x += self.main_window_size.x
-        self.SetSize(self.main_window_size)
+        screenWidth, _ = wx.DisplaySize()
+        self.SetSize(int(screenWidth * 0.98 - self.main_window_size.x), self.main_window_size.y)
         self.SetPosition(self.main_window_position)
 
     def CreateGrids(self, data):
@@ -1393,7 +1396,8 @@ class LoggerWindow(wx.Frame, KeyEventHandlerMixin):
         )
 
         self.main_window_position.x += self.main_window_size.x
-        self.SetSize(int(self.main_window_size.x * 2.25), self.main_window_size.y)
+        screenWidth, _ = wx.DisplaySize()
+        self.SetSize(int(screenWidth * 0.98 - self.main_window_size.x), self.main_window_size.y)
         self.SetPosition(self.main_window_position)
 
     def OnSaveLog(self, event):
