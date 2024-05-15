@@ -2,7 +2,7 @@
 # This file is part of Cuckoo Sandbox - http://www.cuckoosandbox.org
 # See the file 'docs/LICENSE' for copying permission.
 
-import capelib.utils_dicts as utils_dicts
+import CAPEsolo.capelib.utils_dicts as utils_dicts
 
 
 def api_name_ntcreatesection_arg_name_desiredaccess(arg_val):
