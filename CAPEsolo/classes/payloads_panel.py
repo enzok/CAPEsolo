@@ -26,6 +26,7 @@ class PayloadsPanel(wx.Panel):
         self.panel.SetAutoLayout(1)
         self.panelsizer = wx.BoxSizer(wx.VERTICAL)
         self.panel.SetSizer(self.panelsizer)
+        self.panel.Hide()
         self.vbox = wx.BoxSizer(wx.VERTICAL)
         self.vbox.AddSpacer(10)
         self.vbox.Add(self.panel, 1, wx.EXPAND | wx.ALL, 10)
@@ -78,7 +79,7 @@ class PayloadsPanel(wx.Panel):
                 if "cape_type_string" in cape_info:
                     cape_type = cape_info.get("cape_type_string", "N/A")
                     self.AddNewRow(grid, "CAPE Type", cape_type)
-                    capename = get_cape_name_from_cape_type(cape_type)
+                    capename = get_cape_name_from_cape_type(cape_type).split(" ")[0]
                     self.parent.configHits.append({filepath: capename})
 
                 if "target_path" in cape_info:
@@ -126,6 +127,7 @@ class PayloadsPanel(wx.Panel):
                 self.panelsizer.AddSpacer(5)
 
         self.panel.Layout()
+        self.panel.Show()
         self.Layout()
         self.payloadsLoaded = True
 
