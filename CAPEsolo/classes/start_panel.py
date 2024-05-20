@@ -79,7 +79,7 @@ class StartPanel(wx.Panel):
             style=wx.TE_PROCESS_ENTER,
         )
         self.optionsCtrl.Bind(wx.EVT_LEFT_DOWN, self.OnOptionInputClick)
-        self.optionsCtrl.Bind(wx.EVT_SET_FOCUS, self.OnOptionInputFocus)
+        self.optionsCtrl.Bind(wx.EVT_KILL_FOCUS, self.OnOptionInputFocus)
         hbox3.Add(args_label, flag=wx.RIGHT, border=5)
         hbox3.Add(self.optionsCtrl, proportion=1, flag=wx.EXPAND)
 
@@ -200,8 +200,8 @@ class StartPanel(wx.Panel):
         event.Skip()
 
     def OnOptionInputFocus(self, event):
-        if self.optionsCtrl.GetValue() == "option1=value, option2=value, etc...":
-            self.optionsCtrl.SetValue("")
+        if self.optionsCtrl.GetValue() == "":
+            self.optionsCtrl.SetValue("option1=value, option2=value, etc...")
         event.Skip()
 
     def PackageDropdown(self):
@@ -237,7 +237,7 @@ class StartPanel(wx.Panel):
             self,
             "Choose a file",
             wildcard="*.*",
-            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST | wx.FD_NO_FOLLOW,
             defaultDir=str(initialDir),
         ) as fileDialog:
             if fileDialog.ShowModal() == wx.ID_CANCEL:
@@ -288,11 +288,14 @@ class StartPanel(wx.Panel):
         filename = self.targetPath.GetValue()
         conf = self.analysisEditor.GetValue()
         package = self.packageDropdown.GetValue()
-        self.OnOptionInputClick(event)
         user_options = self.optionsCtrl.GetValue()
+        sep = ","
+        if user_options == "option1=value, option2=value, etc...":
+            user_options = ""
+            sep = ""
         if self.curDir:
             curdir = Path(filename).parent
-            user_options += f", curdir={curdir}"
+            user_options += f"{sep}curdir={curdir}"
         conf += f"\nfile_name = {filename}"
         conf += f"\nclock = {formatted_datetime}"
         conf += f"\npackage = {package}"
