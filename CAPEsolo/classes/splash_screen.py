@@ -23,6 +23,5 @@ class SplashScreen(wx.adv.SplashScreen):
     def UpdateCountdown(self, count):
         if count > 0:
             self.fc.Restart(1000, self.UpdateCountdown, count - 1)
-            print(f"{count}...")
         else:
             self.Close()

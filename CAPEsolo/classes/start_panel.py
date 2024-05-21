@@ -56,7 +56,7 @@ class StartPanel(wx.Panel):
         hbox1.Add(browse_btn, proportion=0)
 
         hbox2 = wx.BoxSizer(wx.HORIZONTAL)
-        package_label = wx.StaticText(self, label="Packages")
+        packageLabel = wx.StaticText(self, label="Packages")
         self.packageDropdown = wx.ComboBox(self, style=wx.CB_READONLY)
         self.PackageDropdown()
         self.packageDropdown.SetValue("exe")
@@ -65,7 +65,7 @@ class StartPanel(wx.Panel):
         )
         self.runFromCurrentDirCheckbox.Bind(wx.EVT_CHECKBOX, self.OnCheckboxClick)
         self.runFromCurrentDirCheckbox.SetValue(True)
-        hbox2.Add(package_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10)
+        hbox2.Add(packageLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10)
         hbox2.Add(
             self.packageDropdown, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=10
         )
@@ -86,20 +86,25 @@ class StartPanel(wx.Panel):
 
         # analysis.conf editor
         hbox4 = wx.BoxSizer(wx.HORIZONTAL)
-        analysis_conf_label = wx.StaticText(self, label="analysis.conf")
+        analysisConfLabel = wx.StaticText(self, label="analysis.conf")
         self.analysisEditor = wx.TextCtrl(self, style=wx.TE_MULTILINE, size=(-1, 100))
         hbox4.Add(
             self.analysisEditor, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5
         )
 
         hbox5 = wx.BoxSizer(wx.HORIZONTAL)
-        self.launch_analyzer_btn = wx.Button(self, label="Launch")
-        self.launch_analyzer_btn.Disable()
-        self.launch_analyzer_btn.Bind(wx.EVT_BUTTON, self.OnLaunchAnalyzer)
+        self.launchAnalyzerBtn = wx.Button(self, label="Launch")
+        self.launchAnalyzerBtn.Disable()
+        self.launchAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnLaunchAnalyzer)
+        self.terminateAnalyzerBtn = wx.Button(self, label="Kill")
+        self.terminateAnalyzerBtn.Disable()
+        self.terminateAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnTerminateAnalyzer)
         hbox5.Add(
-            self.launch_analyzer_btn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5
+            self.launchAnalyzerBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5
         )
-
+        hbox5.AddStretchSpacer(1)
+        hbox5.Add(self.terminateAnalyzerBtn, proportion=0, flag=wx.EXPAND)
+        self.terminateAnalyzerBtn.Disable()
         # Debugger window
         self.debugWindow = wx.TextCtrl(
             self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.EXPAND, size=(-1, 100)
@@ -109,7 +114,7 @@ class StartPanel(wx.Panel):
         vbox.Add(hbox1, flag=wx.EXPAND | wx.ALL, border=10)
         vbox.Add(hbox2, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(hbox3, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
-        vbox.Add(analysis_conf_label, flag=wx.LEFT | wx.TOP, border=10)
+        vbox.Add(analysisConfLabel, flag=wx.LEFT | wx.TOP, border=10)
         vbox.Add(
             hbox4,
             proportion=1,
@@ -219,9 +224,9 @@ class StartPanel(wx.Panel):
         self.target = Path(selection)
 
         if self.target.exists() and self.target.is_file():
-            self.launch_analyzer_btn.Enable()
+            self.launchAnalyzerBtn.Enable()
         else:
-            self.launch_analyzer_btn.Disable()
+            self.launchAnalyzerBtn.Disable()
             wx.MessageBox(
                 f"The file {self.target} does not exist.",
                 "Error",
@@ -273,6 +278,7 @@ class StartPanel(wx.Panel):
             self.analyzer = Analyzer()
             self.analyzer.prepare()
             self.StartAnalyzerThread(self.analyzer)
+            self.terminateAnalyzerBtn.Enable()
             # os.unlink(ANALYSIS_CONF)
 
         except CuckooError:
@@ -302,6 +308,17 @@ class StartPanel(wx.Panel):
         conf += f"\npackage = {package}"
         conf += f"\noptions = {user_options}"
         self.analysisEditor.SetValue(conf)
+
+    def OnTerminateAnalyzer(self, event):
+        try:
+            idHash = "2b42b81577ab55cd2bcf2ac87b889bbb"
+            completeFolder = os.path.join(os.environ["TMP"], idHash)
+            Path(completeFolder).mkdir(exist_ok=True)
+            self.terminateAnalyzerBtn.Disable()
+        except Exception as e:
+            wx.MessageBox(
+                f"Could not terminate analyzer: {e}", "Error", wx.OK | wx.ICON_ERROR
+            )
 
     def OnLaunchAnalyzer(self, event):
         try:
