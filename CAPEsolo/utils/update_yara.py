@@ -33,12 +33,12 @@ def download_and_update_yara_files(yara_path, yara_url, yara_raw_url):
 def update_yara(root_path):
     yara_paths = [
         {
-            "yara_path": root_path / "data/yararules/CAPE",
+            "yara_path": root_path / "yara/CAPE",
             "yara_url": "https://github.com/kevoreilly/CAPEv2/tree/master/data/yara/CAPE",
             "yara_raw_url": "https://raw.githubusercontent.com/kevoreilly/CAPEv2/master/data/yara/CAPE/{0}",
         },
         {
-            "yara_path": root_path / "data/yararules/CAPEc",
+            "yara_path": root_path / "yara/CAPE_community",
             "yara_url": "https://github.com/CAPESandbox/community/tree/master/data/yara/CAPE",
             "yara_raw_url": "https://raw.githubusercontent.com/CAPESandbox/community/master/data/yara/CAPE/{0}",
         },

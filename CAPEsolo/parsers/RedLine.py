@@ -6,8 +6,8 @@ import logging
 import re
 from contextlib import suppress
 
-from lib.cuckoo.common.dotnet_utils import dotnet_user_strings
-from lib.cuckoo.common.integrations.strings import extract_strings
+from CAPEsolo.capelib.dotnet_utils import dotnet_user_strings
+from CAPEsolo.capelib.strings import extract_strings
 
 try:
     import dnfile

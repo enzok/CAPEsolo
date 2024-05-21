@@ -24,10 +24,11 @@ import struct
 import pefile
 import yara
 from Cryptodome.Cipher import ARC4
+from pathlib import Path
 
-from lib.cuckoo.common.constants import CUCKOO_ROOT
 
-yara_path = os.path.join(CUCKOO_ROOT, "data", "yara", "CAPE", "IcedID.yar")
+filepath = Path(os.path.dirname(__file__)).parent
+yara_path = os.path.join(filepath, "yara", "CAPE", "IcedID.yar")
 with open(yara_path, "r") as yara_rule:
     yara_rules = yara.compile(source=yara_rule.read())
 

@@ -17,6 +17,7 @@ cryptography = "^42.0.7"
 gevent = "^24.2.1"
 python-magic = "^0.4.27"
 requests = "^2.31.0"
+dnfile = "^0.15.0"
 
 [tool.poetry.scripts]
 CAPEsolo = "CAPEsolo.cli:main"

@@ -1,13 +1,13 @@
 from contextlib import suppress
 
-from lib.cuckoo.common.integrations.strings import extract_strings
+from CAPEsolo.capelib.strings import extract_strings
 
 
 def extract_config(data):
     config_dict = {}
     with suppress(Exception):
         if data[:2] == b"MZ":
-            lines = extract_strings(data=data, on_demand=True, minchars=3)
+            lines = extract_strings(data=data, minchars=3)
             if not lines:
                 return
         else:
