@@ -17,7 +17,7 @@ from struct import pack, unpack
 import pefile
 import yara
 
-from lib.cuckoo.common.integrations.lznt1 import lznt1
+from CAPEsolo.capelib.lznt1 import lznt1
 
 log = logging.getLogger(__name__)
 
@@ -529,8 +529,8 @@ def extract_config(data):
     payload_export_hash = decrypted_config[2:6]
     w_payload_filename_and_cmdline = ""
     sleep_after_injection = True if (flag & 0x100) != 0 else False
-    persistance = True if (flag & 1) != 0 else False
-    if persistance:
+    persistence = True if (flag & 1) != 0 else False
+    if persistence:
         w_payload_filename_and_cmdline = decrypted_config[6:0x210].split(b"\x00\x00")[0].replace(b"\x00", b"").decode()
     if (flag & 2) != 0:
         injection_method = "Reflective injection"
@@ -550,7 +550,7 @@ def extract_config(data):
         "Uncompressed data size": hex(u32(uncompressed_data_size)),
         "Rabbit key": binascii.hexlify(key).decode(),
         "Rabbit IV": binascii.hexlify(iv).decode(),
-        "Persistence": persistance,
+        "Persistence": persistence,
         "Sleep after injection": sleep_after_injection,
         "Injection method": injection_method,
     }

@@ -243,6 +243,20 @@ test = ["certifi", "pretend", "pytest (>=6.2.0)", "pytest-benchmark", "pytest-co
 test-randomorder = ["pytest-randomly"]
 
 [[package]]
+name = "dnfile"
+version = "0.15.0"
+description = "Parse .NET executable files."
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "dnfile-0.15.0-py3-none-any.whl", hash = "sha256:d60239de76035bed22f3c131925cf8d484f44a9da03c19659a01a615309add55"},
+    {file = "dnfile-0.15.0.tar.gz", hash = "sha256:e4ae8803a59d8f845c11524e8b007104b43c90adc2fb0a81dcdc2972c47dfc80"},
+]
+
+[package.dependencies]
+pefile = ">=2019.4.18"
+
+[[package]]
 name = "gevent"
 version = "24.2.1"
 description = "Coroutine-based network library"
@@ -882,4 +896,4 @@ testing = ["coverage (>=5.0.3)", "zope.event", "zope.testing"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "dfa547e93f04b6a83984f9c98b1f27e197dccb90169ed47f5d8f486eea44609a"
+content-hash = "043919913521aa6b9212358f2fb7a2e3bb5dd48b7499e377b2604a0e997f5759"

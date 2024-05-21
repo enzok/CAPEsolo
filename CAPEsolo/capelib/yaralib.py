@@ -61,7 +61,7 @@ class YaraProcessor(object):
         "49": "ERROR_REGULAR_EXPRESSION_TOO_COMPLEX",
     }
 
-    def __init__(self, yara_root="data/yararules"):
+    def __init__(self, yara_root="yara"):
         self.yara_root = yara_root
         self.yara_rules = {}
         self.init_yara()
@@ -83,10 +83,12 @@ class YaraProcessor(object):
         return new
 
     def init_yara(self):
-        """Generates index for yara signatures."""
-
-        categories = ("CAPEc", "CAPE")
         log.debug("Initializing Yara...")
+        categories = [
+            name
+            for name in os.listdir(self.yara_root)
+            if os.path.isdir(os.path.join(self.yara_root, name))
+        ]
 
         # Loop through all categories.
         for category in categories:
