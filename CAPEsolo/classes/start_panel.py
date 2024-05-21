@@ -64,6 +64,7 @@ class StartPanel(wx.Panel):
             self, label="Run sample from current directory"
         )
         self.runFromCurrentDirCheckbox.Bind(wx.EVT_CHECKBOX, self.OnCheckboxClick)
+        self.runFromCurrentDirCheckbox.SetValue(True)
         hbox2.Add(package_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10)
         hbox2.Add(
             self.packageDropdown, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=10
