@@ -1193,7 +1193,7 @@ class CommandPipeHandler:
             if event_handle:
                 KERNEL32.SetEvent(event_handle)
                 KERNEL32.CloseHandle(event_handle)
-                self.files.dump_files()
+                self.analyzer.files.dump_files()
         self.analyzer.process_lock.release()
 
     # Handle case of malware terminating a process -- notify the target
@@ -1246,7 +1246,7 @@ class CommandPipeHandler:
             return
 
         # Open the process and inject the DLL. Hope it enjoys it.
-        proc = Process(pid=process_id, tid=thread_id)
+        proc = Process(pid=process_id, thread_id=thread_id)
 
         filepath = proc.get_filepath()
         filename = os.path.basename(filepath)

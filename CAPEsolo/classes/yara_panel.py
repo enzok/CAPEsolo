@@ -72,7 +72,7 @@ class YaraPanel(wx.Panel):
         self.yaraComplete = True
 
     def UpdateYaraButtonState(self):
-        if not self.yaraComplete:
+        if not self.yaraComplete and self.parent.targetFile:
             self.yaraButton.Enable()
         else:
             self.yaraButton.Disable()

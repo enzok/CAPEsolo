@@ -31,7 +31,8 @@ class ConfigsPanel(wx.Panel):
         )
         self.resultsWindow.SetFont(fontCourier)
         vbox.Add(self.resultsWindow, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
-
+        content = "Extract after viewing Payloads."
+        self.resultsWindow.SetValue(content)
         self.SetSizer(vbox)
 
     def PrintResults(self, cfg):
@@ -50,6 +51,7 @@ class ConfigsPanel(wx.Panel):
 
     def ExtractConfigs(self, event):
         content = ""
+
         for hit in self.configHits:
             decoderModule = ""
             hitPath = list(hit.keys())[0]
@@ -82,7 +84,6 @@ class ConfigsPanel(wx.Panel):
                 content += f"\n{hitPath}: No parser for {hitName}"
 
         self.resultsWindow.SetValue(content)
-        self.configsButton.Disable()
         self.configsComplete = True
 
     def UpdateConfigsButtonState(self):
