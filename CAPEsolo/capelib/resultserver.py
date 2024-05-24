@@ -238,7 +238,7 @@ class FileUpload(ProtocolHandler):
                 False,
             )
 
-        log.debug("Trying to upload file %s", dump_path.decode())
+        log.debug("Uploading file %s", dump_path.decode())
         if not duplicated:
             file_path = os.path.join(self.storagepath, dump_path.decode())
 
