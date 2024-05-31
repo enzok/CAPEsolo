@@ -77,7 +77,9 @@ def extract_config(filebuf):
                 return
             try:
                 pe = pefile.PE(data=filebuf, fast_load=True)
-                lookup_offset = pe.get_offset_from_rva(struct.unpack("I", lookup_va)[0] - pe.OPTIONAL_HEADER.ImageBase)
+                lookup_offset = pe.get_offset_from_rva(
+                    struct.unpack("I", lookup_va)[0] - pe.OPTIONAL_HEADER.ImageBase
+                )
                 lookup_table = filebuf[lookup_offset : lookup_offset + 256]
                 data = filebuf[start_offset + 4 : start_offset + 8092]
                 hex_strings = re.split(rb"\x00+", data)
@@ -86,9 +88,13 @@ def extract_config(filebuf):
                 c2 = []
                 dll_version = ""
 
+                c2_pattern = r"\b[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.(?!txt\b|dll\b|exe\b)[a-zA-Z]{2,}"
+
                 for item in hex_strings:
                     with suppress(Exception):
-                        decoded = transform(bytearray(item), bytearray(lookup_table)).decode("utf-8")
+                        decoded = transform(
+                            bytearray(item), bytearray(lookup_table)
+                        ).decode("utf-8")
                     if not decoded:
                         continue
                     if "http" in decoded:
@@ -100,6 +106,11 @@ def extract_config(filebuf):
                         dll_version = decoded.split('":"')[-1]
                     elif "api" in decoded or "Content-Type" in decoded:
                         str_vals.append(decoded)
+                    else:
+                        c2_matches = re.findall(c2_pattern, decoded)
+                        if c2_matches:
+                            c2.extend(c2_matches)
+
                 cfg = {
                     "C2": c2,
                     "Dll Version": dll_version,
