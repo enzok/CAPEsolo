@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "CAPEsolo"
-version = "0.3.3"
+version = "0.3.4"
 description = "Standalone CAPEMON"
 authors = ["enzok <7831008+enzok@users.noreply.github.com>"]
 readme = "README.md"
@@ -15,9 +15,10 @@ pefile = "^2023.2.7"
 pycryptodomex = "^3.20.0"
 cryptography = "^42.0.7"
 gevent = "^24.2.1"
-python-magic = "^0.4.27"
 requests = "^2.31.0"
 dnfile = "^0.15.0"
+sflock2 = {extras = ["shellcode"], version = "^0.3.58"}
+python-magic-bin = "^0.4.14"
 
 [tool.poetry.scripts]
 CAPEsolo = "CAPEsolo.cli:main"

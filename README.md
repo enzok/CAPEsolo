@@ -5,7 +5,6 @@ Python GUI to run capemon in standalone VM.
 * Install MS Build Tools (C++) which is required to build gevent on Windows.
 * Download package file from Releases.
 * pip install capesolo-[version]-py3-none.any.whl
-* Copy bin\libmagic.dll and bin\magic.mgc to Windows syswow64 directory.
 * Snapshot your VM.
 
 Quick Start 

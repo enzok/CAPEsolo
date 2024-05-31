@@ -236,13 +236,14 @@ class File:
 
         if file_type is None:
             try:
+                magic_path = Path(magic.__file__, "libmagic", "magic.mgc")
                 p = subprocess.Popen(
                     [
                         "bin\\file.exe",
                         "-b",
                         "--mime-type",
                         "-m",
-                        "bin\\magic.mgc",
+                        str(magic_path),
                         self.file_path,
                     ],
                     universal_newlines=True,

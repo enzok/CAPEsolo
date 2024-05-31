@@ -7,13 +7,50 @@ from pathlib import Path
 from threading import Thread
 
 import wx
+from sflock.abstracts import File as SflockFile
+from sflock.ident import identify as sflock_identify
 
-from .key_event import EVT_ANALYZER_COMPLETE_ID, EVT_ANALYZER_COMPLETE
-from .logger_window import LoggerWindow
 from CAPEsolo.capelib.resultserver import ResultServer
 from CAPEsolo.lib.common.hashing import hash_file
+from .key_event import EVT_ANALYZER_COMPLETE_ID, EVT_ANALYZER_COMPLETE
+from .logger_window import LoggerWindow
 
 log = logging.getLogger(__name__)
+
+sandbox_packages = [
+    "Shellcode",
+    "Shellcode_trace",
+    "Shellcode_x64",
+    "Shellcode_x64_trace",
+    "archive",
+    "chm",
+    "dll",
+    "doc",
+    "exe",
+    "hta",
+    "iso",
+    "jar",
+    "js",
+    "lnk",
+    "mht",
+    "msi",
+    "msix",
+    "nsis",
+    "ps1",
+    "pub",
+    "python",
+    "rar",
+    "regsvr",
+    "sct",
+    "service",
+    "service_dll",
+    "udf",
+    "vhd",
+    "xls",
+    "xps",
+    "xslt",
+    "zip",
+]
 
 
 def GetPreviousTarget(analysisDir):
@@ -36,6 +73,7 @@ class StartPanel(wx.Panel):
         self.curDir = True
         self.analysisDir = parent.analysisDir
         self.debug = parent.debug
+        self.package = ""
         self.capesoloRoot = parent.capesoloRoot
         self.targetFile = GetPreviousTarget(self.analysisDir)
         self.parent.targetFile = self.targetFile
@@ -59,7 +97,7 @@ class StartPanel(wx.Panel):
         packageLabel = wx.StaticText(self, label="Packages")
         self.packageDropdown = wx.ComboBox(self, style=wx.CB_READONLY)
         self.PackageDropdown()
-        self.packageDropdown.SetValue("exe")
+        self.packageDropdown.SetValue("Auto-detect")
         self.runFromCurrentDirCheckbox = wx.CheckBox(
             self, label="Run sample from current directory"
         )
@@ -210,9 +248,27 @@ class StartPanel(wx.Panel):
             self.optionsCtrl.SetValue("option1=value, option2=value, etc...")
         event.Skip()
 
+    def IdentifyPackage(self):
+        package = ""
+        f = SflockFile.from_path(str(self.target).encode("utf-8"))
+        try:
+            tmp_package = sflock_identify(f, check_shellcode=True)
+        except Exception as e:
+            log.error(f"Failed to sflock_ident due to {e}")
+            tmp_package = ""
+
+        if tmp_package and tmp_package in sandbox_packages:
+            if tmp_package in ("iso", "udf", "vhd"):
+                package = "archive"
+            else:
+                package = tmp_package
+
+        return package
+
     def PackageDropdown(self):
         directory = "modules\\packages"
         try:
+            self.packageDropdown.Append("Auto-detect")
             for name in os.listdir(directory):
                 if "init" not in name:
                     self.packageDropdown.Append(name.split(".")[0])
@@ -294,7 +350,6 @@ class StartPanel(wx.Panel):
         formatted_datetime = current_datetime.strftime("%Y%m%dT%H:%M:%S")
         filename = self.targetPath.GetValue()
         conf = self.analysisEditor.GetValue()
-        package = self.packageDropdown.GetValue()
         user_options = self.optionsCtrl.GetValue()
         sep = ","
         if user_options == "option1=value, option2=value, etc...":
@@ -305,7 +360,7 @@ class StartPanel(wx.Panel):
             user_options += f"{sep}curdir={curdir}"
         conf += f"\nfile_name = {filename}"
         conf += f"\nclock = {formatted_datetime}"
-        conf += f"\npackage = {package}"
+        conf += f"\npackage = {self.package}"
         conf += f"\noptions = {user_options}"
         self.analysisEditor.SetValue(conf)
 
@@ -322,6 +377,18 @@ class StartPanel(wx.Panel):
 
     def OnLaunchAnalyzer(self, event):
         try:
+            self.package = self.packageDropdown.GetValue()
+            if self.package == "Auto-detect":
+                package = self.IdentifyPackage()
+                if package:
+                    self.package = package
+                else:
+                    wx.MessageBox(
+                        f"Package {package} not available, select package manually.",
+                        "Error",
+                        wx.OK | wx.ICON_ERROR,
+                    )
+                    return
             self.AddTargetOptions(event)
             self.SaveAnalysisFile(event, False)
             main_frame = self.GetMainFrame()
