@@ -4,7 +4,9 @@ Python GUI to run capemon in standalone VM.
 * Install python in VM, must be 32-bit, and add to path.
 * Install MS Build Tools (C++) which is required to build gevent on Windows.
 * Download package file from Releases.
+* Download gevent wheel file from extras.
 * pip install capesolo-[version]-py3-none.any.whl
+* pip install gevent-[version].whl
 * Snapshot your VM.
 
 Quick Start 
