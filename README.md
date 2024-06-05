@@ -3,8 +3,9 @@ Python GUI to run capemon in standalone VM.
 * Create a VM that's suitable for running malware, see CAPE guest guide for details.
 * Install python in VM, must be 32-bit 3.11, and add to path.
 * Download package file from Releases.
-* Download gevent wheel file from extras.
+* Download greenlet and gevent wheels file from extras.
 * pip install capesolo-[version]-py3-none.any.whl
+* pip install greenlet-[version].whl
 * pip install gevent-[version].whl
 * Snapshot your VM.
 
