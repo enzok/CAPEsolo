@@ -9,19 +9,28 @@ class SearchDialog(wx.Dialog):
             size=(400, 100),
             style=wx.DEFAULT_DIALOG_STYLE | wx.STAY_ON_TOP,
         )
-        self.resultsWindow = parent.resultsWindow
-        self.lastFoundPos = -1
+        if parent.grid:
+            self.grid = parent.grid
+            self.Finder = self.FindCell()
+            self.FinderNext = self.FindNextCell()
+            self.currentSearchPos = (0, 0)
+        else:
+            self.resultsWindow = parent.resultsWindow
+            self.lastFoundPos = -1
+            self.Finder = self.OnFind
+            self.FinderNext = self.OnFindNext
+
         self.InitUi()
-        self.findWindow.Bind(wx.EVT_TEXT_ENTER, self.OnFind)
+        self.findWindow.Bind(wx.EVT_TEXT_ENTER, self.Finder)
 
     def InitUi(self):
         sizer = wx.BoxSizer(wx.VERTICAL)
         self.findWindow = wx.TextCtrl(self, style=wx.TE_PROCESS_ENTER)
 
         findButton = wx.Button(self, label="Find")
-        findButton.Bind(wx.EVT_BUTTON, self.OnFind)
+        findButton.Bind(wx.EVT_BUTTON, self.Finder)
         findNextButton = wx.Button(self, label="Find Next")
-        findNextButton.Bind(wx.EVT_BUTTON, self.OnFindNext)
+        findNextButton.Bind(wx.EVT_BUTTON, self.FinderNext)
 
         hbox1 = wx.BoxSizer(wx.HORIZONTAL)
         hbox1.Add(findButton, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5)
@@ -85,3 +94,29 @@ class SearchDialog(wx.Dialog):
         textCtrl.SetSelection(self.lastFoundPos, self.lastFoundPos + searchTextLength)
         textCtrl.ShowPosition(self.lastFoundPos)
         textCtrl.Refresh()
+
+    def FindNextCell(self):
+        searchText = self.findWindow.GetValue()
+        rows = self.grid.GetNumberRows()
+        cols = self.grid.GetNumberCols()
+        startRow, startCol = self.currentSearchPos
+        for row in range(startRow, rows):
+            for col in range(startCol if row == startRow else 0, cols):
+                if self.grid.GetCellValue(row, col) == searchText:
+                    self.grid.SetGridCursor(row, col)
+                    self.grid.MakeCellVisible(row, col)
+                    self.currentSearchPos = (row, col + 1)
+                    if self.currentSearchPos[1] >= cols:
+                        self.currentSearchPos = (self.currentSearchPos[0] + 1, 0)
+                    return
+
+        wx.MessageBox(
+            f"'{searchText}' not found.",
+            "Search Result",
+            wx.OK | wx.ICON_INFORMATION,
+        )
+        self.currentSearchPos = (0, 0)
+
+    def FindCell(self):
+        self.currentSearchPos = (0, 0)
+        self.FindNextCell()

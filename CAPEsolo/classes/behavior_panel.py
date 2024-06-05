@@ -293,7 +293,14 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
 
         self.AddTableData(mycalls)
 
+    def ClearGrid(self):
+        self.grid.ClearGrid()
+        rows = self.grid.GetNumberRows()
+        if rows > 0:
+            self.grid.DeleteRows(0, rows)
+
     def AddTableData(self, apicalls):
+        self.ClearGrid()
         self.grid.AppendRows(len(apicalls))
         for i, call in enumerate(apicalls):
             self.grid.SetCellValue(i, 0, call.get("timestamp", ""))
