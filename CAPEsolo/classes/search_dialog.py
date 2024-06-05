@@ -11,8 +11,8 @@ class SearchDialog(wx.Dialog):
         )
         if parent.grid:
             self.grid = parent.grid
-            self.Finder = self.FindCell()
-            self.FinderNext = self.FindNextCell()
+            self.Finder = self.FindCell
+            self.FinderNext = self.FindNextCell
             self.currentSearchPos = (0, 0)
         else:
             self.resultsWindow = parent.resultsWindow
@@ -95,7 +95,7 @@ class SearchDialog(wx.Dialog):
         textCtrl.ShowPosition(self.lastFoundPos)
         textCtrl.Refresh()
 
-    def FindNextCell(self):
+    def SearchCells(self):
         searchText = self.findWindow.GetValue()
         rows = self.grid.GetNumberRows()
         cols = self.grid.GetNumberCols()
@@ -105,6 +105,7 @@ class SearchDialog(wx.Dialog):
                 if self.grid.GetCellValue(row, col) == searchText:
                     self.grid.SetGridCursor(row, col)
                     self.grid.MakeCellVisible(row, col)
+                    self.grid.SelectBlock(row, col, row, col)
                     self.currentSearchPos = (row, col + 1)
                     if self.currentSearchPos[1] >= cols:
                         self.currentSearchPos = (self.currentSearchPos[0] + 1, 0)
@@ -117,6 +118,9 @@ class SearchDialog(wx.Dialog):
         )
         self.currentSearchPos = (0, 0)
 
-    def FindCell(self):
+    def FindCell(self, event):
         self.currentSearchPos = (0, 0)
-        self.FindNextCell()
+        self.SearchCells()
+
+    def FindNextCell(self, event):
+        self.SearchCells()
