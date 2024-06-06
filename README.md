@@ -9,8 +9,7 @@ Python GUI to run capemon in standalone VM.
 * Download package file from Releases.
   * pip install capesolo-[version]-py3-none.any.whl
 * Download greenlet and gevent wheels file from extras.
-  * pip install greenlet-[version].whl
-  * pip install gevent-[version].whl
+  * pip install greenlet-[version].whl gevent-[version].whl
 * Snapshot your VM.
 
 Quick Start 
