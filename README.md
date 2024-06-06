@@ -4,6 +4,8 @@ Python GUI to run capemon in standalone VM.
   * Use the CAPEv2 guest guide for configuration details.
   * https://capev2.readthedocs.io/en/latest/installation/guest/index.html
 * Install python in VM, must be 32-bit 3.11, and add to path.
+* Download and install Microsoft Visual C++ Redistributable.
+  * https://aka.ms/vs/17/release/vc_redist.x86.exe
 * Download package file from Releases.
   * pip install capesolo-[version]-py3-none.any.whl
 * Download greenlet and gevent wheels file from extras.
