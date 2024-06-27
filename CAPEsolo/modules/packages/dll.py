@@ -19,6 +19,7 @@ class Dll(Package):
     """DLL analysis package."""
 
     PATHS = [
+        ("SystemRoot", "Sysnative", "rundll32.exe"),
         ("SystemRoot", "System32", "rundll32.exe"),
     ]
 

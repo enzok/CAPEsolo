@@ -9,7 +9,7 @@ class SearchDialog(wx.Dialog):
             size=(400, 100),
             style=wx.DEFAULT_DIALOG_STYLE | wx.STAY_ON_TOP,
         )
-        if parent.grid:
+        if hasattr(parent, "grid"):
             self.grid = parent.grid
             self.Finder = self.FindCell
             self.FinderNext = self.FindNextCell
@@ -73,6 +73,7 @@ class SearchDialog(wx.Dialog):
                 self.lastFoundPos,
                 searchTextLength,
             )
+            textCtrl.SetInsertionPoint(self.lastFoundPos)
             textCtrl.SetFocus()
         else:
             wx.MessageBox(
