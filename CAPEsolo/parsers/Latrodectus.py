@@ -17,14 +17,13 @@ import logging
 import os
 import re
 from contextlib import suppress
-from pathlib import Path
 
 import pefile
 import yara
 
+from lib.cuckoo.common.constants import CUCKOO_ROOT
 
-filepath = Path(os.path.dirname(__file__)).parent
-yara_path = os.path.join(filepath, "yara", "CAPE", "Latrodectus.yar")
+yara_path = os.path.join(CUCKOO_ROOT, "data", "yara", "CAPE", "Latrodectus.yar")
 with open(yara_path, "r") as yara_rule:
     yara_rules = yara.compile(source=yara_rule.read())
 
@@ -52,7 +51,9 @@ def prng_seed(seed):
 
 def decrypt_string(data, type):
     seed = int.from_bytes(data[:4], "little") & 0xFFFFFFFF
-    length = (int.from_bytes(data[4:6], "little")) ^ (int.from_bytes(data[:2], "little")) & 0xFFFF
+    length = (int.from_bytes(data[4:6], "little")) ^ (
+        int.from_bytes(data[:2], "little")
+    ) & 0xFFFF
     src = data[6:]
     result = bytearray()
 
@@ -89,15 +90,24 @@ def extract_config(filebuf):
                 matches = regex.finditer(data.hex())
                 str_vals = []
                 c2 = []
+                campaign = ""
 
                 for match in matches:
                     str_val = ""
                     i = match.start() // 2
                     with suppress(Exception):
-                        str_val = decrypt_string(data[i:], 1).decode("utf-8").replace("\00", "")
+                        str_val = (
+                            decrypt_string(data[i:], 1)
+                            .decode("utf-8")
+                            .replace("\00", "")
+                        )
                     if not str_val:
                         with suppress(Exception):
-                            str_val = decrypt_string(data[i:], 2).decode("utf-8").replace("\00", "")
+                            str_val = (
+                                decrypt_string(data[i:], 2)
+                                .decode("utf-8")
+                                .replace("\00", "")
+                            )
                     if str_val:
                         if "http" in str_val:
                             c2.append(str_val)
@@ -107,12 +117,11 @@ def extract_config(filebuf):
                 i = 0
                 for val in str_vals:
                     if "/files/" in val:
+                        campaign = str_vals[i + 1]
                         break
                     else:
                         i += 1
-                campaign = ""
-                if ".exe" in str_vals[i + 2]:
-                    campaign = str_vals[i + 1]
+
                 cfg = {
                     "C2": c2,
                     "Group name": campaign,
