@@ -9,6 +9,25 @@ from CAPEsolo.capelib.behavior import BehaviorAnalysis
 from CAPEsolo.capelib.utils import convert_to_printable
 
 
+BACKGNDCLR = {
+    "filesystem": (255, 227, 197),
+    "registry": (255, 197, 197),
+    "process": (197, 224, 255),
+    "threading": (211, 224, 255),
+    "services": (204, 197, 255),
+    "device": (211, 197, 204),
+    "network": (211, 255, 197),
+    "socket": (211, 255, 197),
+    "synchronization": (249, 197, 255),
+    "browser": (223, 255, 223),
+    "crypto": (240, 242, 197),
+    "system": (255, 252, 197),
+    "hooking": (240, 240, 240),
+    "misc": (200, 200, 200),
+    "all": (255, 255, 255),
+}
+
+
 class Options:
     def __init__(self):
         self.analysis_call_limit = None
@@ -21,6 +40,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.analysisDir = parent.analysisDir
         self.BindKeyEvents()
         self.behaviorComplete = False
+        self.mycalls = []
         self.InitUI()
 
     def InitUI(self):
@@ -37,9 +57,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.hbox.Add(
             self.categoryDropdown, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5
         )
-        self.viewButton = wx.Button(self, label="View")
-        self.viewButton.Bind(wx.EVT_BUTTON, self.OnCatViewButton)
-        self.hbox.Add(self.viewButton, proportion=0)
+        self.categoryDropdown.Bind(wx.EVT_COMBOBOX, self.OnCatView)
         vbox.Add(
             wx.StaticText(self, label="Categories:"), flag=wx.LEFT | wx.TOP, border=5
         )
@@ -49,9 +67,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.hbox2.Add(
             self.processDropdown, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5
         )
-        self.viewProcButton = wx.Button(self, label="View")
-        self.viewProcButton.Bind(wx.EVT_BUTTON, self.OnProcViewButton)
-        self.hbox2.Add(self.viewProcButton, proportion=0)
+        self.processDropdown.Bind(wx.EVT_COMBOBOX, self.OnProcView)
         vbox.Add(
             wx.StaticText(self, label="Processes:"), flag=wx.LEFT | wx.TOP, border=5
         )
@@ -65,6 +81,28 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             border=5,
         )
         vbox.Add(wx.StaticText(self, label="Calls:"), flag=wx.LEFT | wx.TOP, border=5)
+
+        collapsePane = wx.CollapsiblePane(self, label="Show/Hide API Categories")
+        collapsePane.Bind(wx.EVT_COLLAPSIBLEPANE_CHANGED, self.onPaneChanged)
+        vbox.Add(collapsePane, 0, wx.ALL | wx.EXPAND, 5)
+
+        pane = collapsePane.GetPane()
+        paneBox = wx.WrapSizer(wx.HORIZONTAL)
+
+        apiButtonFont = wx.Font(
+            8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL
+        )
+
+        for key, rgbColor in BACKGNDCLR.items():
+            apiButton = wx.Button(pane, label=key)
+            apiButton.SetBackgroundColour(wx.Colour(rgbColor))
+            apiButton.SetFont(apiButtonFont)
+            apiButton.Bind(wx.EVT_BUTTON, self.onApiCategoryClick)
+            paneBox.Add(apiButton, 0, wx.ALL, 5)
+
+        pane.SetSizer(paneBox)
+        paneBox.Layout()
+
         self.grid = gridlib.Grid(self)
         self.grid.CreateGrid(0, 8)
         columnLabels = [
@@ -100,6 +138,15 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         )
 
         self.SetSizer(vbox)
+        vbox.Fit(self)
+
+    def onPaneChanged(self, event):
+        self.Layout()
+
+    def onApiCategoryClick(self, event):
+        button = event.GetEventObject()
+        category = button.GetLabel()
+        self.AddTableData(category)
 
     def UpdateGenerateButtonState(self):
         logs_dir = Path(self.analysisDir) / "logs"
@@ -139,11 +186,11 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             if "processes" not in category:
                 self.categoryDropdown.Append(category)
 
-    def OnCatViewButton(self, event):
+    def OnCatView(self, event):
         selectedCategory = self.categoryDropdown.GetValue()
         if not selectedCategory or selectedCategory == "<Select process>":
             wx.MessageBox(
-                'Please select a category dropdown before clicking "View".',
+                'Please select a category dropdown.',
                 "No Category Selected",
                 wx.OK | wx.ICON_WARNING,
             )
@@ -154,11 +201,11 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             self.GetParent().Fit()
             self.GetParent().Layout()
 
-    def OnProcViewButton(self, event):
+    def OnProcView(self, event):
         selectedProcess = self.processDropdown.GetValue()
         if not selectedProcess or selectedProcess == "<Select process>":
             wx.MessageBox(
-                'Please select a process dropdown before clicking "View".',
+                'Please select a process dropdown.',
                 "No Process Selected",
                 wx.OK | wx.ICON_WARNING,
             )
@@ -291,7 +338,9 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         except Exception:
             return
 
-        self.AddTableData(mycalls)
+        self.mycalls = mycalls
+
+        self.AddTableData()
 
     def ClearGrid(self):
         self.grid.ClearGrid()
@@ -299,17 +348,21 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         if rows > 0:
             self.grid.DeleteRows(0, rows)
 
-    def AddTableData(self, apicalls):
+    def AddTableData(self, category="all"):
+        mycalls = self.GetCalls(self.mycalls, category)
         self.ClearGrid()
-        self.grid.AppendRows(len(apicalls))
-        for i, call in enumerate(apicalls):
+
+        for i, call in enumerate(mycalls):
+            category = call.get("category", "none")
+            self.grid.AppendRows(1)
             self.grid.SetCellValue(i, 0, call.get("timestamp", ""))
             self.grid.SetCellValue(i, 1, str(call.get("thread_id", "")))
 
             caller = f'{call.get("parentcaller", "")}\n{call.get("caller", "")}'
             self.grid.SetCellValue(i, 2, caller)
 
-            self.grid.SetCellValue(i, 3, call.get("api", ""))
+            apiName = call.get("api", "")
+            self.grid.SetCellValue(i, 3, apiName)
 
             args = self.GetArguments(call)
             arguments_str = "\n".join(args)
@@ -325,8 +378,16 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             self.grid.SetCellValue(i, 6, return_val)
             self.grid.SetCellValue(i, 7, str(call.get("repeated", "")))
 
+            color = wx.Colour(BACKGNDCLR.get(category, (255, 255, 255)))
+            self.ApplyBackgroundColor(i, color)
+
         self.grid.AutoSizeColumns()
         self.grid.AutoSizeRows()
+
+    def ApplyBackgroundColor(self, row, color):
+        for col in range(self.grid.GetNumberCols()):
+            self.grid.SetCellBackgroundColour(row, col, color)
+        self.grid.ForceRefresh()
 
     def ApplyAlternateRowShading(self):
         numRows = self.grid.GetNumberRows()
@@ -338,3 +399,8 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
                 attr.SetBackgroundColour(lightGrey)
                 self.grid.SetRowAttr(row, attr)
         self.grid.ForceRefresh()
+
+    def GetCalls(self, calls, category):
+        if category == "all":
+            return calls
+        return [d for d in calls if "category" in d and d["category"] == category]

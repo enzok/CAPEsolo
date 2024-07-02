@@ -4,6 +4,7 @@ import wx
 import wx.grid as gridlib
 import wx.lib.scrolledpanel as scrolled
 
+from .hexview_window import HexViewWindow
 from .pe_window import PeWindow
 from CAPEsolo.capelib.cape_utils import (
     get_cape_name_from_cape_type,
@@ -118,11 +119,19 @@ class PayloadsPanel(wx.Panel):
                 )
                 self.ApplyAlternateRowShading(grid)
 
+                buttonBox = wx.BoxSizer(wx.HORIZONTAL)
+                hexBtn = wx.Button(self.panel, label="Hex View")
+                hexBtn.Bind(wx.EVT_BUTTON, self.OnShowHexview)
+                self.button_to_path[hexBtn.GetId()] = path
+                buttonBox.Add(hexBtn, 0, wx.ALIGN_LEFT | wx.ALL, 5)
+
                 if IsPEImage(path.read_bytes()[:1024], 1024):
-                    btn = wx.Button(self.panel, label="PE")
-                    btn.Bind(wx.EVT_BUTTON, self.OnShowPe)
-                    self.button_to_path[btn.GetId()] = path
-                    self.panelsizer.Add(btn, 0, wx.ALIGN_LEFT | wx.ALL, 5)
+                    peBtn = wx.Button(self.panel, label="PE")
+                    peBtn.Bind(wx.EVT_BUTTON, self.OnShowPe)
+                    self.button_to_path[peBtn.GetId()] = path
+                    buttonBox.Add(peBtn, 0, wx.ALIGN_LEFT | wx.ALL, 5)
+
+                self.panelsizer.Add(buttonBox, proportion=1, flag=wx.EXPAND)
 
                 self.panelsizer.AddSpacer(5)
 
@@ -163,6 +172,21 @@ class PayloadsPanel(wx.Panel):
             path = self.button_to_path.get(buttonId, "")
             if path and not self.IsWindowOpen(str(path)):
                 viewer_window = PeWindow(self, str(path), path, position, size)
+                viewer_window.Show()
+        except Exception as e:
+            wx.MessageBox(
+                f"Failed to execute the command: {e}", "Error", wx.OK | wx.ICON_ERROR
+            )
+
+    def OnShowHexview(self, event):
+        try:
+            main_frame = self.GetMainFrame()
+            size = main_frame.GetSize()
+            position = main_frame.GetPosition()
+            buttonId = event.GetId()
+            path = self.button_to_path.get(buttonId, "")
+            if path and not self.IsWindowOpen(str(path)):
+                viewer_window = HexViewWindow(self, str(path), path, position, size)
                 viewer_window.Show()
         except Exception as e:
             wx.MessageBox(
