@@ -87,7 +87,27 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         vbox.Add(collapsePane, 0, wx.ALL | wx.EXPAND, 5)
 
         pane = collapsePane.GetPane()
-        paneBox = wx.WrapSizer(wx.HORIZONTAL)
+        paneBox = wx.BoxSizer(wx.VERTICAL)
+
+        panehBox1 = wx.BoxSizer(wx.HORIZONTAL)
+
+        self.tid = wx.TextCtrl(pane, size=(100, -1), style=wx.TE_PROCESS_ENTER)
+        self.tidButton = wx.Button(pane, label="Filter Thread ID")
+        self.tidButton.Bind(wx.EVT_BUTTON, self.OnTidFilterButtonClick)
+
+        self.api = wx.TextCtrl(pane, style=wx.TE_PROCESS_ENTER)
+        self.apiFilterButton = wx.Button(pane, label="Filter API")
+        self.apiFilterButton.Bind(wx.EVT_BUTTON, self.OnApiFilterButtonClick)
+
+        panehBox1.Add(self.tid, flag=wx.ALL, border=5)
+        panehBox1.Add(self.tidButton, flag=wx.ALL, border=5)
+        self.tidButton.Disable()
+
+        panehBox1.Add(self.api, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
+        panehBox1.Add(self.apiFilterButton, flag=wx.ALL, border=5)
+        self.apiFilterButton.Disable()
+
+        panehBox2 = wx.WrapSizer(wx.HORIZONTAL)
 
         apiButtonFont = wx.Font(
             8, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL
@@ -98,7 +118,10 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             apiButton.SetBackgroundColour(wx.Colour(rgbColor))
             apiButton.SetFont(apiButtonFont)
             apiButton.Bind(wx.EVT_BUTTON, self.onApiCategoryClick)
-            paneBox.Add(apiButton, 0, wx.ALL, 5)
+            panehBox2.Add(apiButton, 0, wx.ALL, 5)
+
+        paneBox.Add(panehBox1, flag=wx.EXPAND | wx.ALL, border=5)
+        paneBox.Add(panehBox2, flag=wx.EXPAND | wx.ALL, border=5)
 
         pane.SetSizer(paneBox)
         paneBox.Layout()
@@ -140,6 +163,14 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.SetSizer(vbox)
         vbox.Fit(self)
 
+    def OnTidFilterButtonClick(self, event):
+        self.filterKey = "thread_id"
+        self.AddTableData(filter=self.tid.GetValue())
+
+    def OnApiFilterButtonClick(self, event):
+        self.filterKey = "api"
+        self.AddTableData(filter=self.api.GetValue())
+
     def onPaneChanged(self, event):
         self.Layout()
 
@@ -166,6 +197,8 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.LoadResultCategories()
         self.LoadResultProcesses()
         self.behaviorButton.Disable()
+        self.tidButton.Enable()
+        self.apiFilterButton.Enable()
         self.behaviorComplete = True
 
     def LoadResultProcesses(self):
@@ -190,7 +223,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         selectedCategory = self.categoryDropdown.GetValue()
         if not selectedCategory or selectedCategory == "<Select process>":
             wx.MessageBox(
-                'Please select a category dropdown.',
+                "Please select a category dropdown.",
                 "No Category Selected",
                 wx.OK | wx.ICON_WARNING,
             )
@@ -205,7 +238,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         selectedProcess = self.processDropdown.GetValue()
         if not selectedProcess or selectedProcess == "<Select process>":
             wx.MessageBox(
-                'Please select a process dropdown.',
+                "Please select a process dropdown.",
                 "No Process Selected",
                 wx.OK | wx.ICON_WARNING,
             )
@@ -348,8 +381,11 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         if rows > 0:
             self.grid.DeleteRows(0, rows)
 
-    def AddTableData(self, category="all"):
-        mycalls = self.GetCalls(self.mycalls, category)
+    def AddTableData(self, category="all", filter=""):
+        if filter:
+            mycalls = self.GetCallsFilter(filter)
+        else:
+            mycalls = self.GetCalls(category)
         self.ClearGrid()
 
         for i, call in enumerate(mycalls):
@@ -400,7 +436,13 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
                 self.grid.SetRowAttr(row, attr)
         self.grid.ForceRefresh()
 
-    def GetCalls(self, calls, category):
+    def GetCalls(self, category):
         if category == "all":
-            return calls
-        return [d for d in calls if "category" in d and d["category"] == category]
+            return self.mycalls
+        return [
+            d for d in self.mycalls if "category" in d and d["category"] == category
+        ]
+
+    def GetCallsFilter(self, value):
+        key = self.filterKey
+        return [d for d in self.mycalls if key in d and d[key].lower() == value.lower()]
