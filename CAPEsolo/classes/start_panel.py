@@ -11,6 +11,7 @@ from sflock.abstracts import File as SflockFile
 from sflock.ident import identify as sflock_identify
 
 from CAPEsolo.capelib.resultserver import ResultServer
+from CAPEsolo.capelib.utils import sanitize_filename
 from CAPEsolo.lib.common.hashing import hash_file
 from .key_event import EVT_ANALYZER_COMPLETE_ID, EVT_ANALYZER_COMPLETE
 from .logger_window import LoggerWindow
@@ -348,7 +349,7 @@ class StartPanel(wx.Panel):
     def AddTargetOptions(self, event):
         current_datetime = datetime.now()
         formatted_datetime = current_datetime.strftime("%Y%m%dT%H:%M:%S")
-        filename = self.targetPath.GetValue()
+        filename = str(self.target)
         conf = self.analysisEditor.GetValue()
         user_options = self.optionsCtrl.GetValue()
         sep = ","
@@ -389,6 +390,13 @@ class StartPanel(wx.Panel):
                         wx.OK | wx.ICON_ERROR,
                     )
                     return
+
+            originalPath = Path(self.targetPath.GetValue())
+            newFilename = sanitize_filename(originalPath.name)
+            if newFilename != originalPath.name:
+                self.target = Path(originalPath.parent, newFilename)
+                originalPath.rename(self.target)
+
             self.AddTargetOptions(event)
             self.SaveAnalysisFile(event, False)
             main_frame = self.GetMainFrame()

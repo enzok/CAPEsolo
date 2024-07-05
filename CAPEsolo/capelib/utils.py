@@ -21,6 +21,8 @@ FILENAME_CHARACTERS = (
     string.ascii_letters + string.digits + string.punctuation.replace("/", "") + " "
 )
 
+sanitize_len = 32
+sanitize_to_len = 24
 
 class Singleton(type):
     """Singleton.
@@ -399,3 +401,33 @@ def LoadFilesJson(analysisDir):
             return {"error": "Corrupt analysis/files.json"}
     else:
         return {"error": "No dump files"}
+
+
+def sanitize_filename(x):
+    """Kind of awful but necessary sanitizing of filenames to
+    get rid of unicode problems."""
+    while x.startswith(" "):
+        x = x.lstrip()
+    out = "".join(c if c in string.ascii_letters + string.digits + " _-." else "_" for c in x)
+
+    """Prevent long filenames such as files named by hash
+    as some malware checks for this."""
+    if len(out) >= sanitize_len:
+        out = truncate_filename(out)
+
+    return out
+
+
+def truncate_filename(x):
+    truncated = None
+    parts = x.rsplit(".", 1)
+    if len(parts) > 1:
+        # filename has extension
+        extension = parts[1]
+        name = parts[0][: (sanitize_to_len - (len(extension) + 1))]
+        truncated = f"{name}.{extension}"
+    elif len(parts) == 1:
+        # no extension
+        truncated = parts[0][:sanitize_to_len]
+
+    return truncated
