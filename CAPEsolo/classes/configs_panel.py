@@ -12,7 +12,6 @@ class ConfigsPanel(wx.Panel):
         self.configHits = parent.configHits
         self.analysisDir = parent.analysisDir
         self.capesoloRoot = parent.capesoloRoot
-        self.configsComplete = False
         self.InitUI()
 
     def InitUI(self):
@@ -31,7 +30,7 @@ class ConfigsPanel(wx.Panel):
         )
         self.resultsWindow.SetFont(fontCourier)
         vbox.Add(self.resultsWindow, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
-        content = "Extract after viewing Payloads."
+        content = "Extract after viewing Payloads and Yara Processing."
         self.resultsWindow.SetValue(content)
         self.SetSizer(vbox)
 
@@ -51,6 +50,7 @@ class ConfigsPanel(wx.Panel):
 
     def ExtractConfigs(self, event):
         content = ""
+        self.resultsWindow.SetValue("")
 
         for hit in self.configHits:
             decoderModule = ""
@@ -71,7 +71,6 @@ class ConfigsPanel(wx.Panel):
                     except Exception as e:
                         content += f"\n{path}: Fix parser code in {decoder}, {e}"
             if decoderModule:
-                content = f"\u2022 {hitPath}:\n\tFamily: {hitName}\n"
                 if self.analysisDir not in hitPath:
                     hitPath = Path(self.analysisDir) / hitPath
                 filedata = Path(hitPath).read_bytes()
@@ -79,15 +78,16 @@ class ConfigsPanel(wx.Panel):
                     cfg = decoderModule.extract_config(filedata)
                 else:
                     cfg = decoderModule.config(filedata)
-                content += self.PrintResults(cfg)
+                if cfg:
+                    content += f"\u2022 {hitPath}:\n\tFamily: {hitName}\n"
+                    content += self.PrintResults(cfg)
             else:
                 content += f"\n{hitPath}: No parser for {hitName}"
 
         self.resultsWindow.SetValue(content)
-        self.configsComplete = True
 
     def UpdateConfigsButtonState(self):
-        if self.configHits and not self.configsComplete:
+        if self.configHits:
             self.configsButton.Enable()
         else:
             self.configsButton.Disable()
