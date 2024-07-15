@@ -3,14 +3,12 @@ Python GUI to run capemon in standalone VM.
 * Create a Windows 10 VM that's suitable for running malware.
   * Use the CAPEv2 guest guide for configuration details.
   * https://capev2.readthedocs.io/en/latest/installation/guest/index.html
-* Install python in VM, must be 32-bit 3.11, and add to path.
+* Install python in VM, tested on versions 3.11 and 3.12 (64-bit), and add to path.
 * Download and install Microsoft Visual C++ Redistributable.
   * https://aka.ms/vs/17/release/vc_redist.x86.exe
+  * https://aka.ms/vs/17/release/vc_redist.x64.exe
 * Download package file from Releases.
   * pip install capesolo-[version]-py3-none.any.whl
-* Download greenlet and gevent wheels file from extras.
-  * pip install greenlet-[version].whl
-  * pip install gevent-[version].whl
 * Snapshot your VM.
 
 Quick Start 
