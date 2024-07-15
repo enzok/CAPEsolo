@@ -26,6 +26,9 @@ class TLSDumpMasterSecrets(Auxiliary):
             self.options["tlsdump"] = "0"
 
     def start(self):
+        if not self.enabled:
+            return False
+
         proc_info = PROCESSENTRY32()
         proc_info.dwSize = sizeof(PROCESSENTRY32)
         snapshot = KERNEL32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)

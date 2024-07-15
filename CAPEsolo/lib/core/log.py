@@ -63,7 +63,9 @@ class LogServerThread(Thread):
             while True:
                 bytes_read = c_int(0)
                 buf = create_string_buffer(LOGBUFSIZE)
-                success = KERNEL32.ReadFile(self.h_pipe, buf, sizeof(buf), byref(bytes_read), None)
+                success = KERNEL32.ReadFile(
+                    self.h_pipe, buf, sizeof(buf), byref(bytes_read), None
+                )
                 try:
                     data += buf.raw[: bytes_read.value]
                 except MemoryError:
@@ -84,7 +86,10 @@ class LogServerThread(Thread):
             while self.do_run:
                 # Create the Named Pipe.
                 # If we receive a connection to the pipe, we invoke the handler.
-                if KERNEL32.ConnectNamedPipe(self.h_pipe, None) or KERNEL32.GetLastError() == ERROR_PIPE_CONNECTED:
+                if (
+                    KERNEL32.ConnectNamedPipe(self.h_pipe, None)
+                    or KERNEL32.GetLastError() == ERROR_PIPE_CONNECTED
+                ):
                     self.handle_logs()
 
                 KERNEL32.CloseHandle(self.h_pipe)
@@ -125,7 +130,7 @@ class LogServer:
 
         if h_pipe == INVALID_HANDLE_VALUE:
             log.warning("Unable to create log server pipe")
-            return False
+            return
 
         logserver = LogServerThread(h_pipe, result_ip, result_port)
         logserver.daemon = True

@@ -13,7 +13,16 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from ctypes import byref, c_int, c_ulong, create_string_buffer, sizeof
+from ctypes import (
+    POINTER,
+    byref,
+    c_int,
+    c_ulong,
+    create_string_buffer,
+    c_void_p,
+    sizeof,
+)
+from ctypes.wintypes import DWORD, HANDLE, BOOL
 from pathlib import Path
 from shutil import copy
 
@@ -45,7 +54,7 @@ from lib.common.defines import (
     SYSTEM_INFO,
     TH32CS_SNAPPROCESS,
     THREAD_ALL_ACCESS,
-    ULONG_PTR,
+    PROCESS_BASIC_INFORMATION,
 )
 from lib.common.errors import get_error_string
 from lib.common.rand import random_string
@@ -64,6 +73,14 @@ LOGSERVER_POOL = {}
 
 log = logging.getLogger(__name__)
 
+# Define function return types
+KERNEL32.GetCurrentProcess.restype = HANDLE
+KERNEL32.OpenProcess.restype = HANDLE
+KERNEL32.OpenProcess.argtypes = [DWORD, BOOL, DWORD]
+KERNEL32.OpenThread.restype = HANDLE
+KERNEL32.OpenThread.argtypes = [DWORD, BOOL, DWORD]
+KERNEL32.GetLastError.restype = DWORD
+
 
 def is_os_64bit():
     return platform.machine().endswith("64")
@@ -79,7 +96,9 @@ def get_referrer_url(interest):
 
     escapedurl = urllib.parse.quote(interest, "")
     itemidx = random.randint(1, 30)
-    vedstr = b"0CCEQfj" + base64.urlsafe_b64encode(random_string(random.randint(5, 8) * 3).encode())
+    vedstr = b"0CCEQfj" + base64.urlsafe_b64encode(
+        random_string(random.randint(5, 8) * 3).encode()
+    )
     eistr = base64.urlsafe_b64encode(random_string(12).encode())
     usgstr = b"AFQj" + base64.urlsafe_b64encode(random_string(12).encode())
     return f"http://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd={itemidx}&ved={vedstr}&url={escapedurl}&ei={eistr}&usg={usgstr}"
@@ -98,7 +117,16 @@ class Process:
     # which check whether the VM has only been up for <10 minutes.
     startup_time = random.randint(1, 30) * 20 * 60 * 1000
 
-    def __init__(self, options=None, config=None, pid=0, h_process=0, thread_id=0, h_thread=0, suspended=False):
+    def __init__(
+        self,
+        options=None,
+        config=None,
+        pid=0,
+        h_process=0,
+        thread_id=0,
+        h_thread=0,
+        suspended=False,
+    ):
         """@param pid: PID.
         @param h_process: process handle.
         @param thread_id: thread id.
@@ -109,16 +137,19 @@ class Process:
         self.config = config
         self.options = options
         self.pid = pid
-        self.h_process = h_process
+        self.h_process = HANDLE(h_process)
         self.thread_id = thread_id
-        self.h_thread = h_thread
+        self.h_thread = HANDLE(h_thread)
         self.suspended = suspended
         self.system_info = SYSTEM_INFO()
         self.critical = False
 
     def __del__(self):
         """Close open handles."""
-        if hasattr(self, "h_process") and self.h_process != KERNEL32.GetCurrentProcess():
+        if (
+            hasattr(self, "h_process")
+            and self.h_process != KERNEL32.GetCurrentProcess()
+        ):
             KERNEL32.CloseHandle(self.h_process)
         if hasattr(self, "h_thread") and self.h_thread != 0:
             KERNEL32.CloseHandle(self.h_thread)
@@ -136,13 +167,19 @@ class Process:
             if self.pid == os.getpid():
                 self.h_process = KERNEL32.GetCurrentProcess()
             else:
-                self.h_process = KERNEL32.OpenProcess(PROCESS_ALL_ACCESS, False, self.pid)
+                self.h_process = KERNEL32.OpenProcess(
+                    PROCESS_ALL_ACCESS, False, self.pid
+                )
                 if not self.h_process:
-                    self.h_process = KERNEL32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, self.pid)
+                    self.h_process = KERNEL32.OpenProcess(
+                        PROCESS_QUERY_LIMITED_INFORMATION, False, self.pid
+                    )
             ret = True
 
         if self.thread_id and not self.h_thread:
-            self.h_thread = KERNEL32.OpenThread(THREAD_ALL_ACCESS, False, self.thread_id)
+            self.h_thread = KERNEL32.OpenThread(
+                THREAD_ALL_ACCESS, False, self.thread_id
+            )
             ret = True
         return ret
 
@@ -181,19 +218,20 @@ class Process:
         if not self.h_process:
             self.open()
 
-        pbi = create_string_buffer(530)
-        size = c_int()
+        pbi = create_string_buffer(1024)
+        size = c_ulong()
 
         # Set return value to signed 32bit integer.
         NTDLL.NtQueryInformationProcess.restype = c_int
 
-        ret = NTDLL.NtQueryInformationProcess(self.h_process, 27, byref(pbi), sizeof(pbi), byref(size))
+        ret = NTDLL.NtQueryInformationProcess(
+            self.h_process, 27, byref(pbi), sizeof(pbi), byref(size)
+        )
 
-        if NT_SUCCESS(ret) and size.value > 8:
+        if NT_SUCCESS(ret) and size.value > 16:
             try:
-                fbuf = pbi.raw[8:]
-                fbuf = fbuf[: fbuf.find(b"\0\0") + 1]
-                return fbuf.decode("utf16", errors="ignore")
+                fbuf = pbi.raw[16 : size.value]
+                return fbuf.decode("utf16", errors="ignore").rstrip("\x00")
             except Exception as e:
                 log.info(e)
 
@@ -214,7 +252,9 @@ class Process:
 
         val = c_ulong(0)
         retlen = c_ulong(0)
-        ret = NTDLL.NtQueryInformationProcess(self.h_process, 29, byref(val), sizeof(val), byref(retlen))
+        ret = NTDLL.NtQueryInformationProcess(
+            self.h_process, 29, byref(val), sizeof(val), byref(retlen)
+        )
         if NT_SUCCESS(ret) and val.value:
             return True
         return False
@@ -224,16 +264,25 @@ class Process:
         if not self.h_process:
             self.open()
 
-        pbi = (ULONG_PTR * 6)()
+        pbi = PROCESS_BASIC_INFORMATION()
         size = c_ulong()
 
         # Set return value to signed 32bit integer.
         NTDLL.NtQueryInformationProcess.restype = c_int
+        NTDLL.NtQueryInformationProcess.argtypes = [
+            HANDLE,
+            c_int,
+            c_void_p,
+            c_ulong,
+            POINTER(c_ulong),
+        ]
 
-        ret = NTDLL.NtQueryInformationProcess(self.h_process, 0, byref(pbi), sizeof(pbi), byref(size))
+        ret = NTDLL.NtQueryInformationProcess(
+            self.h_process, 0, byref(pbi), sizeof(pbi), byref(size)
+        )
 
         if NT_SUCCESS(ret) and size.value == sizeof(pbi):
-            return pbi[5]
+            return pbi.InheritedFromUniqueProcessId
 
         return None
 
@@ -247,7 +296,10 @@ class Process:
             sys_file = os.path.join(Path.cwd(), "dll", "zer0m0n.sys")
         exe_file = os.path.join(Path.cwd(), "dll", "logs_dispatcher.exe")
         if not os.path.isfile(sys_file) or not os.path.isfile(exe_file):
-            log.warning("No valid zer0m0n files to be used for process with pid %d, injection aborted", self.pid)
+            log.warning(
+                "No valid zer0m0n files to be used for process with pid %d, injection aborted",
+                self.pid,
+            )
             return False
 
         exe_name = service_name = driver_name = random_string(6)
@@ -321,7 +373,9 @@ class Process:
             wow64 = c_ulong(0)
             KERNEL32.Wow64DisableWow64FsRedirection(byref(wow64))
 
-        os.system(f'cmd /c "rundll32 setupapi.dll, InstallHinfSection DefaultInstall 132 {new_inf}"')
+        os.system(
+            f'cmd /c "rundll32 setupapi.dll, InstallHinfSection DefaultInstall 132 {new_inf}"'
+        )
         os.system(f"net start {service_name}")
 
         si = STARTUPINFO()
@@ -329,7 +383,18 @@ class Process:
         pi = PROCESS_INFORMATION()
         cr = CREATE_NEW_CONSOLE
 
-        ldp = KERNEL32.CreateProcessW(new_exe, None, None, None, None, cr, None, os.getenv("TEMP"), byref(si), byref(pi))
+        ldp = KERNEL32.CreateProcessW(
+            new_exe,
+            None,
+            None,
+            None,
+            None,
+            cr,
+            None,
+            os.getenv("TEMP"),
+            byref(si),
+            byref(pi),
+        )
         if not ldp:
             if os_is_64bit:
                 KERNEL32.Wow64RevertWow64FsRedirection(wow64)
@@ -344,7 +409,15 @@ class Process:
             config.write(f"pipe={PIPE}\n")
 
         log.info("Sending startup information")
-        hFile = KERNEL32.CreateFileW(PATH_KERNEL_DRIVER, GENERIC_READ | GENERIC_WRITE, 0, None, OPEN_EXISTING, 0, None)
+        hFile = KERNEL32.CreateFileW(
+            PATH_KERNEL_DRIVER,
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            None,
+            OPEN_EXISTING,
+            0,
+            None,
+        )
         if os_is_64bit:
             KERNEL32.Wow64RevertWow64FsRedirection(wow64)
         if hFile:
@@ -369,9 +442,20 @@ class Process:
                 flag = KERNEL32.Process32Next(snapshot, byref(proc_info))
             bytes_returned = c_ulong(0)
             msg = f"{self.pid}_{ppid}_{os.getpid()}_{pi.dwProcessId}_{pid_vboxservice}_{pid_vboxtray}\0"
-            KERNEL32.DeviceIoControl(hFile, IOCTL_PID, msg, len(msg), None, 0, byref(bytes_returned), None)
+            KERNEL32.DeviceIoControl(
+                hFile, IOCTL_PID, msg, len(msg), None, 0, byref(bytes_returned), None
+            )
             msg = f"{Path.cwd()}\0"
-            KERNEL32.DeviceIoControl(hFile, IOCTL_CUCKOO_PATH, msg, len(msg), None, 0, byref(bytes_returned), None)
+            KERNEL32.DeviceIoControl(
+                hFile,
+                IOCTL_CUCKOO_PATH,
+                msg,
+                len(msg),
+                None,
+                0,
+                byref(bytes_returned),
+                None,
+            )
         else:
             log.warning("Failed to access kernel driver")
 
@@ -418,7 +502,16 @@ class Process:
         create_custom_folders(execution_directory)
 
         created = KERNEL32.CreateProcessW(
-            path, arguments, None, None, None, creation_flags, None, execution_directory, byref(startup_info), byref(process_info)
+            path,
+            arguments,
+            None,
+            None,
+            None,
+            creation_flags,
+            None,
+            execution_directory,
+            byref(startup_info),
+            byref(process_info),
         )
 
         if created:
@@ -426,7 +519,12 @@ class Process:
             self.h_process = process_info.hProcess
             self.thread_id = process_info.dwThreadId
             self.h_thread = process_info.hThread
-            log.info('Successfully executed process from path "%s" with arguments "%s" with pid %d', path, args or "", self.pid)
+            log.info(
+                'Successfully executed process from path "%s" with arguments "%s" with pid %d',
+                path,
+                args or "",
+                self.pid,
+            )
             if kernel_analysis:
                 return self.kernel_analyze()
             return True
@@ -444,7 +542,9 @@ class Process:
         @return: operation status.
         """
         if not self.suspended:
-            log.warning("The process with pid %d was not suspended at creation", self.pid)
+            log.warning(
+                "The process with pid %d was not suspended at creation", self.pid
+            )
             return False
 
         if not self.h_thread:
@@ -466,7 +566,9 @@ class Process:
             self.open()
 
         event_name = TERMINATE_EVENT + str(self.pid)
-        self.terminate_event_handle = KERNEL32.OpenEventW(EVENT_MODIFY_STATE, False, event_name)
+        self.terminate_event_handle = KERNEL32.OpenEventW(
+            EVENT_MODIFY_STATE, False, event_name
+        )
         if self.terminate_event_handle:
             # make sure process is aware of the termination
             KERNEL32.SetEvent(self.terminate_event_handle)
@@ -522,7 +624,9 @@ class Process:
         # start the logserver for this monitored process
         logserver_path = f"{LOGSERVER_PREFIX}{self.pid}"
         if logserver_path not in LOGSERVER_POOL:
-            LOGSERVER_POOL[logserver_path] = LogServer(self.config.ip, self.config.port, logserver_path)
+            LOGSERVER_POOL[logserver_path] = LogServer(
+                self.config.ip, self.config.port, logserver_path
+            )
 
         if "tlsdump" not in self.options:
             Process.process_num += 1
@@ -543,7 +647,10 @@ class Process:
             config.write(f"terminate-event={TERMINATE_EVENT}{self.pid}\n")
 
             if nosleepskip or (
-                "force-sleepskip" not in self.options and len(interest) > 2 and interest[:2] != "\\:" and Process.process_num <= 2
+                "force-sleepskip" not in self.options
+                and len(interest) > 2
+                and interest[:2] != "\\:"
+                and Process.process_num <= 2
             ):
                 config.write("force-sleepskip=0\n")
 
@@ -571,7 +678,9 @@ class Process:
             for optname, option in self.options.items():
                 if optname not in server_options:
                     config.write(f"{optname}={option}\n")
-                    log.info("Option '%s' with value '%s' sent to monitor", optname, option)
+                    log.info(
+                        "Option '%s' with value '%s' sent to monitor", optname, option
+                    )
 
     def inject(self, interest=None, nosleepskip=False):
         """Cuckoo DLL injection.
@@ -585,7 +694,9 @@ class Process:
 
         thread_id = self.thread_id or 0
         if not self.is_alive():
-            log.warning("The process with pid %d is not alive, injection aborted", self.pid)
+            log.warning(
+                "The process with pid %d is not alive, injection aborted", self.pid
+            )
             return False
 
         if self.is_64bit():
@@ -601,12 +712,24 @@ class Process:
         dll = os.path.join(Path.cwd(), dll)
 
         if not os.path.exists(bin_name):
-            log.warning("Invalid loader path %s for injecting DLL in process with pid %d, injection aborted", bin_name, self.pid)
-            log.error("Please ensure the %s loader is in analyzer/windows/bin in order to analyze %s binaries", bit_str, bit_str)
+            log.warning(
+                "Invalid loader path %s for injecting DLL in process with pid %d, injection aborted",
+                bin_name,
+                self.pid,
+            )
+            log.error(
+                "Please ensure the %s loader is in analyzer/windows/bin in order to analyze %s binaries",
+                bit_str,
+                bit_str,
+            )
             return False
 
         if not os.path.exists(dll):
-            log.warning("Invalid path %s for monitor DLL to be injected in process with pid %d, injection aborted", dll, self.pid)
+            log.warning(
+                "Invalid path %s for monitor DLL to be injected in process with pid %d, injection aborted",
+                dll,
+                self.pid,
+            )
             return False
 
         self.write_monitor_config(interest, nosleepskip)
@@ -614,14 +737,21 @@ class Process:
         log.info("%s DLL to inject is %s, loader %s", bit_str, dll, bin_name)
 
         try:
-            ret = subprocess.run([bin_name, "inject", str(self.pid), str(thread_id), dll])
+            ret = subprocess.run(
+                [bin_name, "inject", str(self.pid), str(thread_id), dll]
+            )
 
             if ret.returncode == 0:
                 return True
             elif ret.returncode == 1:
                 log.info("Injected into %s process with pid %d", bit_str, self.pid)
             else:
-                log.error("Unable to inject into %s process with pid %d, error: %d", bit_str, self.pid, ret.returncode)
+                log.error(
+                    "Unable to inject into %s process with pid %d, error: %d",
+                    bit_str,
+                    self.pid,
+                    ret.returncode,
+                )
             return False
         except Exception as e:
             log.error("Error running process: %s", e)
@@ -637,7 +767,9 @@ class Process:
 
         file_path = os.path.join(PATHS["memory"], f"{self.pid}.dmp")
         try:
-            upload_to_host(file_path, os.path.join("memory", f"{self.pid}.dmp"), category="memory")
+            upload_to_host(
+                file_path, os.path.join("memory", f"{self.pid}.dmp"), category="memory"
+            )
         except Exception as e:
             log.error(e, exc_info=True)
             log.error(os.path.join("memory", f"{self.pid}.dmp"))
