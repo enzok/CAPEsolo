@@ -1,6 +1,7 @@
 import wx
 import wx.grid as gridlib
 
+from .custom_grid import CopyableGrid
 from .pe_window import PeWindow
 from CAPEsolo.capelib.objects import File
 
@@ -16,8 +17,7 @@ class TargetInfoPanel(wx.Panel):
     def InitUI(self):
         vbox = wx.BoxSizer(wx.VERTICAL)
         vbox.AddSpacer(10)
-        self.grid = gridlib.Grid(self)
-        self.grid.CreateGrid(0, 2)
+        self.grid = CopyableGrid(self,0, 2)
         self.grid.SetColLabelSize(0)
         self.grid.SetRowLabelSize(0)
 

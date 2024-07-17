@@ -4,6 +4,7 @@ import wx
 import wx.grid as gridlib
 import wx.lib.scrolledpanel as scrolled
 
+from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from CAPEsolo.capelib.parse_pe import PortableExecutable
 
@@ -119,8 +120,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
             "PDB Path",
         ]
 
-        grid = gridlib.Grid(self.panel)
-        grid.CreateGrid(1, len(columnLabels))
+        grid = CopyableGrid(self.panel, 1, len(columnLabels))
         grid.SetRowLabelSize(0)
 
         for i, label in enumerate(columnLabels):
@@ -140,8 +140,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         self.ApplyAlternateRowShading(grid)
 
     def PopulateVersioninfo(self, versionInfo):
-        grid = gridlib.Grid(self.panel)
-        grid.CreateGrid(0, 2)
+        grid = CopyableGrid(self.panel, 0, 2)
         grid.SetRowLabelSize(0)
         grid.SetColLabelSize(0)
 
@@ -179,8 +178,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
             "Entropy",
         ]
 
-        grid = gridlib.Grid(self.panel)
-        grid.CreateGrid(0, len(columnLabels))
+        grid = CopyableGrid(self.panel, 0, len(columnLabels))
         grid.SetRowLabelSize(0)
 
         for i, label in enumerate(columnLabels):
@@ -205,8 +203,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         self.ApplyAlternateRowShading(grid)
 
     def PopulateImports(self, importData):
-        grid = gridlib.Grid(self.panel)
-        grid.CreateGrid(0, 3)
+        grid = CopyableGrid(self.panel, 0, 3)
         grid.SetRowLabelSize(0)
 
         grid.SetColLabelValue(0, "Module")
@@ -251,8 +248,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
             "File type",
         ]
 
-        grid = gridlib.Grid(self.panel)
-        grid.CreateGrid(0, len(columnLabels))
+        grid = CopyableGrid(self.panel, 0, len(columnLabels))
         grid.SetRowLabelSize(0)
 
         for i, label in enumerate(columnLabels):
@@ -277,8 +273,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         self.ApplyAlternateRowShading(grid)
 
     def PopulateExports(self, exportData):
-        grid = gridlib.Grid(self.panel)
-        grid.CreateGrid(0, 3)
+        grid = CopyableGrid(self.panel, 0, 3)
         grid.SetRowLabelSize(0)
 
         grid.SetColLabelValue(0, "Name")
@@ -302,8 +297,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         self.ApplyAlternateRowShading(grid)
 
     def PopulateDirents(self, direntsData):
-        grid = gridlib.Grid(self.panel)
-        grid.CreateGrid(0, 3)
+        grid = CopyableGrid(self.panel, 0, 3)
         grid.SetRowLabelSize(0)
 
         grid.SetColLabelValue(0, "Name")

@@ -4,6 +4,7 @@ import wx
 import wx.grid as gridlib
 import wx.lib.scrolledpanel as scrolled
 
+from .custom_grid import CopyableGrid
 from .hexview_window import HexViewWindow
 from .pe_window import PeWindow
 from CAPEsolo.capelib.cape_utils import (
@@ -65,8 +66,7 @@ class PayloadsPanel(wx.Panel):
                 fileinfo = File(str(path)).get_all()[0]
                 filepath = key[0].upper() + key[1:]
 
-                grid = gridlib.Grid(self.panel)
-                grid.CreateGrid(0, 2)
+                grid = CopyableGrid(self.panel, 0, 2)
                 grid.SetColLabelSize(0)
                 grid.SetRowLabelSize(0)
                 self.AddNewRow(grid, "Path", filepath)

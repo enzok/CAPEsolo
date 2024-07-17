@@ -4,6 +4,7 @@ from pathlib import Path
 import wx
 import wx.grid as gridlib
 
+from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from CAPEsolo.capelib.behavior import BehaviorAnalysis
 from CAPEsolo.capelib.utils import convert_to_printable
@@ -126,8 +127,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         pane.SetSizer(paneBox)
         paneBox.Layout()
 
-        self.grid = gridlib.Grid(self)
-        self.grid.CreateGrid(0, 8)
+        self.grid = CopyableGrid(self, 0, 8)
         columnLabels = [
             "Time",
             "TID",
