@@ -41,6 +41,9 @@ class YaraPanel(wx.Panel):
             paths = filehits.keys()
             for file in paths:
                 content += f"\u2022 {file}:\n"
+                if len(filehits[file]) < 1:
+                    content += "\tNo yara hits.\n"
+                    continue
                 for hit in filehits[file]:
                     capename = get_cape_name_from_yara_hit(hit)
                     if capename:
@@ -54,6 +57,7 @@ class YaraPanel(wx.Panel):
                     addrs = hit.get("addresses", {})
                     for key in addrs.keys():
                         content += f"\t\t{key}: {addrs[key]}\n"
+                content += "\n"
         if not content:
             content = "No yara hits."
 
@@ -65,7 +69,8 @@ class YaraPanel(wx.Panel):
             self.yara.Scan(str(self.targetFile))
         except FileNotFoundError:
             print("Target not found. This may be normal.")
-        self.yara.ScanDumps()
+        content = ""
+        self.yara.ScanPayloads()
         content = self.PrintResults()
         self.resultsWindow.SetValue(content)
         self.yaraButton.Disable()

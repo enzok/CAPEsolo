@@ -16,7 +16,7 @@ class ProcessYara:
         hits[target] = self.yara.get_yara(target)
         self.yara_results.append({target: hits[target]})
 
-    def ScanDumps(self):
+    def ScanPayloads(self):
         hits = {}
         content = LoadFilesJson(self.analysisDir)
         if "error" not in content.keys():
