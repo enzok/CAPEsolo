@@ -73,6 +73,7 @@ class StartPanel(wx.Panel):
         self.parent = parent
         self.curDir = True
         self.analysisDir = parent.analysisDir
+        self.analysisLogPath = os.path.join(parent.analysisDir, "analysis.log")
         self.debug = parent.debug
         self.package = ""
         self.capesoloRoot = parent.capesoloRoot
@@ -402,8 +403,8 @@ class StartPanel(wx.Panel):
             main_frame = self.GetMainFrame()
             size = main_frame.GetSize()
             position = main_frame.GetPosition()
-            viewer_window = LoggerWindow(self, "Analysis Log", position, size)
-            viewer_window.Show()
+            loggerWindow = LoggerWindow(self, "Analysis Log", position, size)
+            loggerWindow.Show()
             self.StartAnalysis()
 
         except Exception as e:
