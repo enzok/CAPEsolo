@@ -386,7 +386,7 @@ class StartPanel(wx.Panel):
                     self.package = package
                 else:
                     wx.MessageBox(
-                        f"Package {package} not available, select package manually.",
+                        f"Package identification error, select package manually.",
                         "Error",
                         wx.OK | wx.ICON_ERROR,
                     )

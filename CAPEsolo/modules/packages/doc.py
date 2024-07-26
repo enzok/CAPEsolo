@@ -1,17 +1,20 @@
 # Copyright (C) 2010-2015 Cuckoo Foundation.
 # This file is part of Cuckoo Sandbox - http://www.cuckoosandbox.org
 # See the file 'docs/LICENSE' for copying permission.
+import os
 
 from lib.common.abstracts import Package
 from lib.common.common import check_file_extension
-from lib.common.constants import MSOFFICE_TRUSTED_PATH
+from lib.common.constants import MSOFFICE_TRUSTED_PATH, TRUSTED_PATH_TEXT
 from lib.common.exceptions import CuckooPackageError
 
 
 class DOC(Package):
     """Word analysis package."""
 
-    default_curdir = MSOFFICE_TRUSTED_PATH
+    for trusted_path in MSOFFICE_TRUSTED_PATH:
+       if os.path.exists(trusted_path):
+           default_curdir = trusted_path
 
     def __init__(self, options=None, config=None):
         if options is None:
@@ -25,6 +28,10 @@ class DOC(Package):
         ("ProgramFiles", "Microsoft Office*", "root", "Office*", "WINWORD.EXE"),
         ("ProgramFiles", "Microsoft Office", "WORDVIEW.EXE"),
     ]
+    summary = "Opens a document file with WINWORD.EXE."
+    description = f"""Uses 'WINWORD.EXE /q', or if unavailable, 'WORDVIEW.EXE /q'.
+    {TRUSTED_PATH_TEXT}
+    The .doc filename extension will be added automatically."""
 
     def start(self, path):
         # Try getting winword or wordview as a backup
