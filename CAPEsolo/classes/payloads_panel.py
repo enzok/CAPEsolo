@@ -23,7 +23,9 @@ class PayloadsPanel(wx.Panel):
         self.analysisDir = parent.analysisDir
         self.payloadsLoaded = False
         self.button_to_path = {}
-        self.panel = scrolled.ScrolledPanel(self, -1)
+        self.panel = scrolled.ScrolledPanel(
+            self, -1, style=wx.TAB_TRAVERSAL | wx.SUNKEN_BORDER
+        )
         self.panel.SetupScrolling(scroll_x=True, scroll_y=True)
         self.panel.SetAutoLayout(1)
         self.panelsizer = wx.BoxSizer(wx.VERTICAL)
