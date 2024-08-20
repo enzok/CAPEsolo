@@ -638,9 +638,10 @@ class Process:
         log.info("Termination confirmed for process %d", self.pid)
         KERNEL32.CloseHandle(self.terminate_event_handle)
 
-        ttd = int(self.options["ttd"])
-        if ttd:
-            self.ttd_stop()
+        try:
+            ttd = int(self.options.get("ttd", 0))
+        except (ValueError, TypeError):
+            ttd = 0
 
     def terminate(self):
         """Terminate process.
