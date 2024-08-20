@@ -789,7 +789,7 @@ class Process:
             )
             return False
 
-        ttd = int(self.options["ttd"])
+        ttd = int(self.options.get("ttd", 0))
         if ttd:
             self.options["no-iat"] = 1
 
