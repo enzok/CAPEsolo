@@ -54,6 +54,8 @@ class TargetInfoPanel(wx.Panel):
             if key not in "path" and value:
                 if not isinstance(value, str):
                     value = str(value) + " bytes"
+                if value.startswith("s_"):
+                    value = value[2:]
                 self.AddNewRow(key[0].upper() + key[1:], value)
         self.grid.AutoSizeColumns()
         self.grid.SetColSize(0, 120)
