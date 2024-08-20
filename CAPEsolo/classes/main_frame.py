@@ -14,6 +14,7 @@ from .start_panel import StartPanel
 from .strings_panel import StringsPanel
 from .target_info import TargetInfoPanel
 from .yara_panel import YaraPanel
+from .signatures_panel import SignaturesPanel
 from CAPEsolo.capelib.path_utils import path_mkdir
 
 
@@ -63,6 +64,7 @@ class MainFrame(wx.Frame):
         self.panel = wx.Panel(self)
         self.notebook = wx.Notebook(self.panel)
         self.notebook.analysisDir = self.analysisDir
+        self.notebook.results = {}
         self.notebook.debug = self.debug
         self.notebook.yara = ProcessYara(self.analysisDir)
         self.notebook.configHits = []
@@ -74,6 +76,8 @@ class MainFrame(wx.Frame):
         self.notebook.AddPage(self.infoTab, "Info")
         self.behaviorTab = BehaviorPanel(self.notebook)
         self.notebook.AddPage(self.behaviorTab, "Behavior")
+        self.signaturesTab = SignaturesPanel(self.notebook)
+        self.notebook.AddPage(self.signaturesTab, "Signatures")
         self.payloadsTab = PayloadsPanel(self.notebook)
         self.notebook.AddPage(self.payloadsTab, "Payloads")
         self.yaraTab = YaraPanel(self.notebook)
@@ -96,6 +100,8 @@ class MainFrame(wx.Frame):
         newSelection = event.GetSelection()
         selectedPage = self.notebook.GetPage(newSelection)
         if selectedPage == self.behaviorTab:
+            selectedPage.UpdateGenerateButtonState()
+        elif selectedPage == self.signaturesTab:
             selectedPage.UpdateGenerateButtonState()
         elif selectedPage == self.infoTab:
             selectedPage.LoadAndDisplayContent()
