@@ -19,6 +19,8 @@ dnfile = "^0.15.0"
 SFlock2 = {version = "0.3.65", extras = ["shellcode","win32"]}
 greenlet = "^3.0.3"
 gevent = "^24.2.1"
+dnspython = "^2.6.1"
+tldextract = "^5.1.2"
 
 [tool.poetry.scripts]
 CAPEsolo = "CAPEsolo.cli:main"

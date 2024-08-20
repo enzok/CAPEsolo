@@ -39,6 +39,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
     def __init__(self, parent):
         super(BehaviorPanel, self).__init__(parent)
         self.analysisDir = parent.analysisDir
+        self.results = parent.results
         self.BindKeyEvents()
         self.behaviorComplete = False
         self.mycalls = []
@@ -193,7 +194,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         behavior = BehaviorAnalysis()
         behavior.set_path(self.analysisDir)
         behavior.set_options(options)
-        self.results = behavior.run()
+        self.results["behavior"] = behavior.run()
         self.LoadResultCategories()
         self.LoadResultProcesses()
         self.behaviorButton.Disable()
@@ -202,7 +203,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.behaviorComplete = True
 
     def LoadResultProcesses(self):
-        processes = self.results["processes"]
+        processes = self.results.get("behavior", {}).get("processes", [])
         self.processDropdown.Append("<Select process>")
         self.processDropdown.SetSelection(0)
         for process in processes:
@@ -212,7 +213,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             self.processDropdown.Append(proc)
 
     def LoadResultCategories(self):
-        categories = self.results.keys()
+        categories = self.results.get("behavior", {}).keys()
         self.categoryDropdown.Append("<Select category>")
         self.categoryDropdown.SetSelection(0)
         for category in categories:
@@ -247,12 +248,12 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.Display(results, "process")
 
     def GetCatBehavior(self, category):
-        results = self.results[category] or "No results"
+        results = self.results.get("behavior", {}).get(category) or "No results"
         return results
 
     def GetProcBehavior(self, process):
         pid = process.split(":")[0]
-        for proc in self.results.get("processes", []):
+        for proc in self.results.get("behavior", {}).get("processes", []):
             if int(pid) == proc.get("process_id"):
                 return proc
 
