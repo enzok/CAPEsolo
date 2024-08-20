@@ -22,7 +22,9 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
     ):
         super(PeWindow, self).__init__(parent, title=title, *args, **kwargs)
         self.data = PortableExecutable(str(filepath)).run()
-        self.panel = scrolled.ScrolledPanel(self, -1)
+        self.panel = scrolled.ScrolledPanel(
+            self, -1, style=wx.TAB_TRAVERSAL | wx.SUNKEN_BORDER
+        )
         self.panel.SetAutoLayout(1)
         self.panel.SetupScrolling(scroll_x=True, scroll_y=True)
         self.vbox = wx.BoxSizer(wx.VERTICAL)

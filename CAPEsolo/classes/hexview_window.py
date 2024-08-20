@@ -16,7 +16,9 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
         **kwargs,
     ):
         super(HexViewWindow, self).__init__(parent, title=title, *args, **kwargs)
-        self.panel = scrolled.ScrolledPanel(self, -1)
+        self.panel = scrolled.ScrolledPanel(
+            self, -1, style=wx.TAB_TRAVERSAL | wx.SUNKEN_BORDER
+        )
         self.panel.SetAutoLayout(1)
         self.panel.SetupScrolling(scroll_x=True, scroll_y=True)
         self.vbox = wx.BoxSizer(wx.VERTICAL)
@@ -68,7 +70,7 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
 
         dc = wx.ClientDC(textCtrl)
         dc.SetFont(font)
-        textWidth, _ = dc.GetTextExtent(hexdata.split('\n')[0])
+        textWidth, _ = dc.GetTextExtent(hexdata.split("\n")[0])
 
         self.SetSize(textWidth + 80, self.mainWindowSize.y)
         self.vbox.Add(textCtrl, 1, wx.EXPAND | wx.ALL, 10)
