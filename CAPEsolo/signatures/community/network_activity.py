@@ -34,16 +34,21 @@ class NetworkActivity(Signature):
             "send",
             "WSAConnect",
             "GetAddrInfoW",
+            "InternetCrackUrlA",
+            "GetAddrInfoExW",
+            "ConnectEx",
         ]
     )
 
     def __init__(self, *args, **kwargs):
         Signature.__init__(self, *args, **kwargs)
         self.nodes = []
+        self.names = []
         self.inet_connect = []
         self.connect = []
         self.send = []
         self.wsa_connect = []
+        self.urls = []
 
     def on_call(self, call, process):
         if call["api"] == "getaddrinfo" or call["api"] == "GetAddrInfoW":
@@ -51,12 +56,22 @@ class NetworkActivity(Signature):
                 {call["api"]: {"node": self.get_argument(call, "NodeName")}}
             )
 
+        elif call["api"] == "GetAddrInfoExW":
+            self.nodes.append(
+                {call["api"]: {"node": self.get_argument(call, "Name")}}
+            )
+
+        elif call["api"] == "InternetCrackUrlA":
+            self.urls.append(
+                {call["api"]: {"node": self.get_argument(call, "Url")}}
+            )
+
         elif call["api"].startswith("InternetConnect"):
             self.inet_connect.append(
                 {call["api"]: {"ServerName": self.get_argument(call, "ServerName")}}
             )
 
-        elif call["api"] == "connect":
+        elif call["api"] == "connect" or call["api"] == "ConnectEx":
             ip = self.get_argument(call, "ip")
             port = self.get_argument(call, "port")
             socket = self.get_argument(call, "socket")
@@ -81,8 +96,16 @@ class NetworkActivity(Signature):
             for item in self.nodes:
                 self.data.append(item)
 
+        if self.names:
+            for item in self.names:
+                self.data.append(item)
+
         if self.inet_connect:
             for item in self.inet_connect:
+                self.data.append(item)
+
+        if self.urls:
+            for item in self.urls:
                 self.data.append(item)
 
         if self.connect:
