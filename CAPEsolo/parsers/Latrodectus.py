@@ -17,16 +17,15 @@ import logging
 import os
 import re
 from contextlib import suppress
+from pathlib import Path
 
 import pefile
 import yara
-
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from lib.cuckoo.common.constants import CUCKOO_ROOT
-
-yara_path = os.path.join(CUCKOO_ROOT, "data", "yara", "CAPE", "Latrodectus.yar")
+filepath = Path(os.path.dirname(__file__)).parent
+yara_path = os.path.join(filepath, "yara", "CAPE", "Latrodectus.yar")
 with open(yara_path, "r") as yara_rule:
     yara_rules = yara.compile(source=yara_rule.read())
 
