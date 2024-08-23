@@ -2,9 +2,9 @@ import logging
 import re
 import struct
 from contextlib import suppress
-from Cryptodome.Cipher import ARC4
 
 import pefile
+from Cryptodome.Cipher import ARC4
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -48,32 +48,31 @@ def extract_config(filebuf):
         offset += padding
 
         with suppress(IndexError, UnicodeDecodeError, ValueError):
-            decrypted_result = (
-                ARC4.new(key)
-                .decrypt(encrypted_string)
-                .replace(b"\x00", b"")
-                .decode("utf-8")
-            )
+            decrypted_result = ARC4.new(key).decrypt(encrypted_string).replace(b"\x00", b"").decode("utf-8")
             if decrypted_result and len(decrypted_result) > 1:
                 entries.append(decrypted_result)
 
     if entries:
         c2s = []
+        mutexes = []
         for item in entries:
-            if item.count(".") == 3:
+            if item.count(".") == 3 and re.fullmatch(r"\d+", item.replace(".", "")):
                 c2s.append(item)
 
             if "http" in item:
                 c2s.append(item)
 
             if item.count("-") == 4:
-                cfg["Mutex"] = item
+                mutexes.append(item)
 
             if len(item) == 16 and is_hex(item):
                 cfg["Encryption Key"] = item
 
         if c2s:
             cfg["C2"] = c2s
+
+        if mutexes:
+            cfg["Mutex"] = list(set(mutexes))
 
     return cfg
 
