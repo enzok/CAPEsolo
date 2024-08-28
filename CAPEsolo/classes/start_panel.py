@@ -72,6 +72,7 @@ class StartPanel(wx.Panel):
         super().__init__(parent)
         self.parent = parent
         self.curDir = True
+        self.manualExecution = False
         self.analysisDir = parent.analysisDir
         self.analysisLogPath = os.path.join(parent.analysisDir, "analysis.log")
         self.debug = parent.debug
@@ -103,13 +104,17 @@ class StartPanel(wx.Panel):
         self.runFromCurrentDirCheckbox = wx.CheckBox(
             self, label="Run sample from current directory"
         )
-        self.runFromCurrentDirCheckbox.Bind(wx.EVT_CHECKBOX, self.OnCheckboxClick)
+        self.runFromCurrentDirCheckbox.Bind(wx.EVT_CHECKBOX, self.OnCurrentDirCheckboxClick)
         self.runFromCurrentDirCheckbox.SetValue(True)
+        self.manualExecutionCheckbox = wx.CheckBox(self, label="Manual Execution")
+        self.manualExecutionCheckbox.Bind(wx.EVT_CHECKBOX, self.OnManualExecCheckboxClick)
+        self.manualExecutionCheckbox.SetValue(False)
         hbox2.Add(packageLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10)
         hbox2.Add(
             self.packageDropdown, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=10
         )
         hbox2.Add(self.runFromCurrentDirCheckbox, flag=wx.ALIGN_CENTER_VERTICAL)
+        hbox2.Add(self.manualExecutionCheckbox, flag=wx.ALIGN_CENTER_VERTICAL)
 
         # Optional Arguments Input
         hbox3 = wx.BoxSizer(wx.HORIZONTAL)
@@ -170,8 +175,12 @@ class StartPanel(wx.Panel):
 
         self.SetSizer(vbox)
 
-    def OnCheckboxClick(self, event):
+    def OnCurrentDirCheckboxClick(self, event):
         self.curDir = self.runFromCurrentDirCheckbox.GetValue()
+
+    def OnManualExecCheckboxClick(self, event):
+        self.manualExecution = self.manualExecutionCheckbox.GetValue()
+        self.curDir = True
 
     def OnAnalyzerComplete(self, event):
         from CAPEsolo.analyzer import (
@@ -357,6 +366,9 @@ class StartPanel(wx.Panel):
         if user_options == "option1=value, option2=value, etc...":
             user_options = ""
             sep = ""
+        if self.manualExecution:
+            user_options += f"{sep}manual=True, interactive=True"
+            sep = ","
         if self.curDir:
             curdir = Path(filename).parent
             user_options += f"{sep}curdir={curdir}"
