@@ -18,7 +18,7 @@ rule NitrogenLoader
     meta:
         author = "enzok"
         description = "Nitrogen Loader"
-        cape_type = "NitrogenLoader Config"
+        cape_type = "NitrogenLoader Loader"
     strings:
 		$iv = {8B 84 24 [4] 8B 4C 24 ?? 0F AF C8 8B C1 [0-20] 89 44 24 ?? 48 8D 15 [3] 00}
 		$aeskey = {48 8D 8C 24 [4] E8 [3] 00 48 8B C8 E8 [3] 00 4? 89 84 24 [4] 4? 8D 15 [3] 00}
