@@ -45,7 +45,10 @@ def decrypt_aes_cbc(encrypted_data, key, iv):
 
 def extract_config(filebuf):
     config = {}
-    pe = pefile.PE(data=filebuf, fast_load=False)
+    try:
+        pe = pefile.PE(data=filebuf, fast_load=False)
+    except pefile.PEFormatError:
+        return
     matches = yara_rules.match(data=filebuf)
     if not matches:
         return
