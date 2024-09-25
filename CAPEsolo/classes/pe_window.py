@@ -1,12 +1,14 @@
+from hashlib import sha256
 import json
 
+import pefile
 import wx
 import wx.grid as gridlib
 import wx.lib.scrolledpanel as scrolled
 
+from CAPEsolo.capelib.parse_pe import PortableExecutable
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
-from CAPEsolo.capelib.parse_pe import PortableExecutable
 
 
 class PeWindow(wx.Frame, KeyEventHandlerMixin):
@@ -22,6 +24,8 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
     ):
         super(PeWindow, self).__init__(parent, title=title, *args, **kwargs)
         self.data = PortableExecutable(str(filepath)).run()
+        self.filepath = filepath
+        self.offset = []
         self.panel = scrolled.ScrolledPanel(
             self, -1, style=wx.TAB_TRAVERSAL | wx.SUNKEN_BORDER
         )
@@ -45,6 +49,8 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         self.InitUI()
 
     def InitUI(self):
+        if not self.data:
+            return
         self.vbox.AddSpacer(10)
         data = self.UpdatePeData(self.data)
         self.CreateGrids(data)
@@ -230,6 +236,68 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=10)
         self.ApplyAlternateRowShading(grid)
 
+    def SaveOffset(self, event):
+        if not hasattr(self, "offsets") or not self.offsets:
+            wx.MessageBox(
+                "No available offsets to save.", "Error", wx.OK | wx.ICON_ERROR
+            )
+            return
+
+        offsetChoices = [str(offset) for offset in self.offsets]
+
+        offsetDialog = wx.SingleChoiceDialog(
+            self.panel,
+            "Select an offset to save:",
+            "Save Offset Resource",
+            offsetChoices,
+        )
+
+        if offsetDialog.ShowModal() == wx.ID_OK:
+            targetOffset = int(offsetDialog.GetStringSelection(), 16)
+        else:
+            return
+
+        self.SaveResources(targetOffset)
+
+    def SaveAllResources(self, event):
+        self.SaveResources(None)
+
+    def SaveResources(self, targetOffset=None):
+        basedir = self.filepath.parent
+        subdir = basedir / "resources"
+        subdir.mkdir(parents=True, exist_ok=True)
+
+        pe = pefile.PE(str(self.filepath), fast_load=True)
+        pe.parse_data_directories(
+            directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_RESOURCE"]]
+        )
+
+        if hasattr(pe, "DIRECTORY_ENTRY_RESOURCE"):
+            resourceSaved = False
+            for resource_type in pe.DIRECTORY_ENTRY_RESOURCE.entries:
+                for resource_id in resource_type.directory.entries:
+                    for resource_lang in resource_id.directory.entries:
+                        offset = resource_lang.data.struct.OffsetToData
+                        size = resource_lang.data.struct.Size
+                        if targetOffset is None or offset == targetOffset:
+                            resource_data = pe.get_data(offset, size)
+                            sha_256 = sha256(resource_data).hexdigest()
+                            filepath = subdir / f"{sha_256}.bin"
+
+                            if not filepath.exists():
+                                with filepath.open("wb") as file:
+                                    file.write(resource_data)
+                                resourceSaved = True
+
+            if resourceSaved:
+                wx.MessageBox(
+                    "Resources saved.", "Information", wx.OK | wx.ICON_INFORMATION
+                )
+            else:
+                wx.MessageBox(
+                    "No resources saved.", "Information", wx.OK | wx.ICON_INFORMATION
+                )
+
     def PopulateResources(self, resourceData):
         resources = [
             "name",
@@ -273,6 +341,23 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
 
         self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=10)
         self.ApplyAlternateRowShading(grid)
+
+        if resourceData:
+            self.offsets = [
+                resource.get("offset")
+                for resource in resourceData
+                if "offset" in resource
+            ]
+            hbox = wx.BoxSizer(wx.HORIZONTAL)
+
+            saveOffsetBtn = wx.Button(self.panel, label="Save Offset")
+            saveOffsetBtn.Bind(wx.EVT_BUTTON, self.SaveOffset)
+            hbox.Add(saveOffsetBtn, proportion=0, flag=wx.ALL, border=5)
+            saveAllBtn = wx.Button(self.panel, label="Save All")
+            saveAllBtn.Bind(wx.EVT_BUTTON, self.SaveAllResources)
+            hbox.Add(saveAllBtn, proportion=0, flag=wx.ALL, border=5)
+
+            self.vbox.Add(hbox, proportion=0, flag=wx.ALIGN_LEFT | wx.ALL, border=5)
 
     def PopulateExports(self, exportData):
         grid = CopyableGrid(self.panel, 0, 3)

@@ -164,7 +164,9 @@ class YaraProcessor(object):
                 addresses = {}
                 for yara_string in match.strings:
                     for x in yara_string.instances:
-                        strings.extend({self._yara_encode_string(x.matched_data)})
+                        y_string = self._yara_encode_string(x.matched_data)
+                        if y_string not in strings:
+                            strings.append(y_string)
                         addresses.update({yara_string.identifier.strip("$"): x.offset})
                 results.append(
                     {
