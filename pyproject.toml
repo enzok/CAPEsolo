@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "CAPEsolo"
-version = "0.3.9"
+version = "0.4.0"
 description = "Standalone CAPEMON"
 authors = ["enzok <7831008+enzok@users.noreply.github.com>"]
 readme = "README.md"
@@ -21,6 +21,7 @@ greenlet = "^3.1.1"
 gevent = "^24.2.1"
 dnspython = "^2.6.1"
 tldextract = "^5.1.2"
+netstruct = "^1.1.2"
 
 [tool.poetry.scripts]
 CAPEsolo = "CAPEsolo.cli:main"
