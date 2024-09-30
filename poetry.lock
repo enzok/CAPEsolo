@@ -491,6 +491,16 @@ files = [
 all = ["flake8 (>=7.1.1)", "mypy (>=1.11.2)", "pytest (>=8.3.2)", "ruff (>=0.6.2)"]
 
 [[package]]
+name = "netstruct"
+version = "1.1.2"
+description = "Packed binary data for networking."
+optional = false
+python-versions = "*"
+files = [
+    {file = "netstruct-1.1.2.zip", hash = "sha256:70b6a5c73f5bbc7ab57b019369642adfb34dd8af41b948c400ce95f952b7df9a"},
+]
+
+[[package]]
 name = "numpy"
 version = "2.1.1"
 description = "Fundamental package for array computing in Python"
@@ -793,21 +803,22 @@ testing = ["black", "mypy", "pytest", "pytest-gitignore", "pytest-mock", "respon
 
 [[package]]
 name = "unicorn"
-version = "2.1.0"
+version = "2.1.1"
 description = "Unicorn CPU emulator engine"
 optional = false
 python-versions = "*"
 files = [
-    {file = "unicorn-2.1.0-py2.py3-none-macosx_10_9_universal2.whl", hash = "sha256:a7c8abbf617cfa8d91d66a644f9aa093da0ce535afd9fb725a325ddd91902856"},
-    {file = "unicorn-2.1.0-py2.py3-none-macosx_12_7_x86_64.whl", hash = "sha256:5dbdbc06d44d93f70ddee2b8dd3ec7accb77cb08794aeaad9386c29b43812c1a"},
-    {file = "unicorn-2.1.0-py2.py3-none-manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:c6ae49483edae11b8f1a5c47e3b15905249f52dedcd7daf178c438d9deef1eb6"},
-    {file = "unicorn-2.1.0-py2.py3-none-manylinux1_i686.whl", hash = "sha256:a153dcd9fed4c3096d84fc5473c147527457e1e3a0dac9408a347b1099f6f0ed"},
-    {file = "unicorn-2.1.0-py2.py3-none-manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fc1fa93d0c26352c06a306933f9f9302671ca504eafa75e0c1911fcd7f20b37d"},
-    {file = "unicorn-2.1.0-py2.py3-none-manylinux1_x86_64.whl", hash = "sha256:27884e0e45e13fef4aabf1d7c99b2ee86407b88883d9563a158ea76cc280a799"},
-    {file = "unicorn-2.1.0-py2.py3-none-manylinux2014_aarch64.whl", hash = "sha256:f860d97f5b70a047b78bf042dbd545bb8e674445fdf2f750ba836f251cc163bb"},
-    {file = "unicorn-2.1.0-py2.py3-none-win32.whl", hash = "sha256:6a32dad9720c1798fc8dc3d703d64398a1dbcd6f58a96ad17a8addc981ff3e3a"},
-    {file = "unicorn-2.1.0-py2.py3-none-win_amd64.whl", hash = "sha256:3ed28682a80af74165e7536dc1407fb4cd21250ccea41c1930f66a91b5b0683c"},
-    {file = "unicorn-2.1.0.tar.gz", hash = "sha256:f4203180be9b9c579b26db6364359d9dd33de8f6534aa8579b66e66dcdb91907"},
+    {file = "unicorn-2.1.1-py2.py3-none-macosx_11_0_arm64.whl", hash = "sha256:8839c02de1914acb9decb291f89eefb2944148460cf5f09a9a1cde920e32e509"},
+    {file = "unicorn-2.1.1-py2.py3-none-macosx_12_7_x86_64.whl", hash = "sha256:a52470664a6fe76f735943de5c90865ef049e23522dd1751306fefe2384e5dba"},
+    {file = "unicorn-2.1.1-py2.py3-none-manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:13e7fb410a4258522dbc5482d24949f1a89d4f113bc7fd30d523cdad1e543c3f"},
+    {file = "unicorn-2.1.1-py2.py3-none-manylinux1_i686.whl", hash = "sha256:8b890ad01ec49bae78b6419dbd11caae18c5398a26086c4b0800943efb15963c"},
+    {file = "unicorn-2.1.1-py2.py3-none-manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b0f139adb1c9406f57d25cab96ad7a6d3cbb9119f5480ebecedd4f5d7cb024fb"},
+    {file = "unicorn-2.1.1-py2.py3-none-manylinux1_x86_64.musllinux_1_2_x86_64.whl", hash = "sha256:d4a08dbf222c5481bc909a9aa404b79874f6e67f5ba7c47036d03c68ab7371a7"},
+    {file = "unicorn-2.1.1-py2.py3-none-manylinux1_x86_64.whl", hash = "sha256:2163d6b2803fbb2f4df79e845ecccc2803c712c200cf8910548d60fd0cbbb18e"},
+    {file = "unicorn-2.1.1-py2.py3-none-manylinux2014_aarch64.whl", hash = "sha256:06df71752e147107680df7f841360a70cc1ae1f69438dbdc3a87e642fd21eb49"},
+    {file = "unicorn-2.1.1-py2.py3-none-win32.whl", hash = "sha256:8e995ed3abd508258e8864ec1b002c3e4992ae5dc98c6ac2420935b7c04a0c6b"},
+    {file = "unicorn-2.1.1-py2.py3-none-win_amd64.whl", hash = "sha256:f0ebcfaba67ef0ebcd05ee3560268f1c6f683bdd08ff496888741a163d29735d"},
+    {file = "unicorn-2.1.1.tar.gz", hash = "sha256:904f4146b09cd708fdf6b90ebb48d30eaa0ba339382964d4d08c0b9399cf4ba3"},
 ]
 
 [[package]]
@@ -1020,4 +1031,4 @@ testing = ["coverage (>=5.0.3)", "zope.event", "zope.testing"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.11"
-content-hash = "7f5552addab3a03e720c98e7d9d3b697ac3f04a1592935c68e4a83a61ab81276"
+content-hash = "bfa0bec55f042c4ff501b7751032c7c164bf65d305b7b269bb45aa65aabd41ff"
