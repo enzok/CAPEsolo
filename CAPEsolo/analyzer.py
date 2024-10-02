@@ -553,7 +553,7 @@ class Analyzer:
         # Initialize Auxiliary modules
         Auxiliary()
         prefix = f"{auxiliary.__name__}."
-        windows_modules = ["human", "screenshots", "sysmon"]
+        windows_modules = ("human", "screenshots", "sysmon")
 
         for _, name, _ in pkgutil.iter_modules(auxiliary.__path__, prefix):
             try:

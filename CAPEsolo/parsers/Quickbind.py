@@ -74,7 +74,7 @@ def extract_config(filebuf):
     if entries:
         c2s = []
         mutexes = []
-        other = []
+        known_campaigns = ("capo", "aws", "bing1", "bing2", "bing3")
 
         for item in entries:
             if item.count(".") == 3 and re.fullmatch(r"\d+", item.replace(".", "")):
@@ -86,23 +86,20 @@ def extract_config(filebuf):
             elif item.count("-") == 4:
                 mutexes.append(item)
 
-            elif len(item) in [16] and is_hex(item):
+            elif is_hex(item) and len(item) >= 8:
                 cfg["Encryption Key"] = item
 
             elif "Mozilla" in item:
                 cfg["User-agent"] = item
 
-            else:
-                other.append(item)
+            elif item in known_campaigns:
+                cfg["Campaign"] = item
 
         if c2s:
             cfg["C2"] = c2s
 
         if mutexes:
             cfg["Mutex"] = list(set(mutexes))
-
-        if other:
-            cfg["Other"] = other[:2]
 
     return cfg
 
