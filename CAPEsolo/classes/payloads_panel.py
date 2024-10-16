@@ -58,6 +58,8 @@ class PayloadsPanel(wx.Panel):
         data = LoadFilesJson(self.analysisDir)
         if "error" in data:
             return
+        else:
+            data = dict(sorted(data.items(), key=lambda x: x[1]["size"], reverse=True))
         for key, value in data.items():
             if not key.startswith("aux_"):
                 cape_info = {}
@@ -110,7 +112,8 @@ class PayloadsPanel(wx.Panel):
 
                 for key, value in fileinfo.items():
                     if key not in "path" and value:
-                        value = str(value) + " bytes"
+                        if key == "size":
+                            value = str(value) + " bytes"
                         self.AddNewRow(grid, key[0].upper() + key[1:], value)
 
                 grid.AutoSizeColumns()
