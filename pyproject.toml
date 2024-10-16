@@ -22,6 +22,7 @@ gevent = "^24.2.1"
 dnspython = "^2.6.1"
 tldextract = "^5.1.2"
 netstruct = "^1.1.2"
+bs2json = "^0.1.2"
 
 [tool.poetry.scripts]
 CAPEsolo = "CAPEsolo.cli:main"

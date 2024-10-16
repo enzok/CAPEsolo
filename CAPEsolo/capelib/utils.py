@@ -390,13 +390,16 @@ def LoadFilesJson(analysisDir):
         try:
             for line in open(filePath, "rb"):
                 entry = json.loads(line)
-                filePath = os.path.join(entry["path"])
-                content[filePath] = {
+                path = entry["path"]
+                linePath = Path(analysisDir) / path
+                size = linePath.stat().st_size
+                content[path] = {
                     "pids": entry.get("pids"),
                     "ppids": entry.get("ppids"),
                     "filepath": entry.get("filepath", ""),
                     "metadata": entry.get("metadata", {}),
                     "category": entry.get("category", ""),
+                    "size": size,
                 }
             return content
         except Exception as e:

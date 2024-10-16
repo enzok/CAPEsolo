@@ -1,21 +1,41 @@
+import json
 import re
 from pathlib import Path
 
 import requests
+from bs2json import BS2Json
 
 
 def download_and_update_yara_files(yara_path, yara_url, yara_raw_url):
     yara_file_names = set()
-    yara_regex = r"([\w\-\d]+\.yar)"
+    YARA_REGEX = r"([\w\-\d]+\.yar)"
 
     # Fetch YARA rule names from GitHub
     resp = requests.get(yara_url)
-    page_content = resp.json().get("payload", {}).get("tree", {}).get("items", [])
-    for line in page_content:
-        if line:
-            match = re.search(yara_regex, line["name"])
-            if match:
-                yara_file_names.add(match.group(0))
+    resp.raise_for_status()  # raises exception when not a 2xx response
+    if resp.status_code != 204:
+        try:
+            if resp.headers["content-type"].strip().startswith("application/json"):
+                page_content = json.loads(resp.content).get("payload", {}).get("tree", {}).get("items", [])
+            elif resp.headers["content-type"].strip().startswith("text/html"):
+                bs2_json = BS2Json(resp.text)
+                json_obj = bs2_json.convert()
+                payload_text = json_obj["html"]["body"]["div"][0]["div"][3]["div"]["main"]["turbo-frame"]["div"]["react-app"]["script"][
+                    "text"
+                ]
+                json_payload = json.loads(payload_text)
+                page_content = json_payload.get("payload", {}).get("tree", {}).get("items", [])
+            else:
+                dataform = str(resp.content).strip("'<>() ").replace("'", '"')
+                page_content = json.loads(dataform).get("payload", {}).get("tree", {}).get("items", [])
+            for line in page_content:
+                if not line:
+                    continue
+                match = re.search(YARA_REGEX, line["name"])
+                if match:
+                    yara_file_names.add(match.group(0))
+        except Exception as e:
+            print(e)
 
     # Delete existing YARA files
     for f in yara_path.glob("*"):
