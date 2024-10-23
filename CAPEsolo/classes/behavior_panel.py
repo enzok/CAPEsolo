@@ -181,8 +181,8 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.AddTableData(category)
 
     def UpdateGenerateButtonState(self):
-        logs_dir = Path(self.analysisDir) / "logs"
-        if logs_dir.exists() and any(logs_dir.iterdir()) and not self.behaviorComplete:
+        logsDir = Path(self.analysisDir) / "logs"
+        if logsDir.exists() and any(logsDir.iterdir()) and not self.behaviorComplete:
             self.behaviorButton.Enable()
         else:
             self.behaviorButton.Disable()
@@ -257,11 +257,11 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             if int(pid) == proc.get("process_id"):
                 return proc
 
-    def ViewData(self, data, indent=0, depth_limit=10):
+    def ViewData(self, data, indent=0, depthLimit=10):
         lines = []
         prefix = " " * indent
 
-        if depth_limit <= 0:
+        if depthLimit <= 0:
             lines.append(f"{prefix}...")
             return "\n".join(lines)
 
@@ -269,12 +269,12 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             for key, value in data.items():
                 lines.append(f"{prefix}{key}:")
                 lines.extend(
-                    self.ViewData(value, indent + 4, depth_limit - 1).splitlines()
+                    self.ViewData(value, indent + 4, depthLimit - 1).splitlines()
                 )
         elif isinstance(data, list):
             for item in data:
                 lines.extend(
-                    self.ViewData(item, indent + 4, depth_limit - 1).splitlines()
+                    self.ViewData(item, indent + 4, depthLimit - 1).splitlines()
                 )
         elif isinstance(data, bytes):
             try:
@@ -341,17 +341,17 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         return convert_to_printable(cmdline)
 
     def PrintProcessTree(self, processes, indent=0):
-        process_info = ""
+        processInfo = ""
         for process in processes:
             modulepath = process.get("module_path", "")
             cmdline = process.get("environ", {}).get("CommandLine", "")
             if cmdline:
                 cmdline = self.GetCmdLine(cmdline, modulepath)
-            process_info += f'{" " * indent}\u2022 {process.get("name")} {process.get("pid")} {cmdline}\n'
+            processInfo += f'{" " * indent}\u2022 {process.get("name")} {process.get("pid")} {cmdline}\n'
             for child in process.get("children", []):
-                process_info += self.PrintProcessTree([child], indent + 4)
+                processInfo += self.PrintProcessTree([child], indent + 4)
 
-        return process_info
+        return processInfo
 
     def ViewProcessTree(self, data):
         output = self.PrintProcessTree(data)
@@ -402,17 +402,17 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             self.grid.SetCellValue(i, 3, apiName)
 
             args = self.GetArguments(call)
-            arguments_str = "\n".join(args)
-            self.grid.SetCellValue(i, 4, arguments_str)
+            arguments = "\n".join(args)
+            self.grid.SetCellValue(i, 4, arguments)
 
             status = "Success" if call.get("status", "") else "Failure"
             self.grid.SetCellValue(i, 5, status)
 
-            return_val = str(call.get("return", ""))
+            returnVal = str(call.get("return", ""))
             if call.get("pretty_return", ""):
-                return_val = call.get("pretty_return")
+                returnVal = call.get("pretty_return")
 
-            self.grid.SetCellValue(i, 6, return_val)
+            self.grid.SetCellValue(i, 6, returnVal)
             self.grid.SetCellValue(i, 7, str(call.get("repeated", "")))
 
             color = wx.Colour(BACKGNDCLR.get(category, (255, 255, 255)))
