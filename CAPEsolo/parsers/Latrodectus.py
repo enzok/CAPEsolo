@@ -17,15 +17,15 @@ import logging
 import os
 import re
 from contextlib import suppress
-from pathlib import Path
 
 import pefile
 import yara
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-filepath = Path(os.path.dirname(__file__)).parent
-yara_path = os.path.join(filepath, "yara", "CAPE", "Latrodectus.yar")
+from lib.cuckoo.common.constants import CUCKOO_ROOT
+
+yara_path = os.path.join(CUCKOO_ROOT, "data", "yara", "CAPE", "Latrodectus.yar")
 with open(yara_path, "r") as yara_rule:
     yara_rules = yara.compile(source=yara_rule.read())
 
@@ -60,7 +60,7 @@ def decrypt_with_ctr(cbc_cipher: Cipher, iv: bytes, data: bytes) -> bytes:
 def decrypt_string_aes(data: bytes, key: bytes) -> bytes:
     len_data = int.from_bytes(data[:2], "little")
     iv = data[2:18]
-    data = data[18 : 18 + len_data]
+    data = data[18: 18 + len_data]
     cbc_cipher = initialize_key_schedule(key, iv)
     decrypted_data = decrypt_with_ctr(cbc_cipher, iv, data)
     return decrypted_data
@@ -68,17 +68,15 @@ def decrypt_string_aes(data: bytes, key: bytes) -> bytes:
 
 def prng_seed(seed):
     sub_expr = (seed + 11865) << 31 | (seed + 11865) >> 1
-    expr1 = (sub_expr << 31 | sub_expr >> 1) << 30 & (2**64 - 1)
+    expr1 = (sub_expr << 31 | sub_expr >> 1) << 30 & (2 ** 64 - 1)
     sub_expr = (expr1 & 0xFFFFFFFF) | (expr1 >> 32)
-    expr2 = ((sub_expr ^ 0x151D) >> 30) | (4 * (sub_expr ^ 0x151D)) & (2**32 - 1)
+    expr2 = ((sub_expr ^ 0x151D) >> 30) | (4 * (sub_expr ^ 0x151D)) & (2 ** 32 - 1)
     return ((expr2 >> 31) | (2 * expr2)) & 0xFFFFFFFF
 
 
 def decrypt_string(data, type):
     seed = int.from_bytes(data[:4], "little") & 0xFFFFFFFF
-    length = (int.from_bytes(data[4:6], "little")) ^ (
-        int.from_bytes(data[:2], "little")
-    ) & 0xFFFF
+    length = (int.from_bytes(data[4:6], "little")) ^ (int.from_bytes(data[:2], "little")) & 0xFFFF
     src = data[6:]
     result = bytearray()
 
@@ -153,7 +151,7 @@ def extract_config(filebuf):
 
                 if is_aes and key:
                     for i in range(len(data)):
-                        str_val = get_aes_string(data[i : i + 256], key)
+                        str_val = get_aes_string(data[i: i + 256], key)
                         if str_val and len(str_val) > 2:
                             str_vals.append(str_val)
                 else:
