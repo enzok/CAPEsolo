@@ -251,6 +251,27 @@ def emulate(code, ep):
     return uc
 
 
+def have_enough_memory_for_unicorn():
+    """
+    Avoid unicorn calling exit(1) due to memory leak.
+    - https://github.com/unicorn-engine/unicorn/issues/1766
+    - https://github.com/unicorn-engine/unicorn/pull/1629
+    """
+    try:
+        from mmap import MAP_ANON, MAP_PRIVATE, PROT_EXEC, PROT_READ, PROT_WRITE, mmap
+
+        mm = mmap(
+            -1,
+            1024 * 1024 * 1024,
+            MAP_PRIVATE | MAP_ANON,
+            PROT_WRITE | PROT_READ | PROT_EXEC,
+        )
+        mm.close()
+        return True
+    except OSError:
+        return False
+
+
 def extract_config(filebuf):
     conf_dict = {}
     pe = None
@@ -550,6 +571,9 @@ def extract_config(filebuf):
             offset += 8
     elif c2_funcs:
         for address in c2_funcs:
+            if not have_enough_memory_for_unicorn():
+                log.warning("not enough memory for unicorn")
+                continue
             uc = emulate(code, address - pe.sections[0].PointerToRawData)
             c2_address = socket.inet_ntoa(
                 struct.pack("!L", int.from_bytes(uc.mem_read(stack + 0x104, 4), byteorder="big")))
@@ -755,7 +779,8 @@ def extract_config(filebuf):
                     header = uc.mem_read(stack + 0x400, 8)
                     key_len = int.from_bytes(header[4:8], "little")
                     key = uc.mem_read(stack + 0x400, 2 * key_len + 8)
-                    label = "ECC " + key[0:4].decode()
+                    sub_label = key[0:4].decode()
+                    label = "ECC" + f" {sub_label}" if sub_label != "\x00\x00\x00\x00" else ""
                     if label.startswith("EC"):
                         conf_dict.setdefault(
                             label,

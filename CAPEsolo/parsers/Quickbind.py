@@ -2,9 +2,9 @@ import logging
 import re
 import struct
 from contextlib import suppress
-from Cryptodome.Cipher import ARC4
 
 import pefile
+from Cryptodome.Cipher import ARC4
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
