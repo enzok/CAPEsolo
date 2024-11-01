@@ -29,7 +29,6 @@ os.chdir(CAPESOLO_ROOT)
 
 from classes.main_frame import MainFrame
 from classes.splash_screen import SplashScreen
-from utils.update_parsers import update_parsers
 from utils.update_yara import update_yara
 
 
@@ -69,16 +68,11 @@ def main():
         help="Update yara rules from CAPEv2 and community",
         action="store_true",
     )
-    parser.add_argument(
-        "--update_parsers", help="Update parser files from CAPEv2", action="store_true"
-    )
 
     args = parser.parse_args()
 
     if args.update_yara:
         update_yara(Path(CAPESOLO_ROOT))
-    elif args.update_parsers:
-        update_parsers(Path(CAPESOLO_ROOT))
     else:
         app = CapesoloApp()
         app.MainLoop()
