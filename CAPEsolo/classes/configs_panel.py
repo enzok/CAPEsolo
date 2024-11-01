@@ -1,8 +1,10 @@
 import glob
 import importlib
 import os
+from contextlib import suppress
 from pathlib import Path
 
+import cape_parsers
 import wx
 
 
@@ -51,33 +53,35 @@ class ConfigsPanel(wx.Panel):
     def ExtractConfigs(self, event):
         content = ""
         self.resultsWindow.SetValue("")
+        CAPE_PARSERS = ("core", "community")
 
         for hit in self.configHits:
             decoderModule = ""
             hitPath = list(hit.keys())[0]
             hitName = hit.get(hitPath, "")
-            path = os.path.join(self.capesoloRoot, "parsers")
-            decoders = [
-                os.path.basename(decoder)[:-3]
-                for decoder in glob.glob(f"{path}/[!_]*.py")
-            ]
-            for decoder in decoders:
-                if hitName == decoder:
-                    try:
-                        decoderModule = importlib.import_module(
-                            f"parsers.{decoder}", __package__
-                        )
-                        break
-                    except Exception as e:
-                        content += f"\n{path}: Fix parser code in {decoder}, {e}"
+
+            for parser in CAPE_PARSERS:
+                try:
+                    decoderModule = importlib.import_module(
+                        f"cape_parsers.CAPE.{parser}.{hitName}", __package__
+                    )
+                except (ImportError, IndexError, AttributeError):
+                    continue
+                except SyntaxError as e:
+                    print(f"CAPE parser: Fix your code in {parser}/{hitName} - {e}")
+                except Exception as e:
+                    print(f"CAPE parser: Fix your code in {parser}/{hitName} - {e}")
+
             if decoderModule:
+                cfg = ""
                 if self.analysisDir not in hitPath:
                     hitPath = Path(self.analysisDir) / hitPath
                 filedata = Path(hitPath).read_bytes()
-                if hasattr(decoderModule, "extract_config"):
-                    cfg = decoderModule.extract_config(filedata)
-                else:
-                    cfg = decoderModule.config(filedata)
+                with suppress(Exception):
+                    if hasattr(decoderModule, "extract_config"):
+                        cfg = decoderModule.extract_config(filedata)
+                    else:
+                        cfg = decoderModule.config(filedata)
                 if cfg:
                     content += f"\u2022 {hitPath}:\n\tFamily: {hitName}\n"
                     content += self.PrintResults(cfg)

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "CAPEsolo"
-version = "0.4.3"
+version = "0.4.4"
 description = "Standalone CAPEMON"
 authors = ["enzok <7831008+enzok@users.noreply.github.com>"]
 readme = "README.md"
@@ -10,19 +10,17 @@ python = "^3.11"
 wxpython = "^4.2.1"
 pywin32 = "^308"
 bson = "^0.5.10"
-yara-python = "^4.5.0"
+yara-python = "^4.5.1"
 pefile = "^2024.8.26"
-pycryptodomex = "^3.20.0"
 cryptography = "^43.0.0"
 requests = "^2.32.3"
-dnfile = "^0.15.0"
 SFlock2 = {version = "0.3.67", extras = ["shellcode","win32"]}
 greenlet = "^3.1.1"
 gevent = "^24.10.3"
 dnspython = "^2.6.1"
 tldextract = "^5.1.2"
-netstruct = "^1.1.2"
 bs2json = "^0.1.2"
+cape-parsers = "^0.1.4"
 
 [tool.poetry.scripts]
 CAPEsolo = "CAPEsolo.cli:main"
