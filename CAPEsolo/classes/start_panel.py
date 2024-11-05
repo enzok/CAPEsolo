@@ -4,6 +4,7 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
+from random import choice
 from threading import Thread
 
 import wx
@@ -18,7 +19,7 @@ from .logger_window import LoggerWindow
 
 log = logging.getLogger(__name__)
 
-sandbox_packages = [
+SANDBOXPACKAGES = (
     "Shellcode",
     "Shellcode_trace",
     "Shellcode_x64",
@@ -51,6 +52,18 @@ sandbox_packages = [
     "xps",
     "xslt",
     "zip",
+)
+
+DEBUGACTIONS = [
+    "dump",
+    "dumpimage",
+    "jmp",
+    "scan",
+    "skip",
+    "sleep",
+    "setbp",
+    "setdump",
+    "setdst" "setsrc",
 ]
 
 
@@ -73,6 +86,7 @@ class StartPanel(wx.Panel):
         self.parent = parent
         self.curDir = True
         self.manualExecution = False
+        self.enforceTimeout = False
         self.analysisDir = parent.analysisDir
         self.analysisLogPath = os.path.join(parent.analysisDir, "analysis.log")
         self.debug = parent.debug
@@ -91,10 +105,10 @@ class StartPanel(wx.Panel):
         hbox1 = wx.BoxSizer(wx.HORIZONTAL)
         self.targetPath = wx.TextCtrl(self)
         self.targetPath.SetValue("<Target file>")
-        browse_btn = wx.Button(self, label="Browse...")
-        browse_btn.Bind(wx.EVT_BUTTON, self.OnBrowse)
+        browseBtn = wx.Button(self, label="Browse...")
+        browseBtn.Bind(wx.EVT_BUTTON, self.OnBrowse)
         hbox1.Add(self.targetPath, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5)
-        hbox1.Add(browse_btn, proportion=0)
+        hbox1.Add(browseBtn, proportion=0)
 
         hbox2 = wx.BoxSizer(wx.HORIZONTAL)
         packageLabel = wx.StaticText(self, label="Packages")
@@ -104,10 +118,14 @@ class StartPanel(wx.Panel):
         self.runFromCurrentDirCheckbox = wx.CheckBox(
             self, label="Run sample from current directory"
         )
-        self.runFromCurrentDirCheckbox.Bind(wx.EVT_CHECKBOX, self.OnCurrentDirCheckboxClick)
+        self.runFromCurrentDirCheckbox.Bind(
+            wx.EVT_CHECKBOX, self.OnCurrentDirCheckboxClick
+        )
         self.runFromCurrentDirCheckbox.SetValue(True)
         self.manualExecutionCheckbox = wx.CheckBox(self, label="Manual Execution")
-        self.manualExecutionCheckbox.Bind(wx.EVT_CHECKBOX, self.OnManualExecCheckboxClick)
+        self.manualExecutionCheckbox.Bind(
+            wx.EVT_CHECKBOX, self.OnManualExecCheckboxClick
+        )
         self.manualExecutionCheckbox.SetValue(False)
         hbox2.Add(packageLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10)
         hbox2.Add(
@@ -118,7 +136,7 @@ class StartPanel(wx.Panel):
 
         # Optional Arguments Input
         hbox3 = wx.BoxSizer(wx.HORIZONTAL)
-        args_label = wx.StaticText(self, label="Options")
+        argsLabel = wx.StaticText(self, label="Options")
         self.optionsCtrl = wx.TextCtrl(
             self,
             value="option1=value, option2=value, etc...",
@@ -126,21 +144,91 @@ class StartPanel(wx.Panel):
         )
         self.optionsCtrl.Bind(wx.EVT_LEFT_DOWN, self.OnOptionInputClick)
         self.optionsCtrl.Bind(wx.EVT_KILL_FOCUS, self.OnOptionInputFocus)
-        hbox3.Add(args_label, flag=wx.RIGHT, border=5)
+        hbox3.Add(argsLabel, flag=wx.RIGHT, border=5)
         hbox3.Add(self.optionsCtrl, proportion=1, flag=wx.EXPAND)
 
-        # analysis.conf editor
-        hbox4 = wx.BoxSizer(wx.HORIZONTAL)
-        analysisConfLabel = wx.StaticText(self, label="analysis.conf")
-        self.analysisEditor = wx.TextCtrl(self, style=wx.TE_MULTILINE, size=(-1, 100))
-        hbox4.Add(
-            self.analysisEditor, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5
+        # Enforce Timeout Checkbox and Timeout Input
+        hboxTimeout = wx.BoxSizer(wx.HORIZONTAL)
+        self.enforceTimeoutCheckbox = wx.CheckBox(self, label="Enforce timeout")
+        self.enforceTimeoutCheckbox.Bind(
+            wx.EVT_CHECKBOX, self.OnEnforceTimeoutCheckboxClick
         )
+        self.enforceTimeoutCheckbox.SetValue(False)
+        msLabel = wx.StaticText(self, label=" seconds")
+        self.timeoutInput = wx.TextCtrl(self, size=(50, -1), value="200")
+        hboxTimeout.Add(
+            self.enforceTimeoutCheckbox,
+            flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL,
+            border=5,
+        )
+        hboxTimeout.Add(self.timeoutInput, flag=wx.ALIGN_CENTER_VERTICAL)
+        hboxTimeout.Add(msLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
 
+        # analysis.conf editor
+        analysisConfSizer = wx.BoxSizer(wx.VERTICAL)
+        self.analysisConfExpander = wx.CollapsiblePane(
+            self, label="analysis.conf"
+        )
+        self.analysisConfExpander.Bind(
+            wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged
+        )
+        self.analysisConfExpander.GetPane().SetMinSize(self.GetSize())
+        analysisConfPane = self.analysisConfExpander.GetPane()
+        self.analysisEditor = wx.TextCtrl(
+            analysisConfPane, style=wx.TE_MULTILINE, size=self.GetSize()
+        )
+        analysisConfSizer.Add(
+            self.analysisConfExpander, proportion=1, flag=wx.EXPAND | wx.ALL, border=0
+        )
+        analysisConfPaneSizer = wx.BoxSizer(wx.VERTICAL)
+        analysisConfPaneSizer.Add(
+            self.analysisEditor, proportion=1, flag=wx.EXPAND | wx.ALL, border=0
+        )
+        analysisConfPane.SetSizer(analysisConfPaneSizer)
+        self.analysisConfExpander.Collapse(True)
+        self.OnCollapsiblePaneChanged(None)
+
+        # Debugger Collapsible Pane
+        self.debuggerCollapsePane = wx.CollapsiblePane(self, label="Debugger options")
+        self.debuggerCollapsePane.Bind(
+            wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged
+        )
+        self.debuggerPane = self.debuggerCollapsePane.GetPane()
+
+        self.flexDebuggerSizer = wx.FlexGridSizer(rows=6, cols=2, hgap=10, vgap=10)
+        self.flexDebuggerSizer.AddGrowableCol(1, 1)
+
+        self.addrType0, self.addr0, self.action0, self.value0 = self.AddDebuggerControls(0)
+        self.addrType1, self.addr1, self.action1, self.value1 = self.AddDebuggerControls(1)
+        self.addrType2, self.addr2, self.action2, self.value2 = self.AddDebuggerControls(2)
+        self.addrType3, self.addr3, self.action3, self.value3 = self.AddDebuggerControls(3)
+
+        hboxCount = wx.BoxSizer(wx.HORIZONTAL)
+        countLabel = wx.StaticText(self.debuggerPane, label="Count:")
+        self.debugCount = wx.TextCtrl(self.debuggerPane, size=(75, -1))
+        hboxCount.Add(countLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hboxCount.Add(self.debugCount, flag=wx.ALIGN_CENTER_VERTICAL)
+        hboxDepth = wx.BoxSizer(wx.HORIZONTAL)
+        depthLabel = wx.StaticText(self.debuggerPane, label="Depth:")
+        self.debugDepth = wx.TextCtrl(self.debuggerPane, size=(50, -1))
+        hboxDepth.Add(depthLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hboxDepth.Add(self.debugDepth, flag=wx.ALIGN_CENTER_VERTICAL)
+        self.flexDebuggerSizer.Add(
+            hboxCount, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
+        )
+        self.flexDebuggerSizer.Add(hboxDepth, proportion=0, flag=wx.EXPAND)
+
+        debuggerVert = wx.BoxSizer(wx.VERTICAL)
+        debuggerVert.Add(self.flexDebuggerSizer, proportion=0, border=1)
+        self.debuggerPane.SetSizer(debuggerVert)
+
+        # Launch and kill
         hbox5 = wx.BoxSizer(wx.HORIZONTAL)
         self.launchAnalyzerBtn = wx.Button(self, label="Launch")
         self.launchAnalyzerBtn.Disable()
         self.launchAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnLaunchAnalyzer)
+        openDirBtn = wx.Button(self, label="View Analysis Directory")
+        openDirBtn.Bind(wx.EVT_BUTTON, self.OnOpenDirectory)
         self.terminateAnalyzerBtn = wx.Button(self, label="Kill")
         self.terminateAnalyzerBtn.Disable()
         self.terminateAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnTerminateAnalyzer)
@@ -148,32 +236,81 @@ class StartPanel(wx.Panel):
             self.launchAnalyzerBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5
         )
         hbox5.AddStretchSpacer(1)
+        hbox5.Add(openDirBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
         hbox5.Add(self.terminateAnalyzerBtn, proportion=0, flag=wx.EXPAND)
         self.terminateAnalyzerBtn.Disable()
-        # Debugger window
-        self.debugWindow = wx.TextCtrl(
-            self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.EXPAND, size=(-1, 100)
-        )
 
         # Layout
         vbox.Add(hbox1, flag=wx.EXPAND | wx.ALL, border=10)
         vbox.Add(hbox2, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(hbox3, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
-        vbox.Add(analysisConfLabel, flag=wx.LEFT | wx.TOP, border=10)
         vbox.Add(
-            hbox4,
-            proportion=1,
+            hboxTimeout, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10
+        )
+        vbox.Add(
+            self.debuggerCollapsePane,
+            flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
+            border=10,
+        )
+        vbox.Add(analysisConfSizer, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
+        vbox.Add(
+            wx.StaticLine(self, style=wx.LI_HORIZONTAL),
             flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
             border=10,
         )
         vbox.Add(hbox5, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
 
-        if self.debug:
-            vbox.Add(self.debugWindow, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
-        else:
-            self.debugWindow.Hide()
-
         self.SetSizer(vbox)
+
+    def AddDebuggerControls(self, index):
+        hboxBp = wx.BoxSizer(wx.HORIZONTAL)
+        bpLabel = wx.StaticText(self.debuggerPane, label=f"bp{index}")
+        addrTypeDropdown = wx.ComboBox(
+            self.debuggerPane, style=wx.CB_READONLY, choices=["RVA", "VA"], value="RVA"
+        )
+        hexLabel = wx.StaticText(self.debuggerPane, label=f": 0x")
+        addrTextCtrl = wx.TextCtrl(self.debuggerPane, size=(75, -1))
+        hboxBp.Add(
+            bpLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
+        )
+        hboxBp.Add(
+            addrTypeDropdown,
+            proportion=0,
+            flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            border=0,
+        )
+        hboxBp.Add(
+            hexLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0
+        )
+        hboxBp.Add(addrTextCtrl, proportion=0, flag=wx.EXPAND)
+
+        hboxAction = wx.BoxSizer(wx.HORIZONTAL)
+        actionLabel = wx.StaticText(self.debuggerPane, label=f"action{index}:")
+        actionDropdown = wx.ComboBox(
+            self.debuggerPane, style=wx.CB_READONLY, choices=[""]
+        )
+        actionDropdown.AppendItems(DEBUGACTIONS)
+        colon = wx.StaticText(self.debuggerPane, label=":")
+        valueTextCtrl = wx.TextCtrl(self.debuggerPane, size=(100, -1))
+        hboxAction.Add(
+            actionLabel,
+            proportion=0,
+            flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            border=5,
+        )
+        hboxAction.Add(actionDropdown, proportion=0, flag=wx.RIGHT, border=5)
+        hboxAction.Add(colon, proportion=0, flag=wx.RIGHT, border=2)
+        hboxAction.Add(valueTextCtrl, proportion=0, flag=wx.EXPAND)
+
+        self.flexDebuggerSizer.Add(hboxBp, 0, wx.EXPAND)
+        self.flexDebuggerSizer.Add(hboxAction, 0, wx.EXPAND)
+
+        return addrTypeDropdown, addrTextCtrl, actionDropdown, valueTextCtrl
+
+    def OnCollapsiblePaneChanged(self, event):
+        self.Layout()
+        if event:
+            event.Skip()
 
     def OnCurrentDirCheckboxClick(self, event):
         self.curDir = self.runFromCurrentDirCheckbox.GetValue()
@@ -181,6 +318,9 @@ class StartPanel(wx.Panel):
     def OnManualExecCheckboxClick(self, event):
         self.manualExecution = self.manualExecutionCheckbox.GetValue()
         self.curDir = True
+
+    def OnEnforceTimeoutCheckboxClick(self, event):
+        self.enforceTimeout = self.enforceTimeoutCheckbox.GetValue()
 
     def OnAnalyzerComplete(self, event):
         from CAPEsolo.analyzer import (
@@ -215,18 +355,18 @@ class StartPanel(wx.Panel):
         return True
 
     def MoveFiles(self, folder):
-        log_folder = f"{self.analyzer.PATHS['root']}\\{folder}"
+        logFolder = f"{self.analyzer.PATHS['root']}\\{folder}"
         try:
-            if os.path.exists(log_folder):
-                self.log(f"Uploading files at path {log_folder}")
+            if os.path.exists(logFolder):
+                self.log(f"Uploading files at path {logFolder}")
             else:
-                self.log(f"Folder at path {log_folder} does not exist, skipping")
+                self.log(f"Folder at path {logFolder} does not exist, skipping")
                 return
         except IOError as e:
-            self.log(f"Unable to access folder at path {log_folder}: {e}")
+            self.log(f"Unable to access folder at path {logFolder}: {e}")
             return
 
-        for root, dirs, files in os.walk(log_folder):
+        for root, dirs, files in os.walk(logFolder):
             for file in files:
                 file_path = os.path.join(root, file)
                 analysis_path = os.path.join(folder, file)
@@ -268,7 +408,7 @@ class StartPanel(wx.Panel):
             log.error(f"Failed to sflock_ident due to {e}")
             tmp_package = ""
 
-        if tmp_package and tmp_package in sandbox_packages:
+        if tmp_package and tmp_package in SANDBOXPACKAGES:
             if tmp_package in ("iso", "udf", "vhd"):
                 package = "archive"
             else:
@@ -357,26 +497,50 @@ class StartPanel(wx.Panel):
             self.log(f"{error} - {error_exc}\n")
 
     def AddTargetOptions(self, event):
-        current_datetime = datetime.now()
-        formatted_datetime = current_datetime.strftime("%Y%m%dT%H:%M:%S")
+        currentDatetime = datetime.now()
+        formattedDatetime = currentDatetime.strftime("%Y%m%dT%H:%M:%S")
         filename = str(self.target)
         conf = self.analysisEditor.GetValue()
-        user_options = self.optionsCtrl.GetValue()
+        userOptions = self.optionsCtrl.GetValue()
         sep = ","
-        if user_options == "option1=value, option2=value, etc...":
-            user_options = ""
+        if userOptions == "option1=value, option2=value, etc...":
+            userOptions = ""
             sep = ""
         if self.manualExecution:
-            user_options += f"{sep}manual=True, interactive=True"
+            userOptions += f"{sep}manual=True, interactive=True"
             sep = ","
         if self.curDir:
             curdir = Path(filename).parent
-            user_options += f"{sep}curdir={curdir}"
+            userOptions += f"{sep}curdir={curdir}"
+        if self.enforceTimeout:
+            conf += f"\nenforce_timeout = True"
+            conf += f"\ntimeout = {self.timeoutInput.GetValue()}"
+        debbugerOptions = self.GetDebuggerOptions()
         conf += f"\nfile_name = {filename}"
-        conf += f"\nclock = {formatted_datetime}"
+        conf += f"\nclock = {formattedDatetime}"
         conf += f"\npackage = {self.package}"
-        conf += f"\noptions = {user_options}"
+        conf += f"\noptions = {userOptions},{debbugerOptions}"
         self.analysisEditor.SetValue(conf)
+
+    def GetDebuggerOptions(self):
+        opts = []
+        for i in range(4):
+            optstring = ""
+            addrType = getattr(self, f"addrType{i}").GetValue()
+            addr = getattr(self, f"addr{i}").GetValue()
+            action = getattr(self, f"action{i}").GetValue()
+            value = getattr(self, f"value{i}").GetValue()
+            if addr:
+                optstring = f"bp{i}=0x{addr}"
+                if action:
+                    optstring += f",action{i}={action}"
+                    if value:
+                        optstring += f":{value}"
+                if addrType == "VA":
+                    optstring += f",bpva{i}=1"
+            if optstring:
+                opts.append(optstring)
+        return ",".join(opts)
 
     def OnTerminateAnalyzer(self, event):
         try:
@@ -468,3 +632,6 @@ class StartPanel(wx.Panel):
                 wx.PostEvent(self, evt)
 
         Thread(target=self.RunAnalyzer, args=(analyzer, OnComplete)).start()
+
+    def OnOpenDirectory(self, event):
+        os.startfile(self.analysisDir)
