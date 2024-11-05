@@ -59,7 +59,10 @@ def get_cape_name_from_cape_type(cape_type: str) -> str:
     """Return the part of the cape_type (e.g. "SocGholish Payload") preceding
     " Payload", " Config", " Loader", or " Strings"
     """
-    return cape_name_regex.sub("", cape_type)
+    if bool(cape_name_regex.search(cape_type)):
+        return cape_name_regex.sub("", cape_type)
+    else:
+        return ""
 
 
 def cape_type_string(type_strings, file_info, append_file):

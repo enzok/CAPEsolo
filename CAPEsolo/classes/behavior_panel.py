@@ -84,7 +84,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         )
         vbox.Add(wx.StaticText(self, label="Calls:"), flag=wx.LEFT | wx.TOP, border=5)
 
-        collapsePane = wx.CollapsiblePane(self, label="Show/Hide API Categories")
+        collapsePane = wx.CollapsiblePane(self, label="API Categories")
         collapsePane.Bind(wx.EVT_COLLAPSIBLEPANE_CHANGED, self.onPaneChanged)
         vbox.Add(collapsePane, 0, wx.ALL | wx.EXPAND, 5)
 
