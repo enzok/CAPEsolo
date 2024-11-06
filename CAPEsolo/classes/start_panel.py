@@ -195,7 +195,7 @@ class StartPanel(wx.Panel):
         )
         self.debuggerPane = self.debuggerCollapsePane.GetPane()
 
-        self.flexDebuggerSizer = wx.FlexGridSizer(rows=6, cols=2, hgap=10, vgap=10)
+        self.flexDebuggerSizer = wx.FlexGridSizer(rows=8, cols=2, hgap=10, vgap=10)
         self.flexDebuggerSizer.AddGrowableCol(1, 1)
 
         self.addrType0, self.addr0, self.action0, self.value0 = self.AddDebuggerControls(0)
@@ -203,6 +203,16 @@ class StartPanel(wx.Panel):
         self.addrType2, self.addr2, self.action2, self.value2 = self.AddDebuggerControls(2)
         self.addrType3, self.addr3, self.action3, self.value3 = self.AddDebuggerControls(3)
 
+        hboxBaseApi = wx.BoxSizer(wx.HORIZONTAL)
+        baseApiLabel = wx.StaticText(self.debuggerPane, label="base-on-api:")
+        self.baseApi = wx.TextCtrl(self.debuggerPane, size=(100, -1))
+        hboxBaseApi.Add(baseApiLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hboxBaseApi.Add(self.baseApi, flag=wx.ALIGN_CENTER_VERTICAL)
+        hboxBreakRet = wx.BoxSizer(wx.HORIZONTAL)
+        breakRetLabel = wx.StaticText(self.debuggerPane, label="break-on-return:")
+        self.apiList = wx.TextCtrl(self.debuggerPane, size=(250, -1))
+        hboxBreakRet.Add(breakRetLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hboxBreakRet.Add(self.apiList, flag=wx.ALIGN_CENTER_VERTICAL)
         hboxCount = wx.BoxSizer(wx.HORIZONTAL)
         countLabel = wx.StaticText(self.debuggerPane, label="Count:")
         self.debugCount = wx.TextCtrl(self.debuggerPane, size=(75, -1))
@@ -213,6 +223,12 @@ class StartPanel(wx.Panel):
         self.debugDepth = wx.TextCtrl(self.debuggerPane, size=(50, -1))
         hboxDepth.Add(depthLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxDepth.Add(self.debugDepth, flag=wx.ALIGN_CENTER_VERTICAL)
+        self.flexDebuggerSizer.Add(
+            hboxBaseApi, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
+        )
+        self.flexDebuggerSizer.Add(
+            hboxBreakRet, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
+        )
         self.flexDebuggerSizer.Add(
             hboxCount, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
         )
@@ -522,11 +538,11 @@ class StartPanel(wx.Panel):
         conf += f"\nenforce_timeout = {self.enforceTimeout}"
         self.countdown = int(self.timeoutInput.GetValue())
         conf += f"\ntimeout = {self.timeoutInput.GetValue()}"
-        debbugerOptions = self.GetDebuggerOptions()
+        debuggerOptions = self.GetDebuggerOptions()
         conf += f"\nfile_name = {filename}"
         conf += f"\nclock = {formattedDatetime}"
         conf += f"\npackage = {self.package}"
-        conf += f"\noptions = {userOptions},{debbugerOptions}"
+        conf += f"\noptions = {userOptions},{debuggerOptions}"
         self.analysisEditor.SetValue(conf)
 
     def GetDebuggerOptions(self):
@@ -547,6 +563,15 @@ class StartPanel(wx.Panel):
                     optstring += f",bpva{i}=1"
             if optstring:
                 opts.append(optstring)
+        if self.debugCount.GetValue():
+            opts.append(f"count={self.debugCount.GetValue()}")
+        if self.debugDepth.GetValue():
+            opts.append(f"depth={self.debugDepth.GetValue()}")
+        if self.baseApi.GetValue():
+            opts.append(f"base-on-api={self.baseApi.GetValue()}")
+        if self.apiList.GetValue():
+            opts.append(f"break-on-return={self.apiList.GetValue()}")
+
         return ",".join(opts)
 
     def OnTerminateAnalyzer(self, event):
