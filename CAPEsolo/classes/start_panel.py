@@ -4,7 +4,6 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from random import choice
 from threading import Thread
 
 import wx
@@ -16,6 +15,7 @@ from CAPEsolo.capelib.utils import sanitize_filename
 from CAPEsolo.lib.common.hashing import hash_file
 from .key_event import EVT_ANALYZER_COMPLETE_ID, EVT_ANALYZER_COMPLETE
 from .logger_window import LoggerWindow
+from .timer_window import CountdownTimer
 
 log = logging.getLogger(__name__)
 
@@ -89,11 +89,11 @@ class StartPanel(wx.Panel):
         self.enforceTimeout = False
         self.analysisDir = parent.analysisDir
         self.analysisLogPath = os.path.join(parent.analysisDir, "analysis.log")
-        self.debug = parent.debug
         self.package = ""
         self.capesoloRoot = parent.capesoloRoot
         self.targetFile = GetPreviousTarget(self.analysisDir)
         self.parent.targetFile = self.targetFile
+        self.timer = None
         self.InitUi()
         self.LoadAnalysisConfFile()
         self.Bind(EVT_ANALYZER_COMPLETE, self.OnAnalyzerComplete)
@@ -227,6 +227,7 @@ class StartPanel(wx.Panel):
         self.launchAnalyzerBtn = wx.Button(self, label="Launch")
         self.launchAnalyzerBtn.Disable()
         self.launchAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnLaunchAnalyzer)
+
         openDirBtn = wx.Button(self, label="View Analysis Directory")
         openDirBtn.Bind(wx.EVT_BUTTON, self.OnOpenDirectory)
         self.terminateAnalyzerBtn = wx.Button(self, label="Kill")
@@ -235,6 +236,7 @@ class StartPanel(wx.Panel):
         hbox5.Add(
             self.launchAnalyzerBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5
         )
+
         hbox5.AddStretchSpacer(1)
         hbox5.Add(openDirBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
         hbox5.Add(self.terminateAnalyzerBtn, proportion=0, flag=wx.EXPAND)
@@ -336,7 +338,7 @@ class StartPanel(wx.Panel):
         files.dump_files()
         upload_files("debugger")
         upload_files("tlsdump")
-
+        self.timer.Stop()
         self.log("Shutting down")
         try:
             if hasattr(self.analyzer, "command_pipe"):
@@ -484,6 +486,11 @@ class StartPanel(wx.Panel):
             self.resultserver = ResultServer("localhost", 9999, self.analysisDir)
             self.analyzer = Analyzer()
             self.analyzer.prepare()
+            mainFrame = self.GetMainFrame()
+            size = mainFrame.GetSize()
+            position = mainFrame.GetPosition()
+            timerWindow = CountdownTimer(self, self.countdown, position, size)
+            timerWindow.Show()
             self.StartAnalyzerThread(self.analyzer)
             self.terminateAnalyzerBtn.Enable()
             # os.unlink(ANALYSIS_CONF)
@@ -512,9 +519,9 @@ class StartPanel(wx.Panel):
         if self.curDir:
             curdir = Path(filename).parent
             userOptions += f"{sep}curdir={curdir}"
-        if self.enforceTimeout:
-            conf += f"\nenforce_timeout = True"
-            conf += f"\ntimeout = {self.timeoutInput.GetValue()}"
+        conf += f"\nenforce_timeout = {self.enforceTimeout}"
+        self.countdown = int(self.timeoutInput.GetValue())
+        conf += f"\ntimeout = {self.timeoutInput.GetValue()}"
         debbugerOptions = self.GetDebuggerOptions()
         conf += f"\nfile_name = {filename}"
         conf += f"\nclock = {formattedDatetime}"
@@ -576,9 +583,9 @@ class StartPanel(wx.Panel):
 
             self.AddTargetOptions(event)
             self.SaveAnalysisFile(event, False)
-            main_frame = self.GetMainFrame()
-            size = main_frame.GetSize()
-            position = main_frame.GetPosition()
+            mainFrame = self.GetMainFrame()
+            size = mainFrame.GetSize()
+            position = mainFrame.GetPosition()
             loggerWindow = LoggerWindow(self, "Analysis Log", position, size)
             loggerWindow.Show()
             self.StartAnalysis()
@@ -615,8 +622,6 @@ class StartPanel(wx.Panel):
 
     def log(self, message):
         log.info(message)
-        if self.debugWindow.IsShown():
-            self.debugWindow.AppendText(message + "\n")
 
     def RunAnalyzer(self, analyzer, callback=None):
         result = analyzer.run()

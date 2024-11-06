@@ -65,7 +65,6 @@ class MainFrame(wx.Frame):
         self.notebook = wx.Notebook(self.panel)
         self.notebook.analysisDir = self.analysisDir
         self.notebook.results = {}
-        self.notebook.debug = self.debug
         self.notebook.yara = ProcessYara(self.analysisDir)
         self.notebook.configHits = []
         self.notebook.targetFile = None
@@ -128,7 +127,6 @@ class MainFrame(wx.Frame):
         analysisDir = g_config.analysis_directory.analysis
         if analysisDir:
             self.analysisDir = analysisDir
-        self.debug = g_config.debug.enabled
 
     def SetAppIcon(self):
         icon = wx.Icon()
