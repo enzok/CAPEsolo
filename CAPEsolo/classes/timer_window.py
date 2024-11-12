@@ -2,7 +2,7 @@ import wx
 
 class CountdownTimer(wx.Frame):
     def __init__(self, parent, countdown, main_window_position, main_window_size, *args, **kwargs):
-        super(CountdownTimer, self).__init__(parent, title="Elapsed Analysis Time", style=wx.DEFAULT_FRAME_STYLE & ~(wx.CLOSE_BOX | wx.MINIMIZE_BOX | wx.MAXIMIZE_BOX), *args, **kwargs)
+        super(CountdownTimer, self).__init__(parent, title="Analysis Time Remaining", style=wx.DEFAULT_FRAME_STYLE & ~(wx.CLOSE_BOX | wx.MINIMIZE_BOX | wx.MAXIMIZE_BOX), *args, **kwargs)
         self.parent = parent
         self.countdown = countdown
 
