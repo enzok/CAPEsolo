@@ -7,8 +7,8 @@ Python GUI to run capemon in standalone VM. Provides a subset of CAPE processing
 * Download and install Microsoft Visual C++ Redistributable.
   * https://aka.ms/vs/17/release/vc_redist.x86.exe
   * https://aka.ms/vs/17/release/vc_redist.x64.exe
-* Download package file from Releases and install.
-  * pip install capesolo-[version]-py3-none.any.whl
+* Install CAPEsolo.
+  * pip install CAPEsolo
 * Snapshot your VM.
 
 Quick Start 
