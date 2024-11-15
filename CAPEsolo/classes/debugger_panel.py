@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import wx
@@ -36,6 +37,12 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
         )
         vbox.Add(self.resultsWindow, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
 
+        self.coverBtn = wx.Button(self, label="Create Coverage File")
+        self.coverBtn.Bind(wx.EVT_BUTTON, self.OnCover)
+        self.coverBtn.Disable()
+
+        vbox.Add(self.coverBtn, proportion=0, flag=wx.ALL | wx.CENTER, border=5)
+
         self.SetSizer(vbox)
 
     def PopulateLogFileDropdown(self):
@@ -51,6 +58,7 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
     def OnViewButtonClick(self, event):
         selectedFile = self.logFileDropdown.GetValue()
         self.LoadDebuggerResults(selectedFile)
+        self.coverBtn.Enable()
 
     def LoadDebuggerResults(self, file_name):
         path = Path(self.analysisDir, "debugger") / file_name
@@ -58,3 +66,92 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
             self.resultsWindow.SetValue("Selected log file does not exist.")
             return
         self.resultsWindow.SetValue(path.read_text())
+
+    def OnCover(self, event):
+        pattern1 = r".*Target\s+DLL\s+loaded\s+at\s+(0x[A-F0-9]+):.*"
+        pattern2 = r".*ImageBase\s*(0x[0-9A-F]+),.*"
+        debugData = self.resultsWindow.GetValue()
+        analysisLogPath = Path(self.analysisDir) / "analysis.log"
+        analysisData = analysisLogPath.read_text()
+        match = re.match(pattern1, analysisData, re.DOTALL)
+        if not match:
+            match = re.match(pattern2, debugData, re.DOTALL)
+        if match:
+            loaderBase = match.group(1)
+        else:
+            loaderBase = ""
+        filteredLines = set()
+        for line in debugData.splitlines():
+            if line.strip().startswith("0x"):
+                filteredLines.add(line.split()[0])
+
+        dialog = wx.Dialog(self, title="Generate Coverage File", size=(300, 150))
+        panel = wx.Panel(dialog)
+        vbox = wx.BoxSizer(wx.VERTICAL)
+
+        hbox1 = wx.BoxSizer(wx.HORIZONTAL)
+        currentLabel = wx.StaticText(panel, label="Current ImageBase   0x:")
+        loaderBase = wx.TextCtrl(panel, value=f"{loaderBase}")
+        hbox1.Add(currentLabel, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
+        hbox1.Add(loaderBase, proportion=1)
+        hbox2 = wx.BoxSizer(wx.HORIZONTAL)
+        newLabel = wx.StaticText(panel, label="New ImageBase        0x:")
+        imageBase = wx.TextCtrl(panel)
+        hbox2.Add(newLabel, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
+        hbox2.Add(imageBase, proportion=1)
+
+        vbox.Add(hbox1, flag=wx.EXPAND | wx.ALL, border=5)
+        vbox.Add(hbox2, flag=wx.EXPAND | wx.ALL, border=5)
+
+        hbox3 = wx.BoxSizer(wx.HORIZONTAL)
+        okButton = wx.Button(panel, wx.ID_OK, label="Ok")
+        cancelButton = wx.Button(panel, wx.ID_CANCEL, label="Cancel")
+        hbox3.Add(okButton, flag=wx.RIGHT, border=10)
+        hbox3.Add(cancelButton, flag=wx.RIGHT, border=10)
+
+        vbox.Add(hbox3, flag=wx.ALIGN_CENTER | wx.TOP | wx.BOTTOM, border=10)
+
+        panel.SetSizer(vbox)
+
+        if dialog.ShowModal() == wx.ID_OK:
+            loaderBase = loaderBase.GetValue()
+            if not "0x" in loaderBase:
+                loaderBase = f"0x{loaderBase}"
+            loaderBase = int(loaderBase, 16)
+            imageBase = f"0x{imageBase.GetValue()}"
+            imageBase = int(imageBase, 16)
+        dialog.Destroy()
+
+        filteredLines = [
+            self.rebase(line, imageBase, loaderBase) for line in filteredLines
+        ]
+        coverData = "\n".join(filteredLines)
+
+        if coverData:
+            coverageSaved = False
+            logName = self.logFileDropdown.GetValue()
+            filepath = (
+                Path(self.analysisDir)
+                / "debugger"
+                / f"coverage_{logName.split('.')[0]}.txt"
+            )
+            if not filepath.exists():
+                filepath.write_text(coverData)
+                coverageSaved = True
+
+            if coverageSaved:
+                wx.MessageBox(
+                    f"Coverage saved to {filepath}.",
+                    "Success",
+                    wx.OK | wx.ICON_INFORMATION,
+                )
+            else:
+                wx.MessageBox(
+                    "Coverage not saved.", "Failed", wx.OK | wx.ICON_INFORMATION
+                )
+
+    def rebase(self, offset, imageBase, loaderBase):
+        offset = int(offset, 16)
+        delta = offset - loaderBase
+        rebased = imageBase + delta
+        return f"0x{rebased:016x}"
