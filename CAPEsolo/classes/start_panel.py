@@ -223,6 +223,9 @@ class StartPanel(wx.Panel):
         self.debugDepth = wx.TextCtrl(self.debuggerPane, size=(50, -1))
         hboxDepth.Add(depthLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxDepth.Add(self.debugDepth, flag=wx.ALIGN_CENTER_VERTICAL)
+        self.yarascanDisable = wx.CheckBox(self.debuggerPane, label="Disable Monitor Yarascan")
+        hboxDepth.AddSpacer(50)
+        hboxDepth.Add(self.yarascanDisable, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10)
         self.flexDebuggerSizer.Add(
             hboxBaseApi, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
         )
@@ -567,6 +570,8 @@ class StartPanel(wx.Panel):
             opts.append(f"count={self.debugCount.GetValue()}")
         if self.debugDepth.GetValue():
             opts.append(f"depth={self.debugDepth.GetValue()}")
+        if self.yarascanDisable.GetValue():
+            opts.append(f"yarascan=0")
         if self.baseApi.GetValue():
             opts.append(f"base-on-api={self.baseApi.GetValue()}")
         if self.apiList.GetValue():
