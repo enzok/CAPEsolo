@@ -10,6 +10,7 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
     def __init__(self, parent):
         super(DebuggerPanel, self).__init__(parent)
         self.analysisDir = parent.analysisDir
+        self.coverageFilePath = None
         self.BindKeyEvents()
         self.InitUI()
 
@@ -37,11 +38,17 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
         )
         vbox.Add(self.resultsWindow, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
 
+        hboxCover = wx.BoxSizer(wx.HORIZONTAL)
         self.coverBtn = wx.Button(self, label="Create Coverage File")
         self.coverBtn.Bind(wx.EVT_BUTTON, self.OnCover)
         self.coverBtn.Disable()
+        hboxCover.Add(self.coverBtn, proportion=0, flag=wx.ALL | wx.CENTER, border=5)
+        self.coverageFileBtn = wx.Button(self, label="Copy Coverage File")
+        self.coverageFileBtn.Bind(wx.EVT_BUTTON, self.OnCopyPath)
+        self.coverageFileBtn.Disable()
+        hboxCover.Add(self.coverageFileBtn, proportion=1, flag=wx.ALL | wx.CENTER, border=5)
 
-        vbox.Add(self.coverBtn, proportion=0, flag=wx.ALL | wx.CENTER, border=5)
+        vbox.Add(hboxCover, proportion=0, flag=wx.ALL | wx.CENTER, border=5)
 
         self.SetSizer(vbox)
 
@@ -118,13 +125,15 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
             if not "0x" in loaderBase:
                 loaderBase = f"0x{loaderBase}"
             loaderBase = int(loaderBase, 16)
-            imageBase = f"0x{imageBase.GetValue()}"
-            imageBase = int(imageBase, 16)
+            imageBase = imageBase.GetValue()
+            if imageBase:
+                imageBase = int(imageBase, 16)
+                filteredLines = [
+                    self.rebase(line, imageBase, loaderBase) for line in filteredLines
+                ]
+
         dialog.Destroy()
 
-        filteredLines = [
-            self.rebase(line, imageBase, loaderBase) for line in filteredLines
-        ]
         coverData = "\n".join(filteredLines)
 
         if coverData:
@@ -138,6 +147,10 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
             if not filepath.exists():
                 filepath.write_text(coverData)
                 coverageSaved = True
+                self.coverageFilePath = str(filepath)
+
+            if filepath.exists():
+                self.coverageFileBtn.Enable()
 
             if coverageSaved:
                 wx.MessageBox(
@@ -155,3 +168,17 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
         delta = offset - loaderBase
         rebased = imageBase + delta
         return f"0x{rebased:016x}"
+
+    def OnCopyPath(self, event):
+        if wx.TheClipboard.Open():
+            file_data = wx.FileDataObject()
+            file_data.AddFile(self.coverageFilePath)
+            wx.TheClipboard.SetData(file_data)
+            wx.TheClipboard.Close()
+            wx.MessageBox(
+                f"Analysis log copied: {self.coverageFilePath}",
+                "Info",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+        else:
+            wx.LogError("Unable to open the clipboard.")
