@@ -144,12 +144,12 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
                 / "debugger"
                 / f"coverage_{logName.split('.')[0]}.txt"
             )
-            if not filepath.exists():
-                filepath.write_text(coverData)
-                coverageSaved = True
-                self.coverageFilePath = str(filepath)
+
+            filepath.write_text(coverData)
+            self.coverageFilePath = str(filepath)
 
             if filepath.exists():
+                coverageSaved = True
                 self.coverageFileBtn.Enable()
 
             if coverageSaved:

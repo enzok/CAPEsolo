@@ -61,11 +61,26 @@ DEBUGACTIONS = [
     "scan",
     "skip",
     "sleep",
-    "setbp",
+    "setbp0",
+    "setbp1",
+    "setbp2",
+    "setbp3",
     "setdump",
-    "setdst" "setsrc",
+    "setdst",
+    "setsrc",
 ]
 
+YARARULE = """
+rule DebuggerRule
+{
+    meta:
+        cape_options = ""
+    strings:
+        $string = ""
+    condition:
+        all of them
+}
+"""
 
 def GetPreviousTarget(analysisDir):
     for path in Path(analysisDir).glob("s_*"):
@@ -87,6 +102,7 @@ class StartPanel(wx.Panel):
         self.curDir = True
         self.manualExecution = False
         self.enforceTimeout = False
+        self.debugger_controls = {}
         self.analysisDir = parent.analysisDir
         self.analysisLogPath = os.path.join(parent.analysisDir, "analysis.log")
         self.package = ""
@@ -147,7 +163,9 @@ class StartPanel(wx.Panel):
         hbox3.Add(argsLabel, flag=wx.RIGHT, border=5)
         hbox3.Add(self.optionsCtrl, proportion=1, flag=wx.EXPAND)
 
-        # Enforce Timeout Checkbox and Timeout Input
+        hboxHelp = self.AddOptionsHelp()
+
+        # Enforce Timeout heckbox, Timeout, and Minimum and No Hook checkboxes
         hboxTimeout = wx.BoxSizer(wx.HORIZONTAL)
         self.enforceTimeoutCheckbox = wx.CheckBox(self, label="Enforce timeout")
         self.enforceTimeoutCheckbox.Bind(
@@ -163,6 +181,15 @@ class StartPanel(wx.Panel):
         )
         hboxTimeout.Add(self.timeoutInput, flag=wx.ALIGN_CENTER_VERTICAL)
         hboxTimeout.Add(msLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        self.minhook = wx.CheckBox(self, label="minhook")
+        self.minhook.Bind(wx.EVT_CHECKBOX, self.OnMinhookChecked)
+        self.free = wx.CheckBox(self, label="free")
+        self.free.Bind(wx.EVT_CHECKBOX, self.OnZerohookChecked)
+        self.log_exceptions = wx.CheckBox(self, label="log-exceptions")
+        hboxTimeout.AddSpacer(30)
+        hboxTimeout.Add(self.minhook, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hboxTimeout.Add(self.free, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hboxTimeout.Add(self.log_exceptions, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
 
         # analysis.conf editor
         analysisConfSizer = wx.BoxSizer(wx.VERTICAL)
@@ -195,43 +222,44 @@ class StartPanel(wx.Panel):
         )
         self.debuggerPane = self.debuggerCollapsePane.GetPane()
 
-        self.flexDebuggerSizer = wx.FlexGridSizer(rows=8, cols=2, hgap=10, vgap=10)
+        self.flexDebuggerSizer = wx.FlexGridSizer(rows=8, cols=3, hgap=10, vgap=10)
         self.flexDebuggerSizer.AddGrowableCol(1, 1)
 
-        self.addrType0, self.addr0, self.action0, self.value0 = self.AddDebuggerControls(0)
-        self.addrType1, self.addr1, self.action1, self.value1 = self.AddDebuggerControls(1)
-        self.addrType2, self.addr2, self.action2, self.value2 = self.AddDebuggerControls(2)
-        self.addrType3, self.addr3, self.action3, self.value3 = self.AddDebuggerControls(3)
+        for i in range(4):
+            self.debugger_controls[i] = self.AddDebuggerControls(i)
 
         hboxBaseApi = wx.BoxSizer(wx.HORIZONTAL)
         baseApiLabel = wx.StaticText(self.debuggerPane, label="base-on-api:")
-        self.baseApi = wx.TextCtrl(self.debuggerPane, size=(100, -1))
+        self.baseApi = wx.TextCtrl(self.debuggerPane, size=(98, -1))
         hboxBaseApi.Add(baseApiLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxBaseApi.Add(self.baseApi, flag=wx.ALIGN_CENTER_VERTICAL)
+
         hboxBreakRet = wx.BoxSizer(wx.HORIZONTAL)
         breakRetLabel = wx.StaticText(self.debuggerPane, label="break-on-return:")
-        self.apiList = wx.TextCtrl(self.debuggerPane, size=(250, -1))
+        self.apiList = wx.TextCtrl(self.debuggerPane, size=(158, -1))
         hboxBreakRet.Add(breakRetLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxBreakRet.Add(self.apiList, flag=wx.ALIGN_CENTER_VERTICAL)
+
         hboxCount = wx.BoxSizer(wx.HORIZONTAL)
         countLabel = wx.StaticText(self.debuggerPane, label="Count:")
         self.debugCount = wx.TextCtrl(self.debuggerPane, size=(75, -1))
         hboxCount.Add(countLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxCount.Add(self.debugCount, flag=wx.ALIGN_CENTER_VERTICAL)
+
         hboxDepth = wx.BoxSizer(wx.HORIZONTAL)
         depthLabel = wx.StaticText(self.debuggerPane, label="Depth:")
         self.debugDepth = wx.TextCtrl(self.debuggerPane, size=(50, -1))
         hboxDepth.Add(depthLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxDepth.Add(self.debugDepth, flag=wx.ALIGN_CENTER_VERTICAL)
         self.yarascanDisable = wx.CheckBox(self.debuggerPane, label="Disable Monitor Yarascan")
-        hboxDepth.AddSpacer(50)
-        hboxDepth.Add(self.yarascanDisable, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10)
+
         self.flexDebuggerSizer.Add(
             hboxBaseApi, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
         )
         self.flexDebuggerSizer.Add(
             hboxBreakRet, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
         )
+        self.flexDebuggerSizer.Add(self.yarascanDisable, proportion=0, flag=wx.EXPAND)
         self.flexDebuggerSizer.Add(
             hboxCount, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
         )
@@ -239,6 +267,28 @@ class StartPanel(wx.Panel):
 
         debuggerVert = wx.BoxSizer(wx.VERTICAL)
         debuggerVert.Add(self.flexDebuggerSizer, proportion=0, border=1)
+
+        yaraCollapsiblePane = wx.CollapsiblePane(self.debuggerPane, label="Monitor Yara", style=wx.CP_DEFAULT_STYLE)
+        yaraCollapsiblePane.Bind(
+            wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged
+        )
+        yaraPane = yaraCollapsiblePane.GetPane()
+
+        self.yaraRule = wx.TextCtrl(
+            yaraPane,
+            style=wx.TE_MULTILINE | wx.HSCROLL | wx.VSCROLL,
+            size=(-1, 200)
+        )
+        self.yaraRule.SetValue(YARARULE)
+        yaraSaveBtn = wx.Button(yaraPane, label="Save Rule")
+        yaraSaveBtn.Bind(wx.EVT_BUTTON, self.OnYaraSave)
+
+        vboxYara = wx.BoxSizer(wx.VERTICAL)
+        vboxYara.Add(self.yaraRule, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
+        vboxYara.Add(yaraSaveBtn, flag=wx.ALIGN_RIGHT | wx.ALL, border=5)
+
+        yaraPane.SetSizer(vboxYara)
+        debuggerVert.Add(yaraCollapsiblePane, flag=wx.EXPAND | wx.ALL, border=10)
         self.debuggerPane.SetSizer(debuggerVert)
 
         # Launch and kill
@@ -265,6 +315,7 @@ class StartPanel(wx.Panel):
         vbox.Add(hbox1, flag=wx.EXPAND | wx.ALL, border=10)
         vbox.Add(hbox2, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(hbox3, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+        vbox.Add(hboxHelp, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(
             hboxTimeout, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10
         )
@@ -283,16 +334,70 @@ class StartPanel(wx.Panel):
 
         self.SetSizer(vbox)
 
+    def AddOptionsHelp(self):
+        help = [
+            ("serial", "system volume serial number"),
+            ("force-sleepskip", "do we force sleep-skipping despite threads?"),
+            ("api-rate-cap", "Disable api hooks based on excessive rate"),
+            ("api-cap", "Disable api hooks based on excessive count"),
+            ("lang", "Language override"),
+            ("ntdll-protect", "ntdll write protection"),
+            ("ntdll-remap", "ntdll remap protection"),
+            ("log-vexcept", "vectored exception handler hook"),
+            ("unpacker", "behavioural payload extraction options"),
+            ("single-process", "prevent monitoring child processes"),
+            ("log-breakpoints", "breakpoint logging to behavior log"),
+            ("branch-trace", "branch tracing"),
+            ("plugx", "for PlugX config & payload extraction"),
+            ("fake-rdtsc", "Fake RDTSC"),
+            ("nop-rdtscp", "NOP RDTSCP"),
+            ("msi", "MSI hook set"),
+            ("loaderlock-scans", "Allow scans/dumps with loader lock held"),
+            ("exclude-apis", "Colon separated list of API functions to exclude from hooking"),
+            ("exclude-dlls", "Colon separated list of DLL names to exclude from hooking"),
+            ("dump-on-api", ""),
+            ("coverage-modules", ""),
+            ("dump-on-api-type", ""),
+            ("break-on-api", ""),
+            ("break-on-mod", ""),
+            ("typestring, typestring0, typestring1, typestring2, typestring3", "Type strings"),
+            ("str", "search string"),
+            ("loopskip", ""),
+            ("trace-all", ""),
+            ("step-out", ""),
+            ("file-offsets", ""),
+            ("no-logs", ""),
+            ("disable-logging", ""),
+            ("base-on-alloc", ""),
+            ("base-on-caller", ""),
+            ("trace-times", ""),
+            ("trace-into-api", ""),
+        ]
+
+        hbox = wx.BoxSizer(wx.HORIZONTAL)
+        helpList = wx.ComboBox(self, style=wx.CB_READONLY)
+        helpOptions = sorted(help, key=lambda x: x[0])
+        formattedHelp = [f"{name} - {comment}" if comment else name for name, comment in helpOptions]
+        helpList.Append("Options Help")
+        helpList.AppendItems(formattedHelp)
+        helpList.SetSelection(0)
+        hbox.Add(helpList, proportion=1, flag=wx.LEFT | wx.ALIGN_CENTER_VERTICAL, border=5)
+
+        return hbox
+
     def AddDebuggerControls(self, index):
         hboxBp = wx.BoxSizer(wx.HORIZONTAL)
-        bpLabel = wx.StaticText(self.debuggerPane, label=f"bp{index}")
+        bpTypes = [f"bp{index}", f"br{index}"]
+        bpType = wx.ComboBox(
+            self.debuggerPane, style=wx.CB_READONLY, choices=bpTypes, value=bpTypes[0]
+        )
         addrTypeDropdown = wx.ComboBox(
             self.debuggerPane, style=wx.CB_READONLY, choices=["RVA", "VA"], value="RVA"
         )
         hexLabel = wx.StaticText(self.debuggerPane, label=f": 0x")
         addrTextCtrl = wx.TextCtrl(self.debuggerPane, size=(75, -1))
         hboxBp.Add(
-            bpLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
+            bpType, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
         )
         hboxBp.Add(
             addrTypeDropdown,
@@ -323,10 +428,26 @@ class StartPanel(wx.Panel):
         hboxAction.Add(colon, proportion=0, flag=wx.RIGHT, border=2)
         hboxAction.Add(valueTextCtrl, proportion=0, flag=wx.EXPAND)
 
+        hboxCount = wx.BoxSizer(wx.HORIZONTAL)
+        countLabel = wx.StaticText(self.debuggerPane, label=f"count{index}: ")
+        countTextCtrl = wx.TextCtrl(self.debuggerPane, size=(75, -1))
+        hboxCount.Add(
+            countLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0
+        )
+        hboxCount.Add(countTextCtrl, proportion=0, flag=wx.EXPAND)
+        hboxCount.AddSpacer(20)
+        hcLabel = wx.StaticText(self.debuggerPane, label=f"hc{index}: ")
+        hcTextCtrl = wx.TextCtrl(self.debuggerPane, size=(35, -1))
+        hboxCount.Add(
+            hcLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0
+        )
+        hboxCount.Add(hcTextCtrl, proportion=0, flag=wx.EXPAND)
+
         self.flexDebuggerSizer.Add(hboxBp, 0, wx.EXPAND)
         self.flexDebuggerSizer.Add(hboxAction, 0, wx.EXPAND)
+        self.flexDebuggerSizer.Add(hboxCount, 0, wx.EXPAND)
 
-        return addrTypeDropdown, addrTextCtrl, actionDropdown, valueTextCtrl
+        return bpType, addrTypeDropdown, addrTextCtrl, actionDropdown, valueTextCtrl, countTextCtrl, hcTextCtrl
 
     def OnCollapsiblePaneChanged(self, event):
         self.Layout()
@@ -535,9 +656,19 @@ class StartPanel(wx.Panel):
         if self.manualExecution:
             userOptions += f"{sep}manual=True, interactive=True"
             sep = ","
+        if self.minhook.GetValue():
+            userOptions += f"{sep}minhook=1"
+            sep = ","
+        if self.free.GetValue():
+            userOptions += f"{sep}free=1"
+            sep = ","
+        if self.log_exceptions.GetValue():
+            userOptions += f"{sep}log-exceptions=1"
+            sep = ","
         if self.curDir:
             curdir = Path(filename).parent
             userOptions += f"{sep}curdir={curdir}"
+
         conf += f"\nenforce_timeout = {self.enforceTimeout}"
         self.countdown = int(self.timeoutInput.GetValue())
         conf += f"\ntimeout = {self.timeoutInput.GetValue()}"
@@ -551,19 +682,27 @@ class StartPanel(wx.Panel):
     def GetDebuggerOptions(self):
         opts = []
         for i in range(4):
+            bpType, addrType, addr, action, value, count, hc = self.debugger_controls[i]
             optstring = ""
-            addrType = getattr(self, f"addrType{i}").GetValue()
-            addr = getattr(self, f"addr{i}").GetValue()
-            action = getattr(self, f"action{i}").GetValue()
-            value = getattr(self, f"value{i}").GetValue()
+            bpType = bpType.GetValue()
+            addrType = addrType.GetValue()
+            addr = addr.GetValue()
+            action = action.GetValue()
+            value = value.GetValue()
+            count = count.GetValue()
+            hc = hc.GetValue()
             if addr:
-                optstring = f"bp{i}=0x{addr}"
-                if action:
-                    optstring += f",action{i}={action}"
-                    if value:
-                        optstring += f":{value}"
+                optstring = f"{bpType}=0x{addr}"
                 if addrType == "VA":
                     optstring += f",bpva{i}=1"
+            if action:
+                optstring += f",action{i}={action}"
+                if value:
+                    optstring += f":{value}"
+            if count:
+                optstring += f",count{i}={count}"
+            if hc:
+                optstring += f",hc{i}={hc}"
             if optstring:
                 opts.append(optstring)
         if self.debugCount.GetValue():
@@ -670,3 +809,23 @@ class StartPanel(wx.Panel):
 
     def OnOpenDirectory(self, event):
         os.startfile(self.analysisDir)
+
+    def OnMinhookChecked(self, event):
+        if self.minhook.GetValue():
+            self.free.Disable()
+        else:
+            self.free.Enable()
+
+    def OnZerohookChecked(self, event):
+        if self.free.GetValue():
+            self.minhook.Disable()
+        else:
+            self.minhook.Enable()
+
+    def OnYaraSave(self, event):
+        yaraText = self.yaraRule.GetValue()
+        savePath = Path(self.capesoloRoot) / "data" / "yara" / "DebuggerRule.yar"
+
+        savePath.write_text(yaraText)
+
+        wx.MessageBox(f"Yara rule saved to: {str(savePath)}", "Save Successful", wx.OK | wx.ICON_INFORMATION)
