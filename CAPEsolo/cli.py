@@ -47,10 +47,10 @@ class CapesoloApp(wx.App):
         splash.Show()
         time.sleep(2)
         screenWidth, screenHeight = wx.DisplaySize()
-        frameWidth = int(screenWidth * 0.3)
+        frameWidth = int(screenWidth * 0.37)
         frameHeight = int(screenHeight * 0.75)
-        if frameWidth < 460:
-            frameWidth = 460
+        if frameWidth < 710:
+            frameWidth = 710
         frame = MainFrame(
             rootDir=CAPESOLO_ROOT, parent=None, size=(frameWidth, frameHeight)
         )
