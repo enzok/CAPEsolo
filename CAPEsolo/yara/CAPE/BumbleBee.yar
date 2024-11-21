@@ -64,5 +64,5 @@ rule BumbleBee2024
         $dga1 = {4C 89 75 ?? 4C 89 6D ?? 44 88 6D ?? 48 8B 1D [4] 48 8D 0D [4] E8 [4] 8B F8}
         $dga2 = {48 8D 0D [4] E8 [4] 8B F0 4C 89 6D ?? 4C 89 6D ?? 4C 89 75 ?? 4C 89 6D ?? 44 88 6D ?? 48 8D 15 [4] 44 38 2D [4] 75}
     condition:
-        $rc4key and all of ($botid*) and 2 of ($port, $port, $dga1, $dga2)
+        $rc4key and all of ($botid*) and 2 of ($port, $dga1, $dga2)
 }
