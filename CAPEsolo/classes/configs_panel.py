@@ -32,7 +32,7 @@ class ConfigsPanel(wx.Panel):
         )
         self.resultsWindow.SetFont(fontCourier)
         vbox.Add(self.resultsWindow, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
-        content = "Extract after viewing Payloads and Yara Processing."
+        content = "Extract after Yara Processing."
         self.resultsWindow.SetValue(content)
         self.SetSizer(vbox)
 

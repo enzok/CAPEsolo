@@ -82,6 +82,7 @@ rule DebuggerRule
 }
 """
 
+
 def GetPreviousTarget(analysisDir):
     for path in Path(analysisDir).glob("s_*"):
         if path.is_file():
@@ -187,15 +188,17 @@ class StartPanel(wx.Panel):
         self.free.Bind(wx.EVT_CHECKBOX, self.OnZerohookChecked)
         self.log_exceptions = wx.CheckBox(self, label="log-exceptions")
         hboxTimeout.AddSpacer(30)
-        hboxTimeout.Add(self.minhook, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hboxTimeout.Add(
+            self.minhook, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5
+        )
         hboxTimeout.Add(self.free, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
-        hboxTimeout.Add(self.log_exceptions, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hboxTimeout.Add(
+            self.log_exceptions, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5
+        )
 
         # analysis.conf editor
         analysisConfSizer = wx.BoxSizer(wx.VERTICAL)
-        self.analysisConfExpander = wx.CollapsiblePane(
-            self, label="analysis.conf"
-        )
+        self.analysisConfExpander = wx.CollapsiblePane(self, label="analysis.conf")
         self.analysisConfExpander.Bind(
             wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged
         )
@@ -231,13 +234,17 @@ class StartPanel(wx.Panel):
         hboxBaseApi = wx.BoxSizer(wx.HORIZONTAL)
         baseApiLabel = wx.StaticText(self.debuggerPane, label="base-on-api:")
         self.baseApi = wx.TextCtrl(self.debuggerPane, size=(98, -1))
-        hboxBaseApi.Add(baseApiLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hboxBaseApi.Add(
+            baseApiLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5
+        )
         hboxBaseApi.Add(self.baseApi, flag=wx.ALIGN_CENTER_VERTICAL)
 
         hboxBreakRet = wx.BoxSizer(wx.HORIZONTAL)
         breakRetLabel = wx.StaticText(self.debuggerPane, label="break-on-return:")
         self.apiList = wx.TextCtrl(self.debuggerPane, size=(158, -1))
-        hboxBreakRet.Add(breakRetLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hboxBreakRet.Add(
+            breakRetLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5
+        )
         hboxBreakRet.Add(self.apiList, flag=wx.ALIGN_CENTER_VERTICAL)
 
         hboxCount = wx.BoxSizer(wx.HORIZONTAL)
@@ -251,13 +258,21 @@ class StartPanel(wx.Panel):
         self.debugDepth = wx.TextCtrl(self.debuggerPane, size=(50, -1))
         hboxDepth.Add(depthLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxDepth.Add(self.debugDepth, flag=wx.ALIGN_CENTER_VERTICAL)
-        self.yarascanDisable = wx.CheckBox(self.debuggerPane, label="Disable Monitor Yarascan")
+        self.yarascanDisable = wx.CheckBox(
+            self.debuggerPane, label="Disable Monitor Yarascan"
+        )
 
         self.flexDebuggerSizer.Add(
-            hboxBaseApi, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
+            hboxBaseApi,
+            proportion=0,
+            flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            border=5,
         )
         self.flexDebuggerSizer.Add(
-            hboxBreakRet, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
+            hboxBreakRet,
+            proportion=0,
+            flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            border=5,
         )
         self.flexDebuggerSizer.Add(self.yarascanDisable, proportion=0, flag=wx.EXPAND)
         self.flexDebuggerSizer.Add(
@@ -268,16 +283,16 @@ class StartPanel(wx.Panel):
         debuggerVert = wx.BoxSizer(wx.VERTICAL)
         debuggerVert.Add(self.flexDebuggerSizer, proportion=0, border=1)
 
-        yaraCollapsiblePane = wx.CollapsiblePane(self.debuggerPane, label="Monitor Yara", style=wx.CP_DEFAULT_STYLE)
+        yaraCollapsiblePane = wx.CollapsiblePane(
+            self.debuggerPane, label="Monitor Yara", style=wx.CP_DEFAULT_STYLE
+        )
         yaraCollapsiblePane.Bind(
             wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged
         )
         yaraPane = yaraCollapsiblePane.GetPane()
 
         self.yaraRule = wx.TextCtrl(
-            yaraPane,
-            style=wx.TE_MULTILINE | wx.HSCROLL | wx.VSCROLL,
-            size=(-1, 200)
+            yaraPane, style=wx.TE_MULTILINE | wx.HSCROLL | wx.VSCROLL, size=(-1, 200)
         )
         self.yaraRule.SetValue(YARARULE)
         yaraSaveBtn = wx.Button(yaraPane, label="Save Rule")
@@ -297,6 +312,8 @@ class StartPanel(wx.Panel):
         self.launchAnalyzerBtn.Disable()
         self.launchAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnLaunchAnalyzer)
 
+        self.staticAnalysis = wx.CheckBox(self, label="Static analysis")
+
         openDirBtn = wx.Button(self, label="View Analysis Directory")
         openDirBtn.Bind(wx.EVT_BUTTON, self.OnOpenDirectory)
         self.terminateAnalyzerBtn = wx.Button(self, label="Kill")
@@ -304,6 +321,10 @@ class StartPanel(wx.Panel):
         self.terminateAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnTerminateAnalyzer)
         hbox5.Add(
             self.launchAnalyzerBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5
+        )
+        hbox5.AddSpacer(10)
+        hbox5.Add(
+            self.staticAnalysis, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5
         )
 
         hbox5.AddStretchSpacer(1)
@@ -353,14 +374,23 @@ class StartPanel(wx.Panel):
             ("nop-rdtscp", "NOP RDTSCP"),
             ("msi", "MSI hook set"),
             ("loaderlock-scans", "Allow scans/dumps with loader lock held"),
-            ("exclude-apis", "Colon separated list of API functions to exclude from hooking"),
-            ("exclude-dlls", "Colon separated list of DLL names to exclude from hooking"),
+            (
+                "exclude-apis",
+                "Colon separated list of API functions to exclude from hooking",
+            ),
+            (
+                "exclude-dlls",
+                "Colon separated list of DLL names to exclude from hooking",
+            ),
             ("dump-on-api", ""),
             ("coverage-modules", ""),
             ("dump-on-api-type", ""),
             ("break-on-api", ""),
             ("break-on-mod", ""),
-            ("typestring, typestring0, typestring1, typestring2, typestring3", "Type strings"),
+            (
+                "typestring, typestring0, typestring1, typestring2, typestring3",
+                "Type strings",
+            ),
             ("str", "search string"),
             ("loopskip", ""),
             ("trace-all", ""),
@@ -377,11 +407,15 @@ class StartPanel(wx.Panel):
         hbox = wx.BoxSizer(wx.HORIZONTAL)
         helpList = wx.ComboBox(self, style=wx.CB_READONLY)
         helpOptions = sorted(help, key=lambda x: x[0])
-        formattedHelp = [f"{name} - {comment}" if comment else name for name, comment in helpOptions]
+        formattedHelp = [
+            f"{name} - {comment}" if comment else name for name, comment in helpOptions
+        ]
         helpList.Append("Options Help")
         helpList.AppendItems(formattedHelp)
         helpList.SetSelection(0)
-        hbox.Add(helpList, proportion=1, flag=wx.LEFT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hbox.Add(
+            helpList, proportion=1, flag=wx.LEFT | wx.ALIGN_CENTER_VERTICAL, border=5
+        )
 
         return hbox
 
@@ -447,7 +481,15 @@ class StartPanel(wx.Panel):
         self.flexDebuggerSizer.Add(hboxAction, 0, wx.EXPAND)
         self.flexDebuggerSizer.Add(hboxCount, 0, wx.EXPAND)
 
-        return bpType, addrTypeDropdown, addrTextCtrl, actionDropdown, valueTextCtrl, countTextCtrl, hcTextCtrl
+        return (
+            bpType,
+            addrTypeDropdown,
+            addrTextCtrl,
+            actionDropdown,
+            valueTextCtrl,
+            countTextCtrl,
+            hcTextCtrl,
+        )
 
     def OnCollapsiblePaneChanged(self, event):
         self.Layout()
@@ -730,6 +772,18 @@ class StartPanel(wx.Panel):
             )
 
     def OnLaunchAnalyzer(self, event):
+        originalPath = Path(self.targetPath.GetValue())
+        newFilename = sanitize_filename(originalPath.name)
+        if newFilename != originalPath.name:
+            self.target = Path(originalPath.parent, newFilename)
+            originalPath.rename(self.target)
+
+        self.CopyTarget()
+        self.parent.targetFile = self.targetFile
+
+        if self.staticAnalysis.GetValue():
+            return
+
         try:
             self.package = self.packageDropdown.GetValue()
             if self.package == "Auto-detect":
@@ -743,12 +797,6 @@ class StartPanel(wx.Panel):
                         wx.OK | wx.ICON_ERROR,
                     )
                     return
-
-            originalPath = Path(self.targetPath.GetValue())
-            newFilename = sanitize_filename(originalPath.name)
-            if newFilename != originalPath.name:
-                self.target = Path(originalPath.parent, newFilename)
-                originalPath.rename(self.target)
 
             self.AddTargetOptions(event)
             self.SaveAnalysisFile(event, False)
@@ -828,4 +876,8 @@ class StartPanel(wx.Panel):
 
         savePath.write_text(yaraText)
 
-        wx.MessageBox(f"Yara rule saved to: {str(savePath)}", "Save Successful", wx.OK | wx.ICON_INFORMATION)
+        wx.MessageBox(
+            f"Yara rule saved to: {str(savePath)}",
+            "Save Successful",
+            wx.OK | wx.ICON_INFORMATION,
+        )
