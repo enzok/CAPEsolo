@@ -1,10 +1,9 @@
-import glob
 import importlib
+import importlib.util
 import os
 from contextlib import suppress
 from pathlib import Path
 
-import cape_parsers
 import wx
 
 
@@ -54,11 +53,13 @@ class ConfigsPanel(wx.Panel):
         content = ""
         self.resultsWindow.SetValue("")
         CAPE_PARSERS = ("core", "community")
+        customParsers = os.path.join(os.path.expanduser("~"), "Desktop", "custom")
 
         for hit in self.configHits:
             decoderModule = ""
             hitPath = list(hit.keys())[0]
             hitName = hit.get(hitPath, "")
+            modPath = os.path.join(customParsers, f"{hitName}.py")
 
             for parser in CAPE_PARSERS:
                 try:
@@ -71,6 +72,18 @@ class ConfigsPanel(wx.Panel):
                     print(f"CAPE parser: Fix your code in {parser}/{hitName} - {e}")
                 except Exception as e:
                     print(f"CAPE parser: Fix your code in {parser}/{hitName} - {e}")
+
+            if not decoderModule:
+                try:
+                    spec = importlib.util.spec_from_file_location(hitName, modPath)
+                    decoderModule = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(decoderModule)
+                except (FileNotFoundError, ImportError, AttributeError):
+                    continue
+                except SyntaxError as e:
+                    print(f"CAPE parser: Fix your code in {modPath} - {e}")
+                except Exception as e:
+                    print(f"CAPE parser: Fix your code in {modPath} - {e}")
 
             if decoderModule:
                 cfg = ""
