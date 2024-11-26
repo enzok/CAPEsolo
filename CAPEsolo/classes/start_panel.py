@@ -660,9 +660,6 @@ class StartPanel(wx.Panel):
             traceback,
         )
 
-        self.CopyTarget()
-        self.parent.targetFile = self.targetFile
-
         self.analyzer = None
         try:
             self.resultserver = ResultServer("localhost", 9999, self.analysisDir)

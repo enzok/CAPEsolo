@@ -324,9 +324,9 @@ class LogHandler(ProtocolHandler):
     def init(self):
         self.logpath = os.path.join(self.handler.storagepath, "analysis.log")
         try:
-            self.fd = open_exclusive(self.logpath)
-        except OSError:
-            log.error("Attempted to reopen live log analysis.log")
+            self.fd = open_inclusive(self.logpath)
+        except OSError as e:
+            log.error("Faile to open live log analysis.log: %s", e)
             return
 
         log.debug("Live log analysis.log initialized")
