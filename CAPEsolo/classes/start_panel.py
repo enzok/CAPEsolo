@@ -297,10 +297,16 @@ class StartPanel(wx.Panel):
         self.yaraRule.SetValue(YARARULE)
         yaraSaveBtn = wx.Button(yaraPane, label="Save Rule")
         yaraSaveBtn.Bind(wx.EVT_BUTTON, self.OnYaraSave)
+        yaraDeleteBtn = wx.Button(yaraPane, label="Delete Rule")
+        yaraDeleteBtn.Bind(wx.EVT_BUTTON, self.OnYaraDelete)
+
+        hboxYara = wx.BoxSizer(wx.HORIZONTAL)
+        hboxYara.Add(yaraSaveBtn, flag=wx.EXPAND | wx.ALL, border=5)
+        hboxYara.Add(yaraDeleteBtn, flag=wx.EXPAND | wx.ALL, border=5)
 
         vboxYara = wx.BoxSizer(wx.VERTICAL)
         vboxYara.Add(self.yaraRule, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
-        vboxYara.Add(yaraSaveBtn, flag=wx.ALIGN_RIGHT | wx.ALL, border=5)
+        vboxYara.Add(hboxYara, flag=wx.ALIGN_RIGHT | wx.ALL, border=5)
 
         yaraPane.SetSizer(vboxYara)
         debuggerVert.Add(yaraCollapsiblePane, flag=wx.EXPAND | wx.ALL, border=10)
@@ -876,5 +882,16 @@ class StartPanel(wx.Panel):
         wx.MessageBox(
             f"Yara rule saved to: {str(savePath)}",
             "Save Successful",
+            wx.OK | wx.ICON_INFORMATION,
+        )
+
+    def OnYaraDelete(self, event):
+        yaraPath = Path(self.capesoloRoot) / "data" / "yara" / "DebuggerRule.yar"
+
+        yaraPath.unlink()
+
+        wx.MessageBox(
+            f"Yara rule deleted: {str(yaraPath)}",
+            "Delete Successful",
             wx.OK | wx.ICON_INFORMATION,
         )
