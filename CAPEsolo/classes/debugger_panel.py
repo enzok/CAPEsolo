@@ -134,7 +134,7 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
 
         dialog.Destroy()
 
-        coverData = "\n".join(filteredLines)
+        coverData = "\n".join(filter(None, filteredLines))
 
         if coverData:
             coverageSaved = False
@@ -167,7 +167,8 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
         offset = int(offset, 16)
         delta = offset - loaderBase
         rebased = imageBase + delta
-        return f"0x{rebased:016x}"
+        if rebased > 0:
+            return hex(rebased)
 
     def OnCopyPath(self, event):
         if wx.TheClipboard.Open():

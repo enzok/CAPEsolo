@@ -30,5 +30,5 @@ rule Zloader2024
         $confkey_2 = {48 01 ?? 48 8D 15 [4] 41 B8 10 00 00 00 E8 [4] [0-5] C7 [1-2] 00 00 00 00 (48 8B|8B)}
         $confkey_3 = {48 01 ?? 48 8D 15 [4] 41 B8 10 00 00 00 E8 [4] [0-5] C7 [1-2] 00 00 00 00 48 83 C4}
     condition:
-        any of them //uint16(0) == 0x5A4D and $conf_1 and 2 of ($confkey_*)
+        uint16(0) == 0x5A4D and $conf_1 and 2 of ($confkey_*)
 }
