@@ -319,6 +319,7 @@ class StartPanel(wx.Panel):
         self.launchAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnLaunchAnalyzer)
 
         self.staticAnalysis = wx.CheckBox(self, label="Static analysis")
+        self.staticAnalysis.SetToolTip("Check this box to enable static code analysis.")
 
         openDirBtn = wx.Button(self, label="View Analysis Directory")
         openDirBtn.Bind(wx.EVT_BUTTON, self.OnOpenDirectory)
@@ -434,7 +435,7 @@ class StartPanel(wx.Panel):
         addrTypeDropdown = wx.ComboBox(
             self.debuggerPane, style=wx.CB_READONLY, choices=["RVA", "VA"], value="RVA"
         )
-        hexLabel = wx.StaticText(self.debuggerPane, label=f": 0x")
+        hexLabel = wx.StaticText(self.debuggerPane, label=": 0x")
         addrTextCtrl = wx.TextCtrl(self.debuggerPane, size=(75, -1))
         hboxBp.Add(
             bpType, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
@@ -755,7 +756,7 @@ class StartPanel(wx.Panel):
         if self.debugDepth.GetValue():
             opts.append(f"depth={self.debugDepth.GetValue()}")
         if self.yarascanDisable.GetValue():
-            opts.append(f"yarascan=0")
+            opts.append("yarascan=0")
         if self.baseApi.GetValue():
             opts.append(f"base-on-api={self.baseApi.GetValue()}")
         if self.apiList.GetValue():
@@ -785,6 +786,9 @@ class StartPanel(wx.Panel):
         self.parent.targetFile = self.targetFile
 
         if self.staticAnalysis.GetValue():
+            wx.MessageBox(
+                "Static analysis: Check info, yara, and config tabs.", "Status", wx.OK | wx.ICON_INFORMATION
+            )
             return
 
         try:
@@ -795,7 +799,7 @@ class StartPanel(wx.Panel):
                     self.package = package
                 else:
                     wx.MessageBox(
-                        f"Package identification error, select package manually.",
+                        "Package identification error, select package manually.",
                         "Error",
                         wx.OK | wx.ICON_ERROR,
                     )
