@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "CAPEsolo"
-version = "0.4.24"
+version = "0.4.25"
 description = "Standalone CAPEMON"
 authors = ["enzok <7831008+enzok@users.noreply.github.com>"]
 readme = "README.md"
@@ -12,7 +12,7 @@ pywin32 = "^308"
 bson = "^0.5.10"
 yara-python = "^4.5.1"
 pefile = "^2024.8.26"
-cryptography = "^44.0.0"
+cryptography = "^44.0.1"
 requests = "^2.32.3"
 SFlock2 = "==0.3.69"
 greenlet = "^3.1.1"

@@ -433,7 +433,7 @@ class StartPanel(wx.Panel):
             self.debuggerPane, style=wx.CB_READONLY, choices=bpTypes, value=bpTypes[0]
         )
         addrTypeDropdown = wx.ComboBox(
-            self.debuggerPane, style=wx.CB_READONLY, choices=["RVA", "VA"], value="RVA"
+            self.debuggerPane, style=wx.CB_READONLY, choices=["RVA", "VA", "ep"], value="RVA"
         )
         hexLabel = wx.StaticText(self.debuggerPane, label=": 0x")
         addrTextCtrl = wx.TextCtrl(self.debuggerPane, size=(75, -1))
@@ -737,6 +737,9 @@ class StartPanel(wx.Panel):
             value = value.GetValue()
             count = count.GetValue()
             hc = hc.GetValue()
+            if addrType == "ep":
+                addr = None
+                optstring = f"{bpType}=ep"
             if addr:
                 optstring = f"{bpType}=0x{addr}"
                 if addrType == "VA":
