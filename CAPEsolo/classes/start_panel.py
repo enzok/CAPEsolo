@@ -13,6 +13,7 @@ from sflock.ident import identify as sflock_identify
 from CAPEsolo.capelib.resultserver import ResultServer
 from CAPEsolo.capelib.utils import sanitize_filename
 from CAPEsolo.lib.common.hashing import hash_file
+from .debug_console import DebugConsole
 from .key_event import EVT_ANALYZER_COMPLETE_ID, EVT_ANALYZER_COMPLETE
 from .logger_window import LoggerWindow
 from .timer_window import CountdownTimer
@@ -103,10 +104,11 @@ class StartPanel(wx.Panel):
         self.curDir = True
         self.manualExecution = False
         self.enforceTimeout = False
-        self.debugger_controls = {}
+        self.debuggerControls = {}
         self.analysisDir = parent.analysisDir
         self.analysisLogPath = os.path.join(parent.analysisDir, "analysis.log")
         self.package = ""
+        self.processTerminated = False
         self.capesoloRoot = parent.capesoloRoot
         self.targetFile = GetPreviousTarget(self.analysisDir)
         self.parent.targetFile = self.targetFile
@@ -186,14 +188,14 @@ class StartPanel(wx.Panel):
         self.minhook.Bind(wx.EVT_CHECKBOX, self.OnMinhookChecked)
         self.free = wx.CheckBox(self, label="free")
         self.free.Bind(wx.EVT_CHECKBOX, self.OnZerohookChecked)
-        self.log_exceptions = wx.CheckBox(self, label="log-exceptions")
+        self.logExceptions = wx.CheckBox(self, label="log-exceptions")
         hboxTimeout.AddSpacer(30)
         hboxTimeout.Add(
             self.minhook, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5
         )
         hboxTimeout.Add(self.free, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxTimeout.Add(
-            self.log_exceptions, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5
+            self.logExceptions, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5
         )
 
         # analysis.conf editor
@@ -229,7 +231,7 @@ class StartPanel(wx.Panel):
         self.flexDebuggerSizer.AddGrowableCol(1, 1)
 
         for i in range(4):
-            self.debugger_controls[i] = self.AddDebuggerControls(i)
+            self.debuggerControls[i] = self.AddDebuggerControls(i)
 
         hboxBaseApi = wx.BoxSizer(wx.HORIZONTAL)
         baseApiLabel = wx.StaticText(self.debuggerPane, label="base-on-api:")
@@ -559,13 +561,13 @@ class StartPanel(wx.Panel):
 
         for root, dirs, files in os.walk(logFolder):
             for file in files:
-                file_path = os.path.join(root, file)
-                analysis_path = os.path.join(folder, file)
+                filePath = os.path.join(root, file)
+                analysisPath = os.path.join(folder, file)
                 try:
                     # move files to analysis_path
-                    shutil.move(file_path, analysis_path)
+                    shutil.move(filePath, analysisPath)
                 except Exception as e:
-                    self.log(f"Unable to copy file at path {file_path}: {e}")
+                    self.log(f"Unable to copy file at path {filePath}: {e}")
         return
 
     def LoadAnalysisConfFile(self):
@@ -594,16 +596,16 @@ class StartPanel(wx.Panel):
         package = ""
         f = SflockFile.from_path(str(self.target).encode("utf-8"))
         try:
-            tmp_package = sflock_identify(f, check_shellcode=True)
+            tmpPackage = sflock_identify(f, check_shellcode=True)
         except Exception as e:
             log.error(f"Failed to sflock_ident due to {e}")
-            tmp_package = ""
+            tmpPackage = ""
 
-        if tmp_package and tmp_package in SANDBOXPACKAGES:
-            if tmp_package in ("iso", "udf", "vhd"):
+        if tmpPackage and tmpPackage in SANDBOXPACKAGES:
+            if tmpPackage in ("iso", "udf", "vhd"):
                 package = "archive"
             else:
-                package = tmp_package
+                package = tmpPackage
 
         return package
 
@@ -675,6 +677,8 @@ class StartPanel(wx.Panel):
             mainFrame = self.GetMainFrame()
             size = mainFrame.GetSize()
             position = mainFrame.GetPosition()
+            dbgConsole = DebugConsole(self, "Debug Console", position, size)
+            dbgConsole.launch()
             timerWindow = CountdownTimer(self, self.countdown, position, size)
             timerWindow.Show()
             self.StartAnalyzerThread(self.analyzer)
@@ -708,7 +712,7 @@ class StartPanel(wx.Panel):
         if self.free.GetValue():
             userOptions += f"{sep}free=1"
             sep = ","
-        if self.log_exceptions.GetValue():
+        if self.logExceptions.GetValue():
             userOptions += f"{sep}log-exceptions=1"
             sep = ","
         if self.curDir:
@@ -728,7 +732,7 @@ class StartPanel(wx.Panel):
     def GetDebuggerOptions(self):
         opts = []
         for i in range(4):
-            bpType, addrType, addr, action, value, count, hc = self.debugger_controls[i]
+            bpType, addrType, addr, action, value, count, hc = self.debuggerControls[i]
             optstring = ""
             bpType = bpType.GetValue()
             addrType = addrType.GetValue()
@@ -773,6 +777,7 @@ class StartPanel(wx.Panel):
             completeFolder = os.path.join(os.environ["TMP"], idHash)
             Path(completeFolder).mkdir(exist_ok=True)
             self.terminateAnalyzerBtn.Disable()
+            self.processTerminated = True
         except Exception as e:
             wx.MessageBox(
                 f"Could not terminate analyzer: {e}", "Error", wx.OK | wx.ICON_ERROR
