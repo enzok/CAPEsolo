@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "CAPEsolo"
-version = "0.4.25"
+version = "0.4.26"
 description = "Standalone CAPEMON"
 authors = ["enzok <7831008+enzok@users.noreply.github.com>"]
 readme = "README.md"
@@ -20,7 +20,7 @@ gevent = "^24.11.1"
 dnspython = "^2.6.1"
 tldextract = "^5.1.3"
 bs2json = "^0.1.2"
-cape-parsers = "*"
+cape-parsers = "==0.1.32"
 pytest = "^8.3.4"
 
 [tool.poetry.scripts]
