@@ -108,7 +108,6 @@ class StartPanel(wx.Panel):
         self.analysisDir = parent.analysisDir
         self.analysisLogPath = os.path.join(parent.analysisDir, "analysis.log")
         self.package = ""
-        self.processTerminated = False
         self.capesoloRoot = parent.capesoloRoot
         self.targetFile = GetPreviousTarget(self.analysisDir)
         self.parent.targetFile = self.targetFile
@@ -777,7 +776,6 @@ class StartPanel(wx.Panel):
             completeFolder = os.path.join(os.environ["TMP"], idHash)
             Path(completeFolder).mkdir(exist_ok=True)
             self.terminateAnalyzerBtn.Disable()
-            self.processTerminated = True
         except Exception as e:
             wx.MessageBox(
                 f"Could not terminate analyzer: {e}", "Error", wx.OK | wx.ICON_ERROR

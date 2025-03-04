@@ -326,7 +326,7 @@ class LogHandler(ProtocolHandler):
         try:
             self.fd = open_inclusive(self.logpath)
         except OSError as e:
-            log.error("Faile to open live log analysis.log: %s", e)
+            log.error("Failed to open live log analysis.log: %s", e)
             return
 
         log.debug("Live log analysis.log initialized")

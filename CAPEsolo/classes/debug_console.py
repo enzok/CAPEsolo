@@ -89,8 +89,6 @@ class DebugConsole:
         self.windowPosition = windowPosition
         self.windowSize = windowSize
         self.pipe = r"\\.\pipe\debugger_pipe"
-        self.processTerminated = parent.processTerminated
-        self.consoleThread = None
         self.frame = None
 
         # These shared condition variables and buffers are used by the pipe handler.
@@ -130,7 +128,6 @@ class ConsoleFrame(wx.Frame):
         super().__init__(None, title=title, pos=window_position, size=window_size)
         self.parent = parent
         self.pipe = parent.pipe
-        self.processTerminated = parent.processTerminated
         self.panel = ConsolePanel(self)
         self.Bind(wx.EVT_CLOSE, self.on_close)
 
@@ -147,7 +144,6 @@ class ConsolePanel(wx.Panel):
         self.parent = parent
         self.pipe = parent.pipe
         self.pipeHandle = None
-        self.processTerminated = parent.processTerminated
         self.connected = False
         self.read_lock = threading.Lock()
         self.InitGUI()
