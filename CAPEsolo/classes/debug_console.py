@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 
 TIMEOUT = 600
 BUFFER_SIZE = 4096
+DBGCMD = "DBGCMD"
 
 
 class CommandPipeHandler:
@@ -97,7 +98,7 @@ class DebugConsole:
         self.debuggerResponse = None
         self.commandPipe = None
 
-    def open_console(self):
+    def OpenConsole(self):
         """Creates (but does not show) the console window."""
         self.frame = ConsoleFrame(self, self.title, self.windowPosition, self.windowSize)
         self.frame.Hide()
@@ -113,7 +114,7 @@ class DebugConsole:
         self.commandPipe.daemon = True
         self.commandPipe.start()
         log.info("[DEBUG CONSOLE] Console pipe server started.")
-        self.open_console()
+        self.OpenConsole()
         log.info("[DEBUG CONSOLE] Console launched.")
 
     def shutdown(self):
@@ -129,11 +130,11 @@ class ConsoleFrame(wx.Frame):
         self.parent = parent
         self.pipe = parent.pipe
         self.panel = ConsolePanel(self)
-        self.Bind(wx.EVT_CLOSE, self.on_close)
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
 
-    def on_close(self, event):
+    def OnClose(self, event):
         """Handles window close event gracefully."""
-        self.panel.shutdown_console()
+        self.panel.ShutdownConsole()
         self.Destroy()
 
 
@@ -147,7 +148,7 @@ class ConsolePanel(wx.Panel):
         self.connected = False
         self.read_lock = threading.Lock()
         self.InitGUI()
-        wx.CallLater(100, self.init_pipe)
+        wx.CallLater(100, self.InitPipe)
 
     def InitGUI(self):
         # Main Layout
@@ -198,42 +199,43 @@ class ConsolePanel(wx.Panel):
         debugButtons = wx.BoxSizer(wx.HORIZONTAL)
         self.stepIntoBtn = wx.Button(self, label="Step Into (F7)")
         self.stepOverBtn = wx.Button(self, label="Step Over (F8)")
-        self.continueBtn = wx.Button(self, label="Continue (F5)")
+        self.continueBtn = wx.Button(self, label="Continue (F10)")
         debugButtons.Add(self.stepIntoBtn, 1, wx.EXPAND | wx.ALL, 5)
         debugButtons.Add(self.stepOverBtn, 1, wx.EXPAND | wx.ALL, 5)
         debugButtons.Add(self.continueBtn, 1, wx.EXPAND | wx.ALL, 5)
-        self.stepIntoBtn.Bind(wx.EVT_BUTTON, lambda event: self.send_command("step_into"))
-        self.stepOverBtn.Bind(wx.EVT_BUTTON, lambda event: self.send_command("step_over"))
-        self.continueBtn.Bind(wx.EVT_BUTTON, lambda event: self.send_command("continue"))
+        self.stepIntoBtn.Bind(wx.EVT_BUTTON, lambda event: self.SendCommand("step_into"))
+        self.stepOverBtn.Bind(wx.EVT_BUTTON, lambda event: self.SendCommand("step_over"))
+        self.continueBtn.Bind(wx.EVT_BUTTON, lambda event: self.SendCommand("continue"))
+        self.Bind(wx.EVT_CHAR_HOOK, self.OnKeyDown)
         mainSizer.Add(debugButtons, 0, wx.EXPAND | wx.ALL, 5)
 
         # Input box
         mainSizer.Add(wx.StaticText(self, label="Command Input"), 0, wx.ALL, 5)
         self.inputBox = wx.TextCtrl(self, style=wx.TE_PROCESS_ENTER)
-        self.inputBox.Bind(wx.EVT_TEXT_ENTER, self.on_enter)
+        self.inputBox.Bind(wx.EVT_TEXT_ENTER, self.OnEnter)
         mainSizer.Add(self.inputBox, 0, wx.EXPAND | wx.ALL, 5)
 
         self.SetSizer(mainSizer)
 
     def OnKeyDown(self, event):
         if event.GetKeyCode() == ord("F7") and event.ControlDown():
-            self.send_command("step_into")
+            self.SendCommand("step_into")
         elif event.GetKeyCode() == ord("F8") and event.ControlDown():
-            self.send_command("step_over")
-        elif event.GetKeyCode() == ord("F5") and event.ControlDown():
-            self.send_command("continue")
+            self.SendCommand("step_over")
+        elif event.GetKeyCode() == ord("F10") and event.ControlDown():
+            self.SendCommand("continue")
         else:
             event.Skip()
 
-    def append_output(self, text):
+    def AppendOutput(self, text):
         """Appends text to the output console and logs it."""
         if self.outputConsole:
             self.outputConsole.AppendText(text + "\n")
 
-    def update_status(self, status):
+    def UpdateStatus(self, status):
         self.statusBar.SetLabel(status)
 
-    def init_pipe(self):
+    def InitPipe(self):
         try:
             self.pipeHandle = win32file.CreateFile(
                 self.pipe,
@@ -245,18 +247,18 @@ class ConsolePanel(wx.Panel):
                 None
             )
             log.info("[DEBUG CONSOLE] Console connected to named pipe.")
-            self.send_init()
+            self.SendInit()
         except Exception as e:
             log.error("[DEBUG CONSOLE] Console failed to connect to named pipe: %s", e)
 
-    def send_init(self):
+    def SendInit(self):
         if self.pipeHandle:
             log.info("[DEBUG CONSOLE] Sending init command...")
-            threading.Thread(target=self.send_command, args=("init",), daemon=True).start()
+            threading.Thread(target=self.SendCommand, args=("init",), daemon=True).start()
         else:
-            wx.CallLater(100, self.send_init)
+            wx.CallLater(100, self.SendInit)
 
-    def process_server_output(self, text):
+    def ProcessServerOutput(self, text):
         """Processes debugger responses."""
         '''
         if "THREADS" in text:
@@ -285,17 +287,17 @@ class ConsolePanel(wx.Panel):
         '''
         if text == "READY":
             self.connected = True
-            self.update_status("Status: Connected")
+            self.UpdateStatus("Status: Connected")
             if not self.parent.IsShown():
                 self.parent.Show()
                 self.parent.Layout()
-            self.append_output("Debugger initialized")
+            self.AppendOutput("Debugger initialized")
         elif text == "TIMEOUT":
-            self.append_output("Operation timed out")
+            self.AppendOutput("Operation timed out")
         else:
-            self.append_output(text)
+            self.AppendOutput(text)
 
-    def read_response(self):
+    def ReadResponse(self):
         """Reads a full response from the pipe in a thread-safe manner."""
         with self.read_lock:
             try:
@@ -307,17 +309,17 @@ class ConsolePanel(wx.Panel):
                 log.error("Error reading response: %s", e)
                 return ""
 
-    def wait_for_response(self):
+    def WaitForResponse(self):
         """Waits for a response and then updates the GUI (called in a background thread)."""
-        response = self.read_response()
-        wx.CallAfter(self.process_server_output, response)
+        response = self.ReadResponse()
+        wx.CallAfter(self.ProcessServerOutput, response)
 
-    def send_command(self, command):
+    def SendCommand(self, command):
         if command.lower() != "init" and (not self.connected or not self.pipeHandle):
             log.error("[DEBUG CONSOLE] Cannot send command: Not connected to pipe")
             return
 
-        fullCommand = f"DBGCMD:{command}".encode("utf-8") + b"\n"
+        fullCommand = f"{DBGCMD}:{command}".encode("utf-8") + b"\n"
         overlapped = pywintypes.OVERLAPPED()
         overlapped.hEvent = win32event.CreateEvent(None, 0, 0, None)
         try:
@@ -328,7 +330,7 @@ class ConsolePanel(wx.Panel):
             if overlapped.hEvent:
                 win32file.CloseHandle(overlapped.hEvent)
 
-        threading.Thread(target=self.wait_for_response, daemon=True).start()
+        threading.Thread(target=self.WaitForResponse, daemon=True).start()
 
     '''
     def switch_thread(self, event):
@@ -351,7 +353,7 @@ class ConsolePanel(wx.Panel):
                 self.send_command(f"break disable {bp_text.split()[-1]}")
     '''
 
-    def on_enter(self, event):
+    def OnEnter(self, event):
         """Handles user input and processes commands."""
         cmd = self.inputBox.GetValue().strip()
         if cmd.lower() == "disconnect":
@@ -360,15 +362,15 @@ class ConsolePanel(wx.Panel):
             self.connected = False
             log.info("[DEBUG CONSOLE] Pipe disconnected successfully.")
         elif cmd.lower() == "quit":
-            self.shutdown_console()
+            self.ShutdownConsole()
         elif cmd.lower() == "clear":
             self.outputConsole.Clear()
         else:
-            self.send_command(cmd)
+            self.SendCommand(cmd)
 
         self.inputBox.Clear()
 
-    def shutdown_console(self):
+    def ShutdownConsole(self):
         """Handles graceful shutdown of the console."""
         self.close()
         self.parent.Close()
