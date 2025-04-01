@@ -4,11 +4,11 @@ from pathlib import Path
 import wx
 import wx.grid as gridlib
 
-from .custom_grid import CopyableGrid
-from .key_event import KeyEventHandlerMixin
 from CAPEsolo.capelib.behavior import BehaviorAnalysis
 from CAPEsolo.capelib.utils import convert_to_printable
 
+from .custom_grid import CopyableGrid
+from .key_event import KeyEventHandlerMixin
 
 BACKGNDCLR = {
     "filesystem": (255, 227, 197),
@@ -43,6 +43,11 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.BindKeyEvents()
         self.behaviorComplete = False
         self.mycalls = []
+        self.filter = ""
+        self.category = "all"
+        self.numcalls = 0
+        self.current_page = 1
+        self.items_per_page = 100
         self.InitUI()
 
     def InitUI(self):
@@ -85,7 +90,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         vbox.Add(wx.StaticText(self, label="Calls:"), flag=wx.LEFT | wx.TOP, border=5)
 
         collapsePane = wx.CollapsiblePane(self, label="API Categories")
-        collapsePane.Bind(wx.EVT_COLLAPSIBLEPANE_CHANGED, self.onPaneChanged)
+        collapsePane.Bind(wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnPaneChanged)
         vbox.Add(collapsePane, 0, wx.ALL | wx.EXPAND, 5)
 
         pane = collapsePane.GetPane()
@@ -119,7 +124,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             apiButton = wx.Button(pane, label=key)
             apiButton.SetBackgroundColour(wx.Colour(rgbColor))
             apiButton.SetFont(apiButtonFont)
-            apiButton.Bind(wx.EVT_BUTTON, self.onApiCategoryClick)
+            apiButton.Bind(wx.EVT_BUTTON, self.OnApiCategoryClick)
             panehBox2.Add(apiButton, 0, wx.ALL, 5)
 
         paneBox.Add(panehBox1, flag=wx.EXPAND | wx.ALL, border=5)
@@ -161,24 +166,83 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             border=5,
         )
 
+        self.pagination_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        self.first_page_button = wx.Button(self, label="<<")
+        self.first_page_button.Bind(wx.EVT_BUTTON, self.OnFirstPage)
+        self.first_page_button.Disable()
+        self.pagination_sizer.Add(self.first_page_button, 0, wx.ALL, 5)
+
+        self.prev_button = wx.Button(self, label="Previous")
+        self.prev_button.Bind(wx.EVT_BUTTON, self.OnPrevPage)
+        self.prev_button.Disable()
+        self.pagination_sizer.Add(self.prev_button, 0, wx.ALL, 5)
+
+        self.page_label = wx.StaticText(self, label="Page 1 of 1")
+        self.pagination_sizer.Add(self.page_label, 0, wx.ALL | wx.CENTER, 5)
+
+        self.page_input = wx.TextCtrl(
+            self, value="1", size=(50, -1), style=wx.TE_PROCESS_ENTER
+        )
+        self.page_input.Bind(wx.EVT_TEXT_ENTER, self.OnGoToPage)
+        self.pagination_sizer.Add(self.page_input, 0, wx.ALL, 5)
+
+        self.go_button = wx.Button(self, label="Go")
+        self.go_button.Bind(wx.EVT_BUTTON, self.OnGoToPage)
+        self.pagination_sizer.Add(self.go_button, 0, wx.ALL, 5)
+
+        self.next_button = wx.Button(self, label="Next")
+        self.next_button.Bind(wx.EVT_BUTTON, self.OnNextPage)
+        self.next_button.Disable()
+        self.pagination_sizer.Add(self.next_button, 0, wx.ALL, 5)
+
+        self.last_page_button = wx.Button(self, label=">>")
+        self.last_page_button.Bind(wx.EVT_BUTTON, self.OnLastPage)
+        self.last_page_button.Disable()
+        self.pagination_sizer.Add(self.last_page_button, 0, wx.ALL, 5)
+
+        self.items_per_page_choices = [25, 50, 100, 500, 1000, 10000]
+        self.items_per_page_dropdown = wx.ComboBox(
+            self, value=str(self.items_per_page), choices=[str(c) for c in self.items_per_page_choices], style=wx.CB_READONLY
+        )
+        self.items_per_page_dropdown.Bind(wx.EVT_COMBOBOX, self.OnItemsPerPageChange)
+        self.pagination_sizer.Add(
+            wx.StaticText(self, label="Calls per page:"), 0, wx.ALL | wx.CENTER, 5
+        )
+        self.pagination_sizer.Add(self.items_per_page_dropdown, 0, wx.ALL, 5)
+
+        self.max_button = wx.Button(self, label="Max")
+        self.max_button.Bind(wx.EVT_BUTTON, self.OnMax)
+        self.pagination_sizer.Add(self.max_button, 0, wx.ALL, 5)
+
+        vbox.Add(self.pagination_sizer, 0, wx.CENTER | wx.BOTTOM, 5)
+        self.pagination_sizer.Hide(True)
+
         self.SetSizer(vbox)
         vbox.Fit(self)
 
+    def OnMax(self, event):
+        self.items_per_page = self.numcalls
+        self.current_page = 1
+        self.AddTableData()
+
     def OnTidFilterButtonClick(self, event):
         self.filterKey = "thread_id"
-        self.AddTableData(filter=self.tid.GetValue())
+        self.filter = self.tid.GetValue()
+        self.AddTableData()
 
     def OnApiFilterButtonClick(self, event):
         self.filterKey = "api"
-        self.AddTableData(filter=self.api.GetValue())
+        self.filter = self.api.GetValue()
+        self.AddTableData()
 
-    def onPaneChanged(self, event):
+    def OnPaneChanged(self, event):
         self.Layout()
 
-    def onApiCategoryClick(self, event):
+    def OnApiCategoryClick(self, event):
         button = event.GetEventObject()
-        category = button.GetLabel()
-        self.AddTableData(category)
+        self.category = button.GetLabel()
+        self.AddTableData()
 
     def UpdateGenerateButtonState(self):
         logsDir = Path(self.analysisDir) / "logs"
@@ -188,6 +252,14 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             self.behaviorButton.Disable()
 
     def GenerateBehavior(self, event):
+        popup = wx.ProgressDialog(
+            "Generating Behavior",
+            "Please wait...",
+            maximum=100,
+            parent=self,
+            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE,
+        )
+        popup.Update(0)
         options = Options()
         options.analysis_call_limit = 0
         options.ram_boost = True
@@ -198,6 +270,8 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.LoadResultCategories()
         self.LoadResultProcesses()
         self.behaviorButton.Disable()
+        popup.Update(100)
+        popup.Destroy()
         self.tidButton.Enable()
         self.apiFilterButton.Enable()
         self.behaviorComplete = True
@@ -310,6 +384,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             height = 5 * self.resultsWindow.GetCharHeight()
             self.resultsWindow.SetSizeHints(-1, -1, -1, height)
             self.resultsWindow.SetMinSize((1, height))
+            self.pagination_sizer.Show(True)
             self.grid.Show()
             self.Layout()
             self.ViewProcess(data)
@@ -367,13 +442,13 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.resultsWindow.SetValue("\n".join(output))
         mycalls = []
         try:
-            for _, call in enumerate(data.get("calls", [])):
+            for call in data.get("calls", []):
                 mycalls.append(call)
         except Exception:
             return
 
         self.mycalls = mycalls
-
+        self.current_page = 1
         self.AddTableData()
 
     def ClearGrid(self):
@@ -382,14 +457,21 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         if rows > 0:
             self.grid.DeleteRows(0, rows)
 
-    def AddTableData(self, category="all", filter=""):
-        if filter:
-            mycalls = self.GetCallsFilter(filter)
+    def AddTableData(self):
+        if self.filter:
+            mycalls = self.GetCallsFilter()
         else:
-            mycalls = self.GetCalls(category)
+            mycalls = self.GetCalls()
+
+        self.numcalls = len(mycalls)
+        self.UpdatePaginationControls()
         self.ClearGrid()
 
-        for i, call in enumerate(mycalls):
+        start_index = (self.current_page - 1) * self.items_per_page
+        end_index = start_index + self.items_per_page
+        paginated_calls = mycalls[start_index:end_index]
+
+        for i, call in enumerate(paginated_calls):
             category = call.get("category", "none")
             self.grid.AppendRows(1)
             self.grid.SetCellValue(i, 0, call.get("timestamp", ""))
@@ -437,13 +519,71 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
                 self.grid.SetRowAttr(row, attr)
         self.grid.ForceRefresh()
 
-    def GetCalls(self, category):
-        if category == "all":
+    def GetCalls(self):
+        if self.category == "all":
             return self.mycalls
         return [
-            d for d in self.mycalls if "category" in d and d["category"] == category
+            d for d in self.mycalls if "category" in d and d["category"] == self.category
         ]
 
-    def GetCallsFilter(self, value):
+    def GetCallsFilter(self):
         key = self.filterKey
-        return [d for d in self.mycalls if key in d and d[key].lower() == value.lower()]
+        return [d for d in self.mycalls if key in d and d[key].lower() == self.filter.lower()]
+
+    def UpdatePaginationControls(self):
+        total_pages = (self.numcalls + self.items_per_page - 1) // self.items_per_page
+        self.page_label.SetLabel(f"Page {self.current_page} of {total_pages}")
+        self.first_page_button.Enable(self.current_page > 1)
+        self.prev_button.Enable(self.current_page > 1)
+        self.next_button.Enable(self.current_page < total_pages)
+        self.last_page_button.Enable(self.current_page < total_pages)
+        self.page_input.SetValue(str(self.current_page))
+
+        self.Layout()
+
+    def OnPrevPage(self, event):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.AddTableData()
+
+    def OnNextPage(self, event):
+        total_pages = (self.numcalls + self.items_per_page - 1) // self.items_per_page
+        if self.current_page < total_pages:
+            self.current_page += 1
+            self.AddTableData()
+
+    def OnItemsPerPageChange(self, event):
+        new_value = int(self.items_per_page_dropdown.GetValue())
+        if new_value in self.items_per_page_choices:
+            self.items_per_page = new_value
+            self.current_page = 1
+            self.AddTableData()
+
+    def OnFirstPage(self, event):
+        self.current_page = 1
+        self.AddTableData()
+
+    def OnLastPage(self, event):
+        total_pages = (self.numcalls + self.items_per_page - 1) // self.items_per_page
+        self.current_page = total_pages
+        self.AddTableData()
+
+    def OnGoToPage(self, event):
+        total_pages = (self.numcalls + self.items_per_page - 1) // self.items_per_page
+        try:
+            page_num = int(self.page_input.GetValue())
+            if 1 <= page_num <= total_pages:
+                self.current_page = page_num
+                self.AddTableData()
+            else:
+                wx.MessageBox(
+                    f"Page number must be between 1 and {total_pages}.",
+                    "Invalid Page Number",
+                    wx.OK | wx.ICON_ERROR,
+                )
+        except ValueError:
+            wx.MessageBox(
+                "Please enter a valid integer page number.",
+                "Invalid Input",
+                wx.OK | wx.ICON_ERROR
+            )

@@ -55,6 +55,14 @@ class PayloadsPanel(wx.Panel):
     def LoadAndDisplayContent(self):
         if self.payloadsLoaded:
             return
+        popup = wx.ProgressDialog(
+            "Loading payloads",
+            "Please wait...",
+            maximum=100,
+            parent=self,
+            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE,
+        )
+        popup.Update(0)
         data = LoadFilesJson(self.analysisDir)
         if "error" in data:
             return
@@ -141,6 +149,8 @@ class PayloadsPanel(wx.Panel):
                 self.panelsizer.AddSpacer(5)
 
         self.panel.Layout()
+        popup.Update(100)
+        popup.Destroy()
         self.panel.Show()
         self.Layout()
         self.payloadsLoaded = True
