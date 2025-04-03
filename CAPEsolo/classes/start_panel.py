@@ -48,6 +48,7 @@ SANDBOXPACKAGES = (
     "service",
     "service_dll",
     "udf",
+    "vbs",
     "vhd",
     "xls",
     "xps",
@@ -280,17 +281,17 @@ class StartPanel(wx.Panel):
             flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
             border=5,
         )
+        self.flexDebuggerSizer.Add(self.yarascanDisable, proportion=0, flag=wx.EXPAND)
+        self.flexDebuggerSizer.Add(
+            hboxCount, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
+        )
+        self.flexDebuggerSizer.Add(hboxDepth, proportion=0, flag=wx.EXPAND)
         self.flexDebuggerSizer.Add(
             self.idbgCheckbox,
             proportion=0,
             flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
             border=5
         )
-        self.flexDebuggerSizer.Add(self.yarascanDisable, proportion=0, flag=wx.EXPAND)
-        self.flexDebuggerSizer.Add(
-            hboxCount, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
-        )
-        self.flexDebuggerSizer.Add(hboxDepth, proportion=0, flag=wx.EXPAND)
 
         debuggerVert = wx.BoxSizer(wx.VERTICAL)
         debuggerVert.Add(self.flexDebuggerSizer, proportion=0, border=1)

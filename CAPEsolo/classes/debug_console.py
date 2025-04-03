@@ -22,10 +22,7 @@ class CommandPipeHandler:
 
     def _handle_break(self, data):
         with self.console.breakCondition:
-            if not data:
-                self.console.debuggerResponse = b"BREAK"
-                self.console.breakCondition.notify_all()
-            else:
+            if data:
                 self.console.debuggerResponse = data
                 self.console.breakCondition.notify_all()
             if not self.console.pendingCommand:
@@ -43,11 +40,12 @@ class CommandPipeHandler:
         with self.console.breakCondition:
             if data.lower() == b"init":
                 notified = self.console.breakCondition.wait_for(
-                    lambda: self.console.debuggerResponse == b"BREAK", timeout=TIMEOUT
+                    lambda: self.console.debuggerResponse, timeout=TIMEOUT
                 )
                 if notified:
+                    response = self.console.debuggerResponse
                     self.console.debuggerResponse = None
-                    return b"READY"
+                    return response
                 else:
                     return b"TIMEOUT"
             else:
@@ -258,7 +256,7 @@ class ConsolePanel(wx.Panel):
         else:
             wx.CallLater(100, self.SendInit)
 
-    def ProcessServerOutput(self, text):
+    def ProcessServerOutput(self, data):
         """Processes debugger responses."""
         '''
         if "THREADS" in text:
@@ -285,17 +283,17 @@ class ConsolePanel(wx.Panel):
                 wx.CallAfter(self.breakpoints_list.Append, mem)
         else:
         '''
-        if text == "READY":
+        if data and not self.connected:
             self.connected = True
             self.UpdateStatus("Status: Connected")
             if not self.parent.IsShown():
                 self.parent.Show()
                 self.parent.Layout()
-            self.AppendOutput("Debugger initialized")
-        elif text == "TIMEOUT":
+            self.AppendOutput(data)
+        elif data == "TIMEOUT":
             self.AppendOutput("Operation timed out")
         else:
-            self.AppendOutput(text)
+            self.AppendOutput(data)
 
     def ReadResponse(self):
         """Reads a full response from the pipe in a thread-safe manner."""
