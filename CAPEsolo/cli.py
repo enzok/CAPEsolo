@@ -29,14 +29,15 @@ os.chdir(CAPESOLO_ROOT)
 
 from classes.main_frame import MainFrame
 from classes.splash_screen import SplashScreen
+from lib.common.defines import KERNEL32
 from utils.update_yara import update_yara
-
 
 log = logging.getLogger(__name__)
 for handler in log.handlers[:]:
     log.removeHandler(handler)
 
 ANALYSIS_CONF = os.path.join(CAPESOLO_ROOT, "analysis_conf")
+MUTEX_NAME = "solo_mutex"
 
 
 class CapesoloApp(wx.App):
@@ -62,6 +63,7 @@ class CapesoloApp(wx.App):
 
 
 def main():
+    mutex = acquire_lock()
     parser = argparse.ArgumentParser(description="Capesolo utility functions.")
     parser.add_argument(
         "--update_yara",
@@ -76,6 +78,19 @@ def main():
     else:
         app = CapesoloApp()
         app.MainLoop()
+    release_lock(mutex)
+
+def acquire_lock():
+    mutex = KERNEL32.CreateMutexA(None, False, MUTEX_NAME)
+    last_error = KERNEL32.GetLastError()
+    if last_error == 183:
+        print("Another instance is already running.")
+        KERNEL32.CloseHandle(mutex)
+        sys.exit(1)
+    return mutex
+
+def release_lock(mutex):
+    KERNEL32.CloseHandle(mutex)
 
 
 if __name__ == "__main__":
