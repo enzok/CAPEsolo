@@ -112,6 +112,7 @@ class StartPanel(wx.Panel):
         self.targetFile = GetPreviousTarget(self.analysisDir)
         self.parent.targetFile = self.targetFile
         self.timer = None
+        self.idbg = False
         self.InitUi()
         self.LoadAnalysisConfFile()
         self.Bind(EVT_ANALYZER_COMPLETE, self.OnAnalyzerComplete)
@@ -259,6 +260,10 @@ class StartPanel(wx.Panel):
         self.debugDepth = wx.TextCtrl(self.debuggerPane, size=(50, -1))
         hboxDepth.Add(depthLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxDepth.Add(self.debugDepth, flag=wx.ALIGN_CENTER_VERTICAL)
+
+        self.idbgCheckbox = wx.CheckBox(self.debuggerPane, label="Interactive Debugger")
+        self.idbgCheckbox.Bind(wx.EVT_CHECKBOX, self.OnIdbgChecked)
+
         self.yarascanDisable = wx.CheckBox(
             self.debuggerPane, label="Disable Monitor Yarascan"
         )
@@ -274,6 +279,12 @@ class StartPanel(wx.Panel):
             proportion=0,
             flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
             border=5,
+        )
+        self.flexDebuggerSizer.Add(
+            self.idbgCheckbox,
+            proportion=0,
+            flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            border=5
         )
         self.flexDebuggerSizer.Add(self.yarascanDisable, proportion=0, flag=wx.EXPAND)
         self.flexDebuggerSizer.Add(
@@ -717,6 +728,10 @@ class StartPanel(wx.Panel):
         if self.curDir:
             curdir = Path(filename).parent
             userOptions += f"{sep}curdir={curdir}"
+            sep = ","
+        if self.idbg:
+            userOptions += f"{sep}idbg=1"
+            sep = ","
 
         conf += f"\nenforce_timeout = {self.enforceTimeout}"
         self.countdown = int(self.timeoutInput.GetValue())
@@ -882,6 +897,9 @@ class StartPanel(wx.Panel):
             self.minhook.Disable()
         else:
             self.minhook.Enable()
+
+    def OnIdbgChecked(self, event):
+        self.idbg = self.idbgCheckbox.GetValue()
 
     def OnYaraSave(self, event):
         yaraText = self.yaraRule.GetValue()
