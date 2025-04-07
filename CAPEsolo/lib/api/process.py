@@ -16,13 +16,16 @@ import urllib.request
 from ctypes import (
     POINTER,
     byref,
+    c_buffer,
     c_int,
     c_ulong,
-    create_string_buffer,
     c_void_p,
+    create_string_buffer,
+    create_unicode_buffer,
     sizeof,
+    windll,
 )
-from ctypes.wintypes import DWORD, HANDLE, BOOL
+from ctypes.wintypes import BOOL, DWORD, HANDLE
 from pathlib import Path
 from shutil import copy
 
@@ -31,13 +34,15 @@ from lib.common.constants import (
     CAPEMON64_NAME,
     LOADER32_NAME,
     LOADER64_NAME,
-    TTD32_NAME,
-    TTD64_NAME,
     LOGSERVER_PREFIX,
     PATHS,
     PIPE,
     SHUTDOWN_MUTEX,
+    SIDELOADER32_NAME,
+    SIDELOADER64_NAME,
     TERMINATE_EVENT,
+    TTD32_NAME,
+    TTD64_NAME,
 )
 from lib.common.defines import (
     CREATE_NEW_CONSOLE,
@@ -46,17 +51,19 @@ from lib.common.defines import (
     GENERIC_READ,
     GENERIC_WRITE,
     KERNEL32,
+    MAX_PATH,
     NTDLL,
     OPEN_EXISTING,
     PROCESS_ALL_ACCESS,
+    PROCESS_BASIC_INFORMATION,
     PROCESS_INFORMATION,
     PROCESS_QUERY_LIMITED_INFORMATION,
     PROCESSENTRY32,
+    PSAPI,
     STARTUPINFO,
     SYSTEM_INFO,
     TH32CS_SNAPPROCESS,
     THREAD_ALL_ACCESS,
-    PROCESS_BASIC_INFORMATION,
 )
 from lib.common.errors import get_error_string
 from lib.common.rand import random_string
@@ -66,6 +73,13 @@ from lib.core.config import Config
 from lib.core.log import LogServer
 
 # from lib.common.defines import STILL_ACTIVE
+
+# CSIDL constants
+CSIDL_WINDOWS = 0x0024
+CSIDL_SYSTEM = 0x0025
+CSIDL_SYSTEMX86 = 0x0029
+CSIDL_PROGRAM_FILES = 0x0026
+CSIDL_PROGRAM_FILESX86 = 0x002a
 
 IOCTL_PID = 0x222008
 IOCTL_CUCKOO_PATH = 0x22200C
@@ -145,6 +159,7 @@ class Process:
         self.suspended = suspended
         self.system_info = SYSTEM_INFO()
         self.critical = False
+        self.path = None
 
     def __del__(self):
         """Close open handles."""
@@ -239,6 +254,25 @@ class Process:
 
         return ""
 
+    def get_folder_path(self, csidl):
+        """Use SHGetFolderPathW to get the system folder path for a given CSIDL."""
+        buf = create_unicode_buffer(MAX_PATH)
+        windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf)
+        return buf.value
+
+    def get_image_name(self):
+        """Get the image name; returns an empty string on error."""
+        if not self.h_process:
+            self.open()
+        ret = ""
+        image_name_buf = c_buffer(MAX_PATH)
+        n = PSAPI.GetProcessImageFileNameA(self.h_process, image_name_buf, MAX_PATH)
+        if not n:
+            log.debug("Failed getting image name for pid %d", self.pid)
+            return ret
+        image_name = image_name_buf.value.decode()
+        return image_name.split("\\")[-1]
+
     def is_alive(self):
         """Process is alive?
         @return: process status.
@@ -287,6 +321,48 @@ class Process:
             return pbi.InheritedFromUniqueProcessId
 
         return None
+
+    def detect_dll_sideloading(self, directory_path: str) -> bool:
+        """Detect potential DLL sideloading in the provided directory."""
+        try:
+            directory = Path(directory_path)
+            if not directory.is_dir():
+                return False
+
+            local_dlls = {
+                f.name.lower() for f in directory.glob("*.dll") if f.is_file()
+            }
+            if not local_dlls:
+                return False
+
+            system_dirs = [
+                self.get_folder_path(CSIDL_WINDOWS),
+                self.get_folder_path(CSIDL_SYSTEM),
+                self.get_folder_path(CSIDL_SYSTEMX86),
+                self.get_folder_path(CSIDL_PROGRAM_FILES),
+                self.get_folder_path(CSIDL_PROGRAM_FILESX86),
+            ]
+
+            # Build set of known system DLLs (names only, lowercased)
+            known_dlls = set()
+            for sys_dir in system_dirs:
+                sys_path = Path(sys_dir)
+                if sys_path.exists():
+                    known_dlls.update(
+                        f.name.lower() for f in sys_path.glob("*.dll") if f.is_file()
+                    )
+
+            suspicious = local_dlls & known_dlls
+            if suspicious:
+                for dll in suspicious:
+                    log.info("detect_dll_sideloading: suspicious DLL found: %s", dll)
+            return bool(suspicious)
+
+        except Exception as e:
+            log.error(
+                "detect_dll_sideloading: exception %s with path %s", e, directory_path
+            )
+            return False
 
     def kernel_analyze(self):
         """zer0m0n kernel analysis"""
@@ -486,6 +562,8 @@ class Process:
         if args:
             arguments += args
 
+        self.path = path
+
         creation_flags = CREATE_NEW_CONSOLE
         if suspended:
             self.suspended = True
@@ -606,7 +684,7 @@ class Process:
         if result.stderr:
             log.error(" ".join(result.stderr.split()))
 
-        log.info("Stopped TTD for %s process with pid %d: %s", bit_str, self.pid)
+        log.info("Stopped TTD for %s process with pid %d", bit_str, self.pid)
 
         return True
 
@@ -759,11 +837,13 @@ class Process:
             bin_name = LOADER64_NAME
             dll = CAPEMON64_NAME
             bit_str = "64-bit"
+            side_dll = SIDELOADER64_NAME
         else:
             ttd_name = TTD32_NAME
             bin_name = LOADER32_NAME
             dll = CAPEMON32_NAME
             bit_str = "32-bit"
+            side_dll = SIDELOADER32_NAME
 
         bin_name = os.path.join(Path.cwd(), bin_name)
         dll = os.path.join(Path.cwd(), dll)
@@ -795,6 +875,18 @@ class Process:
 
         self.write_monitor_config(interest, nosleepskip)
 
+        path = os.path.dirname(self.path)
+
+        if self.detect_dll_sideloading(path):
+            copy(dll, os.path.join(path, "capemon.dll"))
+            copy(side_dll, os.path.join(path, "version.dll"))
+            copy(
+                os.path.join(Path.cwd(), "dll", f"{self.pid}.ini"),
+                os.path.join(path, "config.ini"),
+            )
+            log.info("%s DLL to sideload is %s, sideloader %s", bit_str, os.path.join(path, "capemon.dll"), os.path.join(path, "version.dll"))
+            return True
+        
         log.info("%s DLL to inject is %s, loader %s", bit_str, dll, bin_name)
 
         try:
@@ -868,3 +960,8 @@ class Process:
         log.info("Memory dump of process %d uploaded", self.pid)
 
         return True
+
+    def __str__(self):
+        """Get a string representation of this process."""
+        image_name = self.get_image_name() or "???"
+        return f"<{self.__class__.__name__} {self.pid} {image_name}>"
