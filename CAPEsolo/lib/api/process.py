@@ -24,6 +24,7 @@ from ctypes import (
     create_unicode_buffer,
     sizeof,
     windll,
+    ArgumentError,
 )
 from ctypes.wintypes import BOOL, DWORD, HANDLE
 from pathlib import Path
@@ -118,6 +119,20 @@ def get_referrer_url(interest):
     eistr = base64.urlsafe_b64encode(random_string(12).encode())
     usgstr = b"AFQj" + base64.urlsafe_b64encode(random_string(12).encode())
     return f"http://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd={itemidx}&ved={vedstr}&url={escapedurl}&ei={eistr}&usg={usgstr}"
+
+def nt_path_to_dos_path_ansi(nt_path: str) -> str:
+    drive_letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    nt_path_bytes = nt_path.encode("utf-8", errors="ignore")
+    for letter in drive_letters:
+        drive = f"{letter}:"
+        target = create_string_buffer(1024)
+        res = KERNEL32.QueryDosDeviceA(drive.encode("ascii"), target, 1024)
+        if res != 0:
+            device_path = target.value
+            if nt_path_bytes.startswith(device_path):
+                converted = nt_path_bytes.replace(device_path, drive.encode("ascii"), 1)
+                return converted.decode("utf-8", errors="ignore")
+    return nt_path
 
 
 def NT_SUCCESS(val):
@@ -256,9 +271,9 @@ class Process:
 
     def get_folder_path(self, csidl):
         """Use SHGetFolderPathW to get the system folder path for a given CSIDL."""
-        buf = create_unicode_buffer(MAX_PATH)
-        windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf)
-        return buf.value
+        buf = create_string_buffer(MAX_PATH)
+        windll.shell32.SHGetFolderPathA(None, csidl, None, 0, buf)
+        return buf.value.decode('utf-8', errors='ignore')
 
     def get_image_name(self):
         """Get the image name; returns an empty string on error."""
@@ -329,40 +344,50 @@ class Process:
             if not directory.is_dir():
                 return False
 
-            local_dlls = {
-                f.name.lower() for f in directory.glob("*.dll") if f.is_file()
-            }
-            if not local_dlls:
+            # Early exit if directory is a known system location
+            try:
+                system_dirs = {
+                    Path(self.get_folder_path(CSIDL_WINDOWS)).resolve(),
+                    Path(self.get_folder_path(CSIDL_SYSTEM)).resolve(),
+                    Path(self.get_folder_path(CSIDL_SYSTEMX86)).resolve(),
+                    Path(self.get_folder_path(CSIDL_PROGRAM_FILES)).resolve(),
+                    Path(self.get_folder_path(CSIDL_PROGRAM_FILESX86)).resolve(),
+                }
+                if directory.resolve() in system_dirs:
+                    return False
+            except (OSError, ArgumentError, ValueError) as e:
+                log.warning(
+                    "detect_dll_sideloading: failed to retrieve system paths: %s", e
+                )
                 return False
 
-            system_dirs = [
-                self.get_folder_path(CSIDL_WINDOWS),
-                self.get_folder_path(CSIDL_SYSTEM),
-                self.get_folder_path(CSIDL_SYSTEMX86),
-                self.get_folder_path(CSIDL_PROGRAM_FILES),
-                self.get_folder_path(CSIDL_PROGRAM_FILESX86),
-            ]
+            try:
+                local_dlls = {f.name.lower() for f in directory.glob("*.dll") if f.is_file()}
+                if not local_dlls:
+                    return False
+            except (OSError, PermissionError) as e:
+                log.warning("detect_dll_sideloading: could not list DLLs in %s: %s", directory_path, e)
+                return False
 
-            # Build set of known system DLLs (names only, lowercased)
+            # Build set of known system DLLs
             known_dlls = set()
             for sys_dir in system_dirs:
-                sys_path = Path(sys_dir)
-                if sys_path.exists():
-                    known_dlls.update(
-                        f.name.lower() for f in sys_path.glob("*.dll") if f.is_file()
-                    )
+                try:
+                    if sys_dir.exists():
+                        known_dlls.update(f.name.lower() for f in sys_dir.glob("*.dll") if f.is_file())
+                except (OSError, PermissionError) as e:
+                    log.debug("detect_dll_sideloading: skipping system dir %s: %s", sys_dir, e)
 
             suspicious = local_dlls & known_dlls
             if suspicious:
                 for dll in suspicious:
-                    log.info("detect_dll_sideloading: suspicious DLL found: %s", dll)
+                    log.info("Potential dll side-loading detected in local directory: %s", dll)
             return bool(suspicious)
 
         except Exception as e:
-            log.error(
-                "detect_dll_sideloading: exception %s with path %s", e, directory_path
-            )
+            log.error("detect_dll_sideloading: unexpected error with path %s: %s", directory_path, e)
             return False
+
 
     def kernel_analyze(self):
         """zer0m0n kernel analysis"""
@@ -875,15 +900,19 @@ class Process:
 
         self.write_monitor_config(interest, nosleepskip)
 
-        path = os.path.dirname(self.path)
+        path = os.path.dirname(nt_path_to_dos_path_ansi(self.get_filepath()))
 
         if self.detect_dll_sideloading(path):
-            copy(dll, os.path.join(path, "capemon.dll"))
-            copy(side_dll, os.path.join(path, "version.dll"))
-            copy(
-                os.path.join(Path.cwd(), "dll", f"{self.pid}.ini"),
-                os.path.join(path, "config.ini"),
-            )
+            try:
+                copy(dll, os.path.join(path, "capemon.dll"))
+                copy(side_dll, os.path.join(path, "version.dll"))
+                copy(
+                    os.path.join(Path.cwd(), "dll", f"{self.pid}.ini"),
+                    os.path.join(path, "config.ini"),
+                )
+            except OSError as e:
+                log.error("Failed to copy DLL: %s", e)
+                return False
             log.info("%s DLL to sideload is %s, sideloader %s", bit_str, os.path.join(path, "capemon.dll"), os.path.join(path, "version.dll"))
             return True
         
