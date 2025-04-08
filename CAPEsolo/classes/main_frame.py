@@ -105,7 +105,7 @@ class MainFrame(wx.Frame):
         elif selectedPage == self.infoTab:
             selectedPage.LoadAndDisplayContent()
         elif selectedPage == self.payloadsTab:
-            selectedPage.LoadAndDisplayContent()
+            selectedPage.PayloadsReady()
         elif selectedPage == self.yaraTab:
             selectedPage.UpdateYaraButtonState()
         elif selectedPage == self.configsTab:

@@ -56,6 +56,7 @@ class PayloadsPanel(wx.Panel):
     def PayloadsReady(self):
         if JsonPathExists(self.analysisDir):
             self.jsonFileExists = True
+            self.LoadAndDisplayContent()
 
     def LoadAndDisplayContent(self):
         if self.payloadsLoaded or not self.jsonFileExists:
