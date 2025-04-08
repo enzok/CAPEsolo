@@ -31,23 +31,23 @@ class CommandPipeHandler:
                 )
                 if not notified:
                     self.console.pendingCommand = None
-                    return b"TIMEOUT"
+                    return b":TIMEOUT"
                 command = self.console.pendingCommand
                 self.console.pendingCommand = None
                 return command
 
     def _handle_dbgcmd(self, data):
         with self.console.breakCondition:
-            if data.lower() == b"init":
+            if data == b"INIT" and not self.console.connected:
                 notified = self.console.breakCondition.wait_for(
                     lambda: self.console.debuggerResponse, timeout=TIMEOUT
                 )
                 if notified:
-                    response = self.console.debuggerResponse
+                    response = b"I:" + self.console.debuggerResponse
                     self.console.debuggerResponse = None
                     return response
                 else:
-                    return b"TIMEOUT"
+                    return b":TIMEOUT"
             else:
                 self.console.pendingCommand = data
                 self.console.breakCondition.notify_all()
@@ -56,18 +56,22 @@ class CommandPipeHandler:
                 )
                 if not notified:
                     self.console.pendingCommand = None
-                    return b"TIMEOUT"
-                response = self.console.debuggerResponse
+                    return b":TIMEOUT"
+
+                response = b":" + self.console.debuggerResponse
+                if data:
+                    response = data + response
+
                 self.console.debuggerResponse = None
                 return response
 
     def dispatch(self, data):
-        response = b"NOPE"
+        response = b":NOPE"
         if not data or b":" not in data:
             log.critical("Unknown command received from the debug server: %s", data.strip())
         else:
             command, arguments = data.strip().split(b":", 1)
-            #log.info((command, data, "console dispatch"))
+            log.info((command, data, "console dispatch"))
             fn = getattr(self, f"_handle_{command.lower().decode()}", None)
             if not fn:
                 log.critical("Unknown command received from the debug server: %s", data.strip())
@@ -93,8 +97,10 @@ class DebugConsole:
         # These shared condition variables and buffers are used by the pipe handler.
         self.breakCondition = threading.Condition()
         self.pendingCommand = None
+        self.lastCommand = None
         self.debuggerResponse = None
         self.commandPipe = None
+        self.connected = False
 
     def OpenConsole(self):
         """Creates (but does not show) the console window."""
@@ -143,7 +149,7 @@ class ConsolePanel(wx.Panel):
         self.parent = parent
         self.pipe = parent.pipe
         self.pipeHandle = None
-        self.connected = False
+        self.connected = self.parent.parent.connected
         self.read_lock = threading.Lock()
         self.InitGUI()
         wx.CallLater(100, self.InitPipe)
@@ -152,14 +158,6 @@ class ConsolePanel(wx.Panel):
         # Main Layout
         mainSizer = wx.BoxSizer(wx.VERTICAL)
 
-        # Console Output
-        mainSizer.Add(wx.StaticText(self, label="Console Output"), 0, wx.ALL, 5)
-        self.outputConsole = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
-        mainSizer.Add(self.outputConsole, 2, wx.EXPAND | wx.ALL, 5)
-
-        # Status Bar
-        self.statusBar = wx.StaticText(self, label="Status: Disconnected")
-        mainSizer.Add(self.statusBar, 0, wx.EXPAND | wx.ALL, 5)
         '''
         # Threads
         mainSizer.Add(wx.StaticText(self, label="Active Threads"), 0, wx.ALL, 5)
@@ -167,11 +165,11 @@ class ConsolePanel(wx.Panel):
         mainSizer.Add(self.thread_list, 1, wx.EXPAND | wx.ALL, 5)
         self.thread_list.Bind(wx.EVT_LISTBOX, self.switch_thread)
 
-        # Registers
-        mainSizer.Add(wx.StaticText(self, label="Registers"), 0, wx.ALL, 5)
-        self.registers_display = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
-        mainSizer.Add(self.registers_display, 1, wx.EXPAND | wx.ALL, 5)
-
+        # Disassembly
+        mainSizer.Add(wx.StaticText(self, label="Disassembly"), 0, wx.ALL, 5)
+        self.disasmDisplay = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        mainSizer.Add(self.disasmDisplay, 1, wx.EXPAND | wx.ALL, 5)
+       '
         # Stack Frames
         mainSizer.Add(wx.StaticText(self, label="Stack Frames"), 0, wx.ALL, 5)
         self.stack_display = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
@@ -182,17 +180,33 @@ class ConsolePanel(wx.Panel):
         self.memory_watch_list = wx.ListBox(self)
         mainSizer.Add(self.memory_watch_list, 1, wx.EXPAND | wx.ALL, 5)
 
-        # Disassembly
-        mainSizer.Add(wx.StaticText(self, label="Disassembly"), 0, wx.ALL, 5)
-        self.disasm_display = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
-        mainSizer.Add(self.disasm_display, 1, wx.EXPAND | wx.ALL, 5)
-
         # Breakpoints
         mainSizer.Add(wx.StaticText(self, label="Breakpoints"), 0, wx.ALL, 5)
         self.breakpoints_list = wx.ListBox(self)
         mainSizer.Add(self.breakpoints_list, 1, wx.EXPAND | wx.ALL, 5)
-        self.breakpoints_list.Bind(wx.EVT_LISTBOX_DCLICK, self.toggle_breakpoint)
+        self.breakpoints_list.Bind(wx.EVT_LISTBOX_DCLICK, self.breakpoint)
         '''
+
+        fontCourier = wx.Font(
+            10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL
+        )
+
+        # Registers
+        mainSizer.Add(wx.StaticText(self, label="Registers"), 0, wx.ALL, 5)
+        self.regsDisplay = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        self.regsDisplay.SetFont(fontCourier)
+        mainSizer.Add(self.regsDisplay, 1, wx.EXPAND | wx.ALL, 5)
+
+        # Console Output
+        mainSizer.Add(wx.StaticText(self, label="Console Output"), 0, wx.ALL, 5)
+        self.outputConsole = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        self.outputConsole.SetFont(fontCourier)
+        mainSizer.Add(self.outputConsole, 2, wx.EXPAND | wx.ALL, 5)
+
+        # Status Bar
+        self.statusBar = wx.StaticText(self, label="Status: Disconnected")
+        mainSizer.Add(self.statusBar, 0, wx.EXPAND | wx.ALL, 5)
+
         # Debugging Controls
         debugButtons = wx.BoxSizer(wx.HORIZONTAL)
         self.stepIntoBtn = wx.Button(self, label="Step Into (F7)")
@@ -201,9 +215,9 @@ class ConsolePanel(wx.Panel):
         debugButtons.Add(self.stepIntoBtn, 1, wx.EXPAND | wx.ALL, 5)
         debugButtons.Add(self.stepOverBtn, 1, wx.EXPAND | wx.ALL, 5)
         debugButtons.Add(self.continueBtn, 1, wx.EXPAND | wx.ALL, 5)
-        self.stepIntoBtn.Bind(wx.EVT_BUTTON, lambda event: self.SendCommand("step_into"))
-        self.stepOverBtn.Bind(wx.EVT_BUTTON, lambda event: self.SendCommand("step_over"))
-        self.continueBtn.Bind(wx.EVT_BUTTON, lambda event: self.SendCommand("continue"))
+        self.stepIntoBtn.Bind(wx.EVT_BUTTON, lambda event: [self.SendCommand("S"), self.SendCommand("R")])
+        self.stepOverBtn.Bind(wx.EVT_BUTTON, lambda event: [self.SendCommand("O"), self.SendCommand("R")])
+        self.continueBtn.Bind(wx.EVT_BUTTON, lambda event: self.SendCommand("C"))
         self.Bind(wx.EVT_CHAR_HOOK, self.OnKeyDown)
         mainSizer.Add(debugButtons, 0, wx.EXPAND | wx.ALL, 5)
 
@@ -216,19 +230,31 @@ class ConsolePanel(wx.Panel):
         self.SetSizer(mainSizer)
 
     def OnKeyDown(self, event):
+        if self.FindFocus() == self.inputBox:
+            event.Skip()
+            return
+
         if event.GetKeyCode() == ord("F7") and event.ControlDown():
-            self.SendCommand("step_into")
+            self.SendCommand("S")
+            self.SendCommand("R")
         elif event.GetKeyCode() == ord("F8") and event.ControlDown():
-            self.SendCommand("step_over")
+            self.SendCommand("O")
+            self.SendCommand("R")
         elif event.GetKeyCode() == ord("F10") and event.ControlDown():
-            self.SendCommand("continue")
+            self.SendCommand("C")
         else:
             event.Skip()
 
     def AppendOutput(self, text):
-        """Appends text to the output console and logs it."""
+        """Appends text to the output console."""
         if self.outputConsole:
             self.outputConsole.AppendText(text + "\n")
+
+    def UpdateRegs(self, text):
+        """Update registers display."""
+        if self.regsDisplay:
+            self.regsDisplay.Clear()
+            self.regsDisplay.SetValue(text)
 
     def UpdateStatus(self, status):
         self.statusBar.SetLabel(status)
@@ -258,42 +284,33 @@ class ConsolePanel(wx.Panel):
 
     def ProcessServerOutput(self, data):
         """Processes debugger responses."""
-        '''
-        if "THREADS" in text:
-            print("threads:", text)
-            threads = text.replace("THREADS", "").strip().split("\n")
-            wx.CallAfter(self.thread_list.Clear)
-            for thread in threads:
-                wx.CallAfter(self.thread_list.Append, f"Thread {thread}")
-        elif "REGISTERS" in text:
-            wx.CallAfter(self.registers_display.SetValue, text.replace("REGISTERS", ""))
-        elif "STACK" in text:
-            wx.CallAfter(self.stack_display.SetValue, text.replace("STACK", ""))
-        elif "DISASM" in text:
-            wx.CallAfter(self.disasm_display.SetValue, text.replace("DISASM", ""))
-        elif "MEMORY" in text:
-            mem_data = text.replace("MEMORY", "").strip().split("\n")
-            wx.CallAfter(self.memory_watch_list.Clear)
-            for mem in mem_data:
-                wx.CallAfter(self.memory_watch_list.Append, mem)
-        elif "BREAKPOINTS" in text:
-            mem_data = text.replace("BREAKPOINTS", "").strip().split("\n")
-            wx.CallAfter(self.breakpoints_list.Clear)
-            for mem in mem_data:
-                wx.CallAfter(self.breakpoints_list.Append, mem)
-        else:
-        '''
+        command, data = data.split(":", 1)
         if data and not self.connected:
             self.connected = True
             self.UpdateStatus("Status: Connected")
             if not self.parent.IsShown():
                 self.parent.Show()
                 self.parent.Layout()
+
             self.AppendOutput(data)
+            self.SendCommand("N")
+            self.SendCommand("N")
+            self.SendCommand("R")
         elif data == "TIMEOUT":
             self.AppendOutput("Operation timed out")
         else:
-            self.AppendOutput(data)
+            if command == "R":
+                self.UpdateRegs(data)
+            elif command == "S":
+                self.AppendOutput(data)
+                self.SendCommand("R")
+            elif command == "O":
+                self.AppendOutput(data)
+                self.SendCommand("R")
+            elif command == "":
+                self.AppendOutput(data)
+            else:
+                log.error("[DEBUG CONSOLE] Invalid command: %s", command)
 
     def ReadResponse(self):
         """Reads a full response from the pipe in a thread-safe manner."""
@@ -317,7 +334,7 @@ class ConsolePanel(wx.Panel):
             log.error("[DEBUG CONSOLE] Cannot send command: Not connected to pipe")
             return
 
-        fullCommand = f"{DBGCMD}:{command}".encode("utf-8") + b"\n"
+        fullCommand = f"{DBGCMD}:{command.upper()}".encode("utf-8") + b"\n"
         overlapped = pywintypes.OVERLAPPED()
         overlapped.hEvent = win32event.CreateEvent(None, 0, 0, None)
         try:
@@ -329,27 +346,6 @@ class ConsolePanel(wx.Panel):
                 win32file.CloseHandle(overlapped.hEvent)
 
         threading.Thread(target=self.WaitForResponse, daemon=True).start()
-
-    '''
-    def switch_thread(self, event):
-        """Switches the active thread for debugging."""
-        selection = self.thread_list.GetSelection()
-        if selection != wx.NOT_FOUND:
-            thread_id = self.thread_list.GetString(selection).split()[-1]
-            self.send_command(f"thread select {thread_id}")
-
-    def toggle_breakpoint(self, event):
-        """Toggles the selected breakpoint on/off."""
-        selection = self.breakpoints_list.GetSelection()
-        if selection != wx.NOT_FOUND:
-            bp_text = self.breakpoints_list.GetString(selection)
-            if "(disabled)" in bp_text:
-                self.breakpoints_list.SetString(selection, bp_text.replace(" (disabled)", ""))
-                self.send_command(f"break enable {bp_text.split()[-1]}")
-            else:
-                self.breakpoints_list.SetString(selection, bp_text + " (disabled)")
-                self.send_command(f"break disable {bp_text.split()[-1]}")
-    '''
 
     def OnEnter(self, event):
         """Handles user input and processes commands."""
@@ -367,6 +363,7 @@ class ConsolePanel(wx.Panel):
             self.SendCommand(cmd)
 
         self.inputBox.Clear()
+        event.Skip()
 
     def ShutdownConsole(self):
         """Handles graceful shutdown of the console."""

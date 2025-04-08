@@ -688,8 +688,9 @@ class StartPanel(wx.Panel):
             mainFrame = self.GetMainFrame()
             size = mainFrame.GetSize()
             position = mainFrame.GetPosition()
-            dbgConsole = DebugConsole(self, "Debug Console", position, size)
-            dbgConsole.launch()
+            if self.idbg:
+                dbgConsole = DebugConsole(self, "Debug Console", position, size)
+                dbgConsole.launch()
             timerWindow = CountdownTimer(self, self.countdown, position, size)
             timerWindow.Show()
             self.StartAnalyzerThread(self.analyzer)
@@ -710,6 +711,7 @@ class StartPanel(wx.Panel):
         filename = str(self.target)
         conf = self.analysisEditor.GetValue()
         userOptions = self.optionsCtrl.GetValue()
+        timeout = int(self.timeoutInput.GetValue())
         sep = ","
         if userOptions == "option1=value, option2=value, etc...":
             userOptions = ""
@@ -732,11 +734,12 @@ class StartPanel(wx.Panel):
             sep = ","
         if self.idbg:
             userOptions += f"{sep}idbg=1"
+            timeout = 60 * 60  # 60 minutes
             sep = ","
 
         conf += f"\nenforce_timeout = {self.enforceTimeout}"
-        self.countdown = int(self.timeoutInput.GetValue())
-        conf += f"\ntimeout = {self.timeoutInput.GetValue()}"
+        self.countdown = timeout
+        conf += f"\ntimeout = {timeout}"
         debuggerOptions = self.GetDebuggerOptions()
         conf += f"\nfile_name = {filename}"
         conf += f"\nclock = {formattedDatetime}"
