@@ -21,7 +21,6 @@ from ctypes import (
     c_ulong,
     c_void_p,
     create_string_buffer,
-    create_unicode_buffer,
     sizeof,
     windll,
     ArgumentError,
@@ -119,6 +118,7 @@ def get_referrer_url(interest):
     eistr = base64.urlsafe_b64encode(random_string(12).encode())
     usgstr = b"AFQj" + base64.urlsafe_b64encode(random_string(12).encode())
     return f"http://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd={itemidx}&ved={vedstr}&url={escapedurl}&ei={eistr}&usg={usgstr}"
+
 
 def nt_path_to_dos_path_ansi(nt_path: str) -> str:
     drive_letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -344,6 +344,9 @@ class Process:
             if not directory.is_dir():
                 return False
 
+            if (directory/"capemon.dll").exists():
+                return False
+
             # Early exit if directory is a known system location
             try:
                 system_dirs = {
@@ -351,14 +354,12 @@ class Process:
                     Path(self.get_folder_path(CSIDL_SYSTEM)).resolve(),
                     Path(self.get_folder_path(CSIDL_SYSTEMX86)).resolve(),
                     Path(self.get_folder_path(CSIDL_PROGRAM_FILES)).resolve(),
-                    Path(self.get_folder_path(CSIDL_PROGRAM_FILESX86)).resolve(),
+                    Path(self.get_folder_path(CSIDL_PROGRAM_FILESX86)).resolve()
                 }
                 if directory.resolve() in system_dirs:
                     return False
             except (OSError, ArgumentError, ValueError) as e:
-                log.warning(
-                    "detect_dll_sideloading: failed to retrieve system paths: %s", e
-                )
+                log.warning("detect_dll_sideloading: failed to retrieve system paths: %s", e)
                 return False
 
             try:
@@ -387,7 +388,6 @@ class Process:
         except Exception as e:
             log.error("detect_dll_sideloading: unexpected error with path %s: %s", directory_path, e)
             return False
-
 
     def kernel_analyze(self):
         """zer0m0n kernel analysis"""
@@ -902,14 +902,15 @@ class Process:
 
         path = os.path.dirname(nt_path_to_dos_path_ansi(self.get_filepath()))
 
+        if self.detect_dll_sideloading(path) and self.has_msimg32(path):
+            self.deploy_version_proxy(path)
+            return True
+
         if self.detect_dll_sideloading(path):
             try:
                 copy(dll, os.path.join(path, "capemon.dll"))
                 copy(side_dll, os.path.join(path, "version.dll"))
-                copy(
-                    os.path.join(Path.cwd(), "dll", f"{self.pid}.ini"),
-                    os.path.join(path, "config.ini"),
-                )
+                copy(os.path.join(Path.cwd(), "dll", f"{self.pid}.ini"), os.path.join(path, "config.ini"))
             except OSError as e:
                 log.error("Failed to copy DLL: %s", e)
                 return False
@@ -994,3 +995,41 @@ class Process:
         """Get a string representation of this process."""
         image_name = self.get_image_name() or "???"
         return f"<{self.__class__.__name__} {self.pid} {image_name}>"
+
+    def has_msimg32(self, directory_path: str) -> bool:
+        """Check if msimg32.dll exists in directory"""
+        try:
+            return any(
+                f.name.lower() == "msimg32.dll"
+                for f in Path(directory_path).glob("*")
+                if f.is_file()
+            )
+        except (OSError, PermissionError):
+            return False
+
+    def deploy_version_proxy(self, directory_path: str):
+        """Deploy version.dll proxy loader"""
+        if self.is_64bit():
+            dll = CAPEMON64_NAME
+            side_dll = SIDELOADER64_NAME
+            bit_str = "64-bit"
+        else:
+            dll = CAPEMON32_NAME
+            side_dll = SIDELOADER32_NAME
+            bit_str = "32-bit"
+
+        dll = os.path.join(Path.cwd(), dll)
+
+        if not os.path.exists(dll):
+            log.warning("invalid path %s for monitor DLL to be sideloaded in %s, sideloading aborted", dll, self)
+            return
+
+        try:
+            copy(dll, os.path.join(directory_path, "capemon.dll"))
+            copy(side_dll, os.path.join(directory_path, "version.dll"))
+            copy(os.path.join(Path.cwd(), "dll", f"{self.pid}.ini"), os.path.join(directory_path, "config.ini"))
+        except OSError as e:
+            log.error("Failed to copy DLL: %s", e)
+            return
+        log.info("%s DLL to sideload is %s, sideloader %s", bit_str, os.path.join(directory_path, "capemon.dll"), os.path.join(directory_path, "version.dll"))
+        return
