@@ -247,14 +247,20 @@ class ConsolePanel(wx.Panel):
 
     def AppendOutput(self, text):
         """Appends text to the output console."""
-        if self.outputConsole:
-            self.outputConsole.AppendText(text + "\n")
+        self.outputConsole.AppendText(text + "\n")
+
+    def UpdateOutput(self, text):
+        self.outputConsole.Clear()
+        self.AppendOutput(text)
+        self.SendCommand("N")
+        self.SendCommand("N")
+        self.SendCommand("N")
+        self.SendCommand("R")
 
     def UpdateRegs(self, text):
         """Update registers display."""
-        if self.regsDisplay:
-            self.regsDisplay.Clear()
-            self.regsDisplay.SetValue(text)
+        self.regsDisplay.Clear()
+        self.regsDisplay.SetValue(text)
 
     def UpdateStatus(self, status):
         self.statusBar.SetLabel(status)
@@ -292,23 +298,20 @@ class ConsolePanel(wx.Panel):
                 self.parent.Show()
                 self.parent.Layout()
 
-            self.AppendOutput(data)
-            self.SendCommand("N")
-            self.SendCommand("N")
-            self.SendCommand("R")
+            self.UpdateOutput(data)
         elif data == "TIMEOUT":
             self.AppendOutput("Operation timed out")
         else:
             if command == "R":
                 self.UpdateRegs(data)
+            elif command in ("N", "H"):
+                self.AppendOutput(data)
             elif command == "S":
-                self.AppendOutput(data)
-                self.SendCommand("R")
+                pass
+                #self.UpdateOutput(data)
             elif command == "O":
-                self.AppendOutput(data)
-                self.SendCommand("R")
-            elif command == "":
-                self.AppendOutput(data)
+                pass
+                #self.UpdateOutput(data)
             else:
                 log.error("[DEBUG CONSOLE] Invalid command: %s", command)
 
@@ -356,9 +359,12 @@ class ConsolePanel(wx.Panel):
             self.connected = False
             log.info("[DEBUG CONSOLE] Pipe disconnected successfully.")
         elif cmd.lower() == "quit":
+            self.SendCommand("C")
             self.ShutdownConsole()
         elif cmd.lower() == "clear":
             self.outputConsole.Clear()
+        elif cmd.lower() in ("", "h"):
+            pass
         else:
             self.SendCommand(cmd)
 
