@@ -35,6 +35,7 @@ class CommandPipeHandler:
                 command = self.console.pendingCommand
                 self.console.pendingCommand = None
                 return command
+            return None
 
     def _handle_dbgcmd(self, data):
         with self.console.breakCondition:
@@ -43,7 +44,7 @@ class CommandPipeHandler:
                     lambda: self.console.debuggerResponse, timeout=TIMEOUT
                 )
                 if notified:
-                    response = b"I:" + self.console.debuggerResponse
+                    response = b":" + self.console.debuggerResponse
                     self.console.debuggerResponse = None
                     return response
                 else:
@@ -187,9 +188,7 @@ class ConsolePanel(wx.Panel):
         self.breakpoints_list.Bind(wx.EVT_LISTBOX_DCLICK, self.breakpoint)
         '''
 
-        fontCourier = wx.Font(
-            10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL
-        )
+        fontCourier = wx.Font(10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
 
         # Registers
         mainSizer.Add(wx.StaticText(self, label="Registers"), 0, wx.ALL, 5)
@@ -215,8 +214,8 @@ class ConsolePanel(wx.Panel):
         debugButtons.Add(self.stepIntoBtn, 1, wx.EXPAND | wx.ALL, 5)
         debugButtons.Add(self.stepOverBtn, 1, wx.EXPAND | wx.ALL, 5)
         debugButtons.Add(self.continueBtn, 1, wx.EXPAND | wx.ALL, 5)
-        self.stepIntoBtn.Bind(wx.EVT_BUTTON, lambda event: [self.SendCommand("S"), self.SendCommand("R")])
-        self.stepOverBtn.Bind(wx.EVT_BUTTON, lambda event: [self.SendCommand("O"), self.SendCommand("R")])
+        self.stepIntoBtn.Bind(wx.EVT_BUTTON, lambda event: self.SendCommand("S"))
+        self.stepOverBtn.Bind(wx.EVT_BUTTON, lambda event: self.SendCommand("O"))
         self.continueBtn.Bind(wx.EVT_BUTTON, lambda event: self.SendCommand("C"))
         self.Bind(wx.EVT_CHAR_HOOK, self.OnKeyDown)
         mainSizer.Add(debugButtons, 0, wx.EXPAND | wx.ALL, 5)
@@ -236,10 +235,8 @@ class ConsolePanel(wx.Panel):
 
         if event.GetKeyCode() == ord("F7") and event.ControlDown():
             self.SendCommand("S")
-            self.SendCommand("R")
         elif event.GetKeyCode() == ord("F8") and event.ControlDown():
             self.SendCommand("O")
-            self.SendCommand("R")
         elif event.GetKeyCode() == ord("F10") and event.ControlDown():
             self.SendCommand("C")
         else:
@@ -250,7 +247,6 @@ class ConsolePanel(wx.Panel):
         self.outputConsole.AppendText(text + "\n")
 
     def UpdateOutput(self, text):
-        self.outputConsole.Clear()
         self.AppendOutput(text)
         self.SendCommand("N")
         self.SendCommand("N")
@@ -297,8 +293,8 @@ class ConsolePanel(wx.Panel):
             if not self.parent.IsShown():
                 self.parent.Show()
                 self.parent.Layout()
-
-            self.UpdateOutput(data)
+            self.AppendOutput(data)
+            self.SendCommand("I")
         elif data == "TIMEOUT":
             self.AppendOutput("Operation timed out")
         else:
@@ -306,12 +302,11 @@ class ConsolePanel(wx.Panel):
                 self.UpdateRegs(data)
             elif command in ("N", "H"):
                 self.AppendOutput(data)
-            elif command == "S":
-                pass
-                #self.UpdateOutput(data)
-            elif command == "O":
-                pass
-                #self.UpdateOutput(data)
+            elif command == "I":
+                self.UpdateOutput(data)
+            elif command in ("O", "S"):
+                self.AppendOutput(data)
+                self.SendCommand("I")
             else:
                 log.error("[DEBUG CONSOLE] Invalid command: %s", command)
 
