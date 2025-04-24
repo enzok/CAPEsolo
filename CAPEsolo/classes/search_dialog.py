@@ -6,7 +6,7 @@ class SearchDialog(wx.Dialog):
         super(SearchDialog, self).__init__(
             parent,
             title="Find",
-            size=(400, 100),
+            size=wx.Size(400, 100),
             style=wx.DEFAULT_DIALOG_STYLE | wx.STAY_ON_TOP,
         )
         if hasattr(parent, "grid"):

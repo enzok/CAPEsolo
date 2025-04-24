@@ -92,7 +92,7 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
             if line.strip().startswith("0x"):
                 filteredLines.add(line.split()[0])
 
-        dialog = wx.Dialog(self, title="Generate Coverage File", size=(300, 150))
+        dialog = wx.Dialog(self, title="Generate Coverage File", size=wx.Size(300, 150))
         panel = wx.Panel(dialog)
         vbox = wx.BoxSizer(wx.VERTICAL)
 

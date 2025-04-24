@@ -53,11 +53,11 @@ class CapesoloApp(wx.App):
         if frameWidth < 710:
             frameWidth = 710
         frame = MainFrame(
-            rootDir=CAPESOLO_ROOT, parent=None, size=(frameWidth, frameHeight)
+            rootDir=CAPESOLO_ROOT, parent=None, size=wx.Size(frameWidth, frameHeight)
         )
         frameX = int(screenWidth * 0.01)
         frameY = int(screenHeight * 0.02)
-        frame.SetPosition((frameX, frameY))
+        frame.SetPosition(wx.Point(frameX, frameY))
         frame.Show()
         return True
 

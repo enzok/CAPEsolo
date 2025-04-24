@@ -14,7 +14,7 @@ from CAPEsolo.capelib.resultserver import ResultServer
 from CAPEsolo.capelib.utils import sanitize_filename
 from CAPEsolo.lib.common.hashing import hash_file
 from .debug_console import DebugConsole
-from .key_event import EVT_ANALYZER_COMPLETE_ID, EVT_ANALYZER_COMPLETE
+from .key_event import EVT_ANALYZER_COMPLETE, EVT_ANALYZER_COMPLETE_ID
 from .logger_window import LoggerWindow
 from .timer_window import CountdownTimer
 
@@ -177,7 +177,7 @@ class StartPanel(wx.Panel):
         )
         self.enforceTimeoutCheckbox.SetValue(False)
         msLabel = wx.StaticText(self, label=" seconds")
-        self.timeoutInput = wx.TextCtrl(self, size=(50, -1), value="200")
+        self.timeoutInput = wx.TextCtrl(self, size=wx.Size(50, -1), value="200")
         hboxTimeout.Add(
             self.enforceTimeoutCheckbox,
             flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL,
@@ -236,7 +236,7 @@ class StartPanel(wx.Panel):
 
         hboxBaseApi = wx.BoxSizer(wx.HORIZONTAL)
         baseApiLabel = wx.StaticText(self.debuggerPane, label="base-on-api:")
-        self.baseApi = wx.TextCtrl(self.debuggerPane, size=(98, -1))
+        self.baseApi = wx.TextCtrl(self.debuggerPane, size=wx.Size(98, -1))
         hboxBaseApi.Add(
             baseApiLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5
         )
@@ -244,7 +244,7 @@ class StartPanel(wx.Panel):
 
         hboxBreakRet = wx.BoxSizer(wx.HORIZONTAL)
         breakRetLabel = wx.StaticText(self.debuggerPane, label="break-on-return:")
-        self.apiList = wx.TextCtrl(self.debuggerPane, size=(158, -1))
+        self.apiList = wx.TextCtrl(self.debuggerPane, size=wx.Size(158, -1))
         hboxBreakRet.Add(
             breakRetLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5
         )
@@ -252,13 +252,13 @@ class StartPanel(wx.Panel):
 
         hboxCount = wx.BoxSizer(wx.HORIZONTAL)
         countLabel = wx.StaticText(self.debuggerPane, label="Count:")
-        self.debugCount = wx.TextCtrl(self.debuggerPane, size=(75, -1))
+        self.debugCount = wx.TextCtrl(self.debuggerPane, size=wx.Size(75, -1))
         hboxCount.Add(countLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxCount.Add(self.debugCount, flag=wx.ALIGN_CENTER_VERTICAL)
 
         hboxDepth = wx.BoxSizer(wx.HORIZONTAL)
         depthLabel = wx.StaticText(self.debuggerPane, label="Depth:")
-        self.debugDepth = wx.TextCtrl(self.debuggerPane, size=(50, -1))
+        self.debugDepth = wx.TextCtrl(self.debuggerPane, size=wx.Size(50, -1))
         hboxDepth.Add(depthLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxDepth.Add(self.debugDepth, flag=wx.ALIGN_CENTER_VERTICAL)
 
@@ -305,7 +305,7 @@ class StartPanel(wx.Panel):
         yaraPane = yaraCollapsiblePane.GetPane()
 
         self.yaraRule = wx.TextCtrl(
-            yaraPane, style=wx.TE_MULTILINE | wx.HSCROLL | wx.VSCROLL, size=(-1, 200)
+            yaraPane, style=wx.TE_MULTILINE | wx.HSCROLL | wx.VSCROLL, size=wx.Size(-1, 200)
         )
         self.yaraRule.SetValue(YARARULE)
         yaraSaveBtn = wx.Button(yaraPane, label="Save Rule")
@@ -449,7 +449,7 @@ class StartPanel(wx.Panel):
             self.debuggerPane, style=wx.CB_READONLY, choices=["RVA", "VA", "ep"], value="RVA"
         )
         hexLabel = wx.StaticText(self.debuggerPane, label=": 0x")
-        addrTextCtrl = wx.TextCtrl(self.debuggerPane, size=(75, -1))
+        addrTextCtrl = wx.TextCtrl(self.debuggerPane, size=wx.Size(75, -1))
         hboxBp.Add(
             bpType, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
         )
@@ -471,7 +471,7 @@ class StartPanel(wx.Panel):
         )
         actionDropdown.AppendItems(DEBUGACTIONS)
         colon = wx.StaticText(self.debuggerPane, label=":")
-        valueTextCtrl = wx.TextCtrl(self.debuggerPane, size=(100, -1))
+        valueTextCtrl = wx.TextCtrl(self.debuggerPane, size=wx.Size(100, -1))
         hboxAction.Add(
             actionLabel,
             proportion=0,
@@ -484,14 +484,14 @@ class StartPanel(wx.Panel):
 
         hboxCount = wx.BoxSizer(wx.HORIZONTAL)
         countLabel = wx.StaticText(self.debuggerPane, label=f"count{index}: ")
-        countTextCtrl = wx.TextCtrl(self.debuggerPane, size=(75, -1))
+        countTextCtrl = wx.TextCtrl(self.debuggerPane, size=wx.Size(75, -1))
         hboxCount.Add(
             countLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0
         )
         hboxCount.Add(countTextCtrl, proportion=0, flag=wx.EXPAND)
         hboxCount.AddSpacer(20)
         hcLabel = wx.StaticText(self.debuggerPane, label=f"hc{index}: ")
-        hcTextCtrl = wx.TextCtrl(self.debuggerPane, size=(35, -1))
+        hcTextCtrl = wx.TextCtrl(self.debuggerPane, size=wx.Size(35, -1))
         hboxCount.Add(
             hcLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0
         )
@@ -686,7 +686,8 @@ class StartPanel(wx.Panel):
             self.analyzer = Analyzer()
             self.analyzer.prepare()
             mainFrame = self.GetMainFrame()
-            size = mainFrame.GetSize()
+            width, height = mainFrame.GetSize()
+            size = wx.Size(int(width * 2), height)
             position = mainFrame.GetPosition()
             if self.idbg:
                 dbgConsole = DebugConsole(self, "Debug Console", position, size)

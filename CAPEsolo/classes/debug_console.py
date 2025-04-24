@@ -1,5 +1,6 @@
 import logging
 import threading
+from collections import deque
 
 import pywintypes
 import win32event
@@ -38,8 +39,9 @@ class CommandPipeHandler:
             return None
 
     def _handle_dbgcmd(self, data):
+        cmd, _ = data.split(b":", 1)
         with self.console.breakCondition:
-            if data == b"INIT" and not self.console.connected:
+            if cmd == b"INIT" and not self.console.connected:
                 notified = self.console.breakCondition.wait_for(
                     lambda: self.console.debuggerResponse, timeout=TIMEOUT
                 )
@@ -60,8 +62,8 @@ class CommandPipeHandler:
                     return b":TIMEOUT"
 
                 response = b":" + self.console.debuggerResponse
-                if data:
-                    response = data + response
+                if cmd:
+                    response = cmd + response
 
                 self.console.debuggerResponse = None
                 return response
@@ -72,13 +74,14 @@ class CommandPipeHandler:
             log.critical("Unknown command received from the debug server: %s", data.strip())
         else:
             command, arguments = data.strip().split(b":", 1)
-            log.info((command, data, "console dispatch"))
+            #log.info((command, data, "console dispatch"))
             fn = getattr(self, f"_handle_{command.lower().decode()}", None)
             if not fn:
                 log.critical("Unknown command received from the debug server: %s", data.strip())
             else:
                 try:
                     response = fn(arguments)
+                    #log.info(response)
                 except Exception as e:
                     log.error(e, exc_info=True)
                     log.exception("Pipe command handler exception (command %s args %s)", command, arguments)
@@ -137,6 +140,20 @@ class ConsoleFrame(wx.Frame):
         self.panel = ConsolePanel(self)
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
+        self.ID_STEP_INTO = wx.NewIdRef()
+        self.ID_STEP_OVER = wx.NewIdRef()
+        self.ID_CONTINUE = wx.NewIdRef()
+
+        accels = wx.AcceleratorTable([
+            (wx.ACCEL_NORMAL, wx.WXK_F7, self.ID_STEP_INTO),
+            (wx.ACCEL_NORMAL, wx.WXK_F8, self.ID_STEP_OVER),
+            (wx.ACCEL_NORMAL, wx.WXK_F10, self.ID_CONTINUE),
+        ])
+        self.SetAcceleratorTable(accels)
+        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("S"), id=self.ID_STEP_INTO)
+        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("O"), id=self.ID_STEP_OVER)
+        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("C"), id=self.ID_CONTINUE)
+
     def OnClose(self, event):
         """Handles window close event gracefully."""
         self.panel.ShutdownConsole()
@@ -152,11 +169,14 @@ class ConsolePanel(wx.Panel):
         self.pipeHandle = None
         self.connected = self.parent.parent.connected
         self.read_lock = threading.Lock()
+        self.stackHistory = deque(maxlen=512)
+        self.stackSet = set()
         self.InitGUI()
         wx.CallLater(100, self.InitPipe)
 
     def InitGUI(self):
         # Main Layout
+        MAX_BTN_W = 120
         mainSizer = wx.BoxSizer(wx.VERTICAL)
 
         '''
@@ -189,18 +209,52 @@ class ConsolePanel(wx.Panel):
         '''
 
         fontCourier = wx.Font(10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
-
-        # Registers
-        mainSizer.Add(wx.StaticText(self, label="Registers"), 0, wx.ALL, 5)
-        self.regsDisplay = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
-        self.regsDisplay.SetFont(fontCourier)
-        mainSizer.Add(self.regsDisplay, 1, wx.EXPAND | wx.ALL, 5)
+        topSizer = wx.BoxSizer(wx.HORIZONTAL)
 
         # Console Output
-        mainSizer.Add(wx.StaticText(self, label="Console Output"), 0, wx.ALL, 5)
+        consoleSizer = wx.BoxSizer(wx.VERTICAL)
+        consoleSizer.Add(wx.StaticText(self, label="Console Output"), 0, wx.ALL, 5)
         self.outputConsole = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
         self.outputConsole.SetFont(fontCourier)
-        mainSizer.Add(self.outputConsole, 2, wx.EXPAND | wx.ALL, 5)
+        consoleSizer.Add(self.outputConsole, 2, wx.EXPAND | wx.ALL, 5)
+        topSizer.Add(consoleSizer, 7, wx.EXPAND)
+
+        # Registers
+        regsSizer = wx.BoxSizer(wx.VERTICAL)
+        regsSizer.Add(wx.StaticText(self, label="Registers"), 0, wx.ALL, 5)
+        self.regsDisplay = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        self.regsDisplay.SetFont(fontCourier)
+        regsSizer.Add(self.regsDisplay, 1, wx.EXPAND | wx.ALL, 5)
+        topSizer.Add(regsSizer, 3, wx.EXPAND)
+
+        mainSizer.Add(topSizer, 1, wx.EXPAND)
+
+        bottomSizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        # Memory Dump
+        memSizer = wx.BoxSizer(wx.VERTICAL)
+        memSizer.Add(wx.StaticText(self, label="Memory Dump"), 0, wx.ALL, 5)
+        self.memDumpDisplay = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        self.memDumpDisplay.SetFont(fontCourier)
+        memSizer.Add(self.memDumpDisplay, 2, wx.EXPAND | wx.ALL, 5)
+
+        # Address input field
+        memSizer.Add(wx.StaticText(self, label="Memory Dump Address:"), 0, wx.LEFT | wx.TOP, 5)
+        self.memAddressInput = wx.TextCtrl(self, style=wx.TE_PROCESS_ENTER)
+        self.memAddressInput.SetFont(fontCourier)
+        memSizer.Add(self.memAddressInput, 0, wx.EXPAND | wx.ALL, 5)
+        self.memAddressInput.Bind(wx.EVT_TEXT_ENTER, self.OnAddressEnter)
+        bottomSizer.Add(memSizer, 5, wx.EXPAND)
+
+        # Stack
+        stackSizer = wx.BoxSizer(wx.VERTICAL)
+        stackSizer.Add(wx.StaticText(self, label="Stack"), 0, wx.ALL, 5)
+        self.stackDisplay = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        self.stackDisplay.SetFont(fontCourier)
+        stackSizer.Add(self.stackDisplay, 1, wx.EXPAND | wx.ALL, 5)
+        bottomSizer.Add(stackSizer, 5, wx.EXPAND)
+
+        mainSizer.Add(bottomSizer, 1, wx.EXPAND)
 
         # Status Bar
         self.statusBar = wx.StaticText(self, label="Status: Disconnected")
@@ -211,14 +265,19 @@ class ConsolePanel(wx.Panel):
         self.stepIntoBtn = wx.Button(self, label="Step Into (F7)")
         self.stepOverBtn = wx.Button(self, label="Step Over (F8)")
         self.continueBtn = wx.Button(self, label="Continue (F10)")
-        debugButtons.Add(self.stepIntoBtn, 1, wx.EXPAND | wx.ALL, 5)
-        debugButtons.Add(self.stepOverBtn, 1, wx.EXPAND | wx.ALL, 5)
-        debugButtons.Add(self.continueBtn, 1, wx.EXPAND | wx.ALL, 5)
-        self.stepIntoBtn.Bind(wx.EVT_BUTTON, lambda event: self.SendCommand("S"))
-        self.stepOverBtn.Bind(wx.EVT_BUTTON, lambda event: self.SendCommand("O"))
-        self.continueBtn.Bind(wx.EVT_BUTTON, lambda event: self.SendCommand("C"))
-        self.Bind(wx.EVT_CHAR_HOOK, self.OnKeyDown)
-        mainSizer.Add(debugButtons, 0, wx.EXPAND | wx.ALL, 5)
+        for btn, cmd in (
+                (self.stepIntoBtn, "S"),
+                (self.stepOverBtn, "O"),
+                (self.continueBtn, "C"),
+        ):
+            # cap the width (height left at default)
+            btn.SetMinSize(wx.Size(MAX_BTN_W, -1))
+            btn.Bind(wx.EVT_BUTTON, lambda evt, c=cmd: self.SendCommand(c))
+            debugButtons.Add(btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
+
+        # shove any leftover space to the right
+        debugButtons.AddStretchSpacer()
+        mainSizer.Add(debugButtons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 5)
 
         # Input box
         mainSizer.Add(wx.StaticText(self, label="Command Input"), 0, wx.ALL, 5)
@@ -233,14 +292,26 @@ class ConsolePanel(wx.Panel):
             event.Skip()
             return
 
-        if event.GetKeyCode() == ord("F7") and event.ControlDown():
+        if self.FindFocus() == self.memAddressInput:
+            event.Skip()
+            return
+
+        if event.GetKeyCode() == wx.WXK_F7 and event.ControlDown():
             self.SendCommand("S")
-        elif event.GetKeyCode() == ord("F8") and event.ControlDown():
+        elif event.GetKeyCode() ==wx.WXK_F8 and event.ControlDown():
             self.SendCommand("O")
-        elif event.GetKeyCode() == ord("F10") and event.ControlDown():
+        elif event.GetKeyCode() ==wx.WXK_F10 and event.ControlDown():
             self.SendCommand("C")
         else:
             event.Skip()
+
+    def OnAddressEnter(self, event):
+        self.memAddr = self.memAddressInput.GetValue().strip()
+        if self.memAddr:
+            self.SendCommand("M", self.memAddr)
+
+        self.memAddressInput.Clear()
+        event.Skip()
 
     def AppendOutput(self, text):
         """Appends text to the output console."""
@@ -252,11 +323,37 @@ class ConsolePanel(wx.Panel):
         self.SendCommand("N")
         self.SendCommand("N")
         self.SendCommand("R")
+        self.SendCommand("M")
+        self.SendCommand("K")
 
     def UpdateRegs(self, text):
         """Update registers display."""
         self.regsDisplay.Clear()
         self.regsDisplay.SetValue(text)
+
+    def UpdateStack(self, data):
+        """Update stack display."""
+        stackLines = [line for line in data.splitlines() if line]
+        for line in stackLines:
+            if line in self.stackSet:
+                continue
+
+            if len(self.stackHistory) == self.stackHistory.maxlen:
+                old = self.stackHistory.popleft()
+                self.stackSet.remove(old)
+
+            self.stackHistory.append(line)
+            self.stackSet.add(line)
+
+        self.stackDisplay.Clear()
+        self.stackDisplay.SetValue('\n'.join(self.stackHistory))
+        last = self.stackDisplay.GetLastPosition()
+        self.stackDisplay.ShowPosition(last)
+
+    def UpdateMemDump(self, text):
+        """Update memory dump display."""
+        self.memDumpDisplay.Clear()
+        self.memDumpDisplay.SetValue(text)
 
     def UpdateStatus(self, status):
         self.statusBar.SetLabel(status)
@@ -304,6 +401,10 @@ class ConsolePanel(wx.Panel):
                 self.AppendOutput(data)
             elif command == "I":
                 self.UpdateOutput(data)
+            elif command == "M":
+                self.UpdateMemDump(data)
+            elif command == "K":
+                self.UpdateStack(data)
             elif command in ("O", "S"):
                 self.AppendOutput(data)
                 self.SendCommand("I")
@@ -327,12 +428,12 @@ class ConsolePanel(wx.Panel):
         response = self.ReadResponse()
         wx.CallAfter(self.ProcessServerOutput, response)
 
-    def SendCommand(self, command):
+    def SendCommand(self, command, data=""):
         if command.lower() != "init" and (not self.connected or not self.pipeHandle):
             log.error("[DEBUG CONSOLE] Cannot send command: Not connected to pipe")
             return
 
-        fullCommand = f"{DBGCMD}:{command.upper()}".encode("utf-8") + b"\n"
+        fullCommand = f"{DBGCMD}:{command.upper()}:{data}".encode("utf-8") + b"\n"
         overlapped = pywintypes.OVERLAPPED()
         overlapped.hEvent = win32event.CreateEvent(None, 0, 0, None)
         try:
