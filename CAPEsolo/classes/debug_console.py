@@ -19,6 +19,7 @@ DBGCMD = "DBGCMD"
 
 
 class StackModel(dv.PyDataViewIndexListModel):
+
     def __init__(self, data):
         super().__init__(len(data))
         self.data = data
@@ -99,20 +100,28 @@ class CommandPipeHandler:
     def dispatch(self, data):
         response = b":NOPE"
         if not data or b":" not in data:
-            log.critical("Unknown command received from the debug server: %s", data.strip())
+            log.critical(
+                "Unknown command received from the debug server: %s", data.strip()
+            )
         else:
             command, arguments = data.strip().split(b":", 1)
             # log.info((command, data, "console dispatch"))
             fn = getattr(self, f"_handle_{command.lower().decode()}", None)
             if not fn:
-                log.critical("Unknown command received from the debug server: %s", data.strip())
+                log.critical(
+                    "Unknown command received from the debug server: %s", data.strip()
+                )
             else:
                 try:
                     response = fn(arguments)
-                    #log.info(response)
+                    log.info(response)
                 except Exception as e:
                     log.error(e, exc_info=True)
-                    log.exception("Pipe command handler exception (command %s args %s)", command, arguments)
+                    log.exception(
+                        "Pipe command handler exception (command %s args %s)",
+                        command,
+                        arguments,
+                    )
         return response
 
 
@@ -137,7 +146,9 @@ class DebugConsole:
 
     def OpenConsole(self):
         """Creates (but does not show) the console window."""
-        self.frame = ConsoleFrame(self, self.title, self.windowPosition, self.windowSize)
+        self.frame = ConsoleFrame(
+            self, self.title, self.windowPosition, self.windowSize
+        )
         self.frame.Hide()
 
     def launch(self):
@@ -181,9 +192,15 @@ class ConsoleFrame(wx.Frame):
             ]
         )
         self.SetAcceleratorTable(accels)
-        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("S"), id=self.ID_STEP_INTO)
-        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("O"), id=self.ID_STEP_OVER)
-        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("C"), id=self.ID_CONTINUE)
+        self.Bind(
+            wx.EVT_MENU, lambda evt: self.panel.SendCommand("S"), id=self.ID_STEP_INTO
+        )
+        self.Bind(
+            wx.EVT_MENU, lambda evt: self.panel.SendCommand("O"), id=self.ID_STEP_OVER
+        )
+        self.Bind(
+            wx.EVT_MENU, lambda evt: self.panel.SendCommand("C"), id=self.ID_CONTINUE
+        )
 
     def OnClose(self, event):
         """Handles window close event gracefully."""
@@ -240,9 +257,12 @@ class ConsolePanel(wx.Panel):
         mainSizer.Add(self.breakpoints_list, 1, wx.EXPAND | wx.ALL, 5)
         self.breakpoints_list.Bind(wx.EVT_LISTBOX_DCLICK, self.breakpoint)
         """
+
         self.hilightAttr = wx.TextAttr()
         self.hilightAttr.SetBackgroundColour(wx.Colour(211, 211, 211))
-        fontCourier = wx.Font(10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+        fontCourier = wx.Font(
+            10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL
+        )
         topSizer = wx.BoxSizer(wx.HORIZONTAL)
 
         # Console Output
@@ -273,7 +293,9 @@ class ConsolePanel(wx.Panel):
         memSizer.Add(self.memDumpDisplay, 2, wx.EXPAND | wx.ALL, 5)
 
         # Address input field
-        memSizer.Add(wx.StaticText(self, label="Memory Dump Address:"), 0, wx.LEFT | wx.TOP, 5)
+        memSizer.Add(
+            wx.StaticText(self, label="Memory Dump Address:"), 0, wx.LEFT | wx.TOP, 5
+        )
         self.memAddressInput = wx.TextCtrl(self, style=wx.TE_PROCESS_ENTER)
         self.memAddressInput.SetFont(fontCourier)
         memSizer.Add(self.memAddressInput, 0, wx.EXPAND | wx.ALL, 5)
@@ -282,12 +304,20 @@ class ConsolePanel(wx.Panel):
 
         # Stack
         stackSizer = wx.BoxSizer(wx.VERTICAL)
-        self.stackDisplay = dv.DataViewCtrl(self, style=dv.DV_ROW_LINES | dv.DV_VERT_RULES | dv.DV_MULTIPLE)
+        self.stackDisplay = dv.DataViewCtrl(
+            self, style=dv.DV_ROW_LINES | dv.DV_VERT_RULES | dv.DV_MULTIPLE
+        )
         self.stackModel = StackModel(list(self.stackHistory))
         self.stackDisplay.AssociateModel(self.stackModel)
-        self.stackDisplay.AppendTextColumn("Address",  0, width=150, mode=dv.DATAVIEW_CELL_INERT)
-        self.stackDisplay.AppendTextColumn("Value",    1, width=150, mode=dv.DATAVIEW_CELL_INERT)
-        self.stackDisplay.AppendTextColumn("String",   2, width=200, mode=dv.DATAVIEW_CELL_INERT)
+        self.stackDisplay.AppendTextColumn(
+            "Address", 0, width=150, mode=dv.DATAVIEW_CELL_INERT
+        )
+        self.stackDisplay.AppendTextColumn(
+            "Value", 1, width=150, mode=dv.DATAVIEW_CELL_INERT
+        )
+        self.stackDisplay.AppendTextColumn(
+            "String", 2, width=200, mode=dv.DATAVIEW_CELL_INERT
+        )
         self.stackDisplay.SetFont(fontCourier)
 
         stackSizer.Add(wx.StaticText(self, label="Stack"), 0, wx.ALL, 5)
@@ -395,10 +425,12 @@ class ConsolePanel(wx.Panel):
         self.stackModel.Reset(len(self.stackHistory))
 
         regs = self.regsDisplay.GetValue()
-        m = re.search(r'\b[ER]SP\s*=\s*(0x[0-9A-Fa-f]+)', regs)
+        m = re.search(r"\b[ER]SP\s*=\s*(0x[0-9A-Fa-f]+)", regs)
         sp = m.group(1) if m else None
-        spIdx = next((i for i,(a,_,_) in enumerate(self.stackHistory) if a == sp),
-                      len(self.stackHistory)-1)
+        spIdx = next(
+            (i for i, (a, _, _) in enumerate(self.stackHistory) if a == sp),
+            len(self.stackHistory) - 1,
+        )
 
         self.stackModel.hilightRow = spIdx
 
@@ -442,7 +474,9 @@ class ConsolePanel(wx.Panel):
     def SendInit(self):
         if self.pipeHandle:
             log.info("[DEBUG CONSOLE] Sending init command...")
-            threading.Thread(target=self.SendCommand, args=("init",), daemon=True).start()
+            threading.Thread(
+                target=self.SendCommand, args=("init",), daemon=True
+            ).start()
         else:
             wx.CallLater(100, self.SendInit)
 
