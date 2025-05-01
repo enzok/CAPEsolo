@@ -1,4 +1,4 @@
-Python GUI to run capemon in standalone VM. Provides a subset of CAPE processing and results.
+Python GUI to run capemon in standalone VM. Provides a subset of CAPE (Configuration And Payload Extraction) processing and results.
 
 * Create a Windows 10 VM that's suitable for running malware.
   * Use the CAPEv2 guest guide for configuration details.
