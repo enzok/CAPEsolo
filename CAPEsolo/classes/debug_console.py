@@ -1,47 +1,243 @@
 import logging
 import re
 import threading
-from collections import deque
 
 import pywintypes
 import win32event
 import win32file
 import wx
-import wx.dataview as dv
 
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
 
 log = logging.getLogger(__name__)
 
 TIMEOUT = 600
-BUFFER_SIZE = 4096
+BUFFER_SIZE = 0x10000
 DBGCMD = "DBGCMD"
 
 
-class StackModel(dv.PyDataViewIndexListModel):
+class RegsTextCtrl(wx.TextCtrl):
+    def __init__(self, parent, style):
+        """TextCtrl subclass"""
+        super().__init__(parent, style=style)
+        self.parent = parent
+        self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
 
-    def __init__(self, data):
-        super().__init__(len(data))
-        self.data = data
-        self.hilightRow = -1
+    def OnContextMenu(self, event):
+        menu = wx.Menu()
+        miFollow = menu.Append(wx.ID_ANY, "Follow Value")
+        menu.Bind(wx.EVT_MENU, self.OnFollowValue, miFollow)
+        pos = event.GetPosition()
+        pos = self.ScreenToClient(pos)
+        self.PopupMenu(menu, pos)
+        menu.Destroy()
 
-    def GetColumnCount(self):
-        return 3
+    def OnFollowValue(self, event):
+        sel = self.GetStringSelection().strip()
+        if sel:
+            self.parent.memAddressInput.SetValue(sel)
+            evt = wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.parent.memAddressInput.GetId())
+            self.parent.OnAddressEnter(evt)
 
-    def GetColumnType(self, col):
-        return "string"
 
-    def GetValueByRow(self, row, col):
-        return self.data[row][col]
+class StackListCtrl(wx.ListCtrl):
+    def __init__(self, parent):
+        super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        self.parent = parent
+        self.InsertColumn(0, "Address", width=170)
+        self.InsertColumn(1, "Value", width=170)
+        self.InsertColumn(2, "", width=170)
+        self.data = []
+        self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
 
-    def GetCount(self):
-        return len(self.data)
+    def UpdateData(self, data):
+        """Populate the list with rows and highlight the specified index."""
+        rows = []
+        for line in data.splitlines():
+            parts = [p.strip() for p in line.split(",", 1)]
 
-    def GetAttr(self, row, col, attr):
-        if row == self.hilightRow:
-            attr.SetBackgroundColour(wx.Colour(211, 211, 211))
-            return True
-        return False
+            if len(parts) < 2:
+                continue
+
+            addr, val = parts[0], parts[1]
+            rows.append((addr, val))
+
+        regsText = self.parent.regsDisplay.GetValue()
+        m = re.search(r"\b([ER]SP):\s*([0-9A-Fa-f]+)", regsText)
+        spVal = m.group(2) if m else None
+        spIdx = len(rows) // 2
+        if spVal:
+            for i, (addr, _) in enumerate(rows):
+                if addr.lower() == spVal.lower():
+                    spIdx = i
+                    break
+
+        self.DeleteAllItems()
+        self.data = rows
+
+        for i, (addr, val) in enumerate(rows):
+            self.InsertItem(i, str(addr))
+            self.SetItem(i, 1, str(val))
+            # asciiVals = self.GetAscii(val)
+            self.SetItem(i, 2, "")
+
+            if i == spIdx:
+                self.SetItemBackgroundColour(i, wx.Colour(255, 255, 150))
+
+        self.Refresh()
+        self.CenterRow(spIdx)
+
+    @staticmethod
+    def GetAscii(dataBytes) -> str:
+        """Inspect an 8-byte qword for printable ASCII; return '.' for non-printable."""
+        buf = dataBytes[:8].ljust(8, b"\x00")
+        asciiStr = "".join(chr(b) if 32 <= b < 127 else "." for b in buf)
+        return asciiStr
+
+    def OnContextMenu(self, event):
+        pos = event.GetPosition()
+        pos = self.ScreenToClient(pos)
+        idx, flags = self.HitTest(pos)
+        if idx == wx.NOT_FOUND:
+            return
+
+        menu = wx.Menu()
+        miFollowAddr = menu.Append(wx.ID_ANY, "Follow Address")
+        miFollowVal = menu.Append(wx.ID_ANY, "Follow Value")
+
+        menu.Bind(
+            wx.EVT_MENU,
+            lambda e, r=idx: (
+                self.parent.memAddressInput.SetValue(self.data[r][0]),
+                self.parent.OnAddressEnter(wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.parent.memAddressInput.GetId())),
+            ),
+            miFollowAddr,
+        )
+        menu.Bind(
+            wx.EVT_MENU,
+            lambda e, r=idx: (
+                self.parent.memAddressInput.SetValue(self.data[r][1]),
+                self.parent.OnAddressEnter(wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.parent.memAddressInput.GetId())),
+            ),
+            miFollowVal,
+        )
+
+        self.PopupMenu(menu, pos)
+        menu.Destroy()
+
+    def CenterRow(self, rowIdx):
+        """Center the specified row in the view."""
+        if not self.data or rowIdx < 0 or rowIdx >= len(self.data):
+            return
+
+        visRows = self.GetCountPerPage()
+        if visRows <= 0:
+            rowH = 15
+            rect = self.GetItemRect(0, wx.LIST_RECT_BOUNDS)
+            rowH = rect.height if rect and rect.height > 0 else rowH
+            clientH = self.GetClientSize().height
+            visRows = clientH // rowH
+
+        visRows = min(visRows, len(self.data))
+        if visRows <= 0:
+            visRows = 15
+
+        anchor = max(0, rowIdx + (visRows // 2))
+        maxTop = max(0, len(self.data) - visRows)
+        anchor = min(anchor, maxTop)
+
+        self.EnsureVisible(rowIdx)
+        self.EnsureVisible(anchor)
+
+
+class MemDumpListCtrl(wx.ListCtrl):
+    def __init__(self, parent):
+        super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        self.InsertColumn(0, "Address", width=170)
+        self.InsertColumn(1, "Hex Dump", width=300)
+        self.InsertColumn(2, "Ascii", width=170)
+        self.data = []
+
+    def UpdateData(self, data):
+        """Populate the list control from a string of lines."""
+        self.DeleteAllItems()
+        self.data.clear()
+
+        for i, line in enumerate(data.splitlines()):
+            parts = [p.strip() for p in line.split(",", 1)]
+            if not parts:
+                continue
+
+            addr = parts[0]
+            hexStr = parts[1] if len(parts) > 1 else ""
+            asciiChars = []
+            for byteToken in hexStr.split():
+                try:
+                    val = int(byteToken, 16)
+                    asciiChars.append(chr(val) if 32 <= val < 127 else ".")
+                except ValueError:
+                    asciiChars.append(".")
+
+            asciiStr = "".join(asciiChars)
+            self.data.append((addr, hexStr, asciiStr))
+            idx = self.InsertItem(i, addr)
+            self.SetItem(idx, 1, hexStr)
+            self.SetItem(idx, 2, asciiStr)
+
+    def GetFirstHexAddress(self):
+        """Return the address string from the first row, or None if empty."""
+        return self.data[0][0] if self.data else None
+
+
+class ConsoleListCtrl(wx.ListCtrl):
+    def __init__(self, parent):
+        super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        self.parent = parent
+        self.InsertColumn(0, "Address", width=170)
+        self.InsertColumn(1, "Hex Dump", width=170)
+        self.InsertColumn(2, "Disassembly", width=300)
+        self.data = []
+        self.highlightedIdx = None
+
+    def UpdateData(self, data):
+        """Populate the list control from a string of lines."""
+        for line in data.splitlines():
+            parts = [p.strip() for p in line.split(",", 2)]
+
+            if not parts:
+                continue
+
+            addr = parts[0]
+            hexstr = parts[1] if len(parts) > 1 else ""
+            disasm = parts[2] if len(parts) > 2 else ""
+            row = (addr, hexstr, disasm)
+            if row not in self.data:
+                self.data.append(row)
+                idx = self.InsertItem(self.GetItemCount(), addr)
+                self.SetItem(idx, 1, hexstr)
+                self.SetItem(idx, 2, disasm)
+
+        self.Refresh()
+        self.EnsureVisible(len(data) - 1)
+
+    def HighlightIp(self):
+        highlightIdx = 0
+        regsText = self.parent.regsDisplay.GetValue()
+        m = re.search(r"\b([ER]IP):\s*([0-9A-Fa-f]+)", regsText)
+        ipVal = m.group(2) if m else None
+
+        if ipVal:
+            for i, (addr, _, _) in enumerate(self.data):
+                if addr.lower() == ipVal.lower():
+                    highlightIdx = i
+                    break
+
+        if self.highlightedIdx is not None:
+            self.SetItemBackgroundColour(self.highlightedIdx, wx.Colour(255, 255, 255))
+
+        self.SetItemBackgroundColour(highlightIdx, wx.Colour(211, 211, 211))
+        self.highlightedIdx = highlightIdx
+        self.Refresh()
 
 
 class CommandPipeHandler:
@@ -56,9 +252,7 @@ class CommandPipeHandler:
                 self.console.debuggerResponse = data
                 self.console.breakCondition.notify_all()
             if not self.console.pendingCommand:
-                notified = self.console.breakCondition.wait_for(
-                    lambda: self.console.pendingCommand is not None, timeout=TIMEOUT
-                )
+                notified = self.console.breakCondition.wait_for(lambda: self.console.pendingCommand is not None, timeout=TIMEOUT)
                 if not notified:
                     self.console.pendingCommand = None
                     return b":TIMEOUT"
@@ -71,9 +265,7 @@ class CommandPipeHandler:
         cmd, _ = data.split(b":", 1)
         with self.console.breakCondition:
             if cmd == b"INIT" and not self.console.connected:
-                notified = self.console.breakCondition.wait_for(
-                    lambda: self.console.debuggerResponse, timeout=TIMEOUT
-                )
+                notified = self.console.breakCondition.wait_for(lambda: self.console.debuggerResponse, timeout=TIMEOUT)
                 if notified:
                     response = b":" + self.console.debuggerResponse
                     self.console.debuggerResponse = None
@@ -83,9 +275,7 @@ class CommandPipeHandler:
             else:
                 self.console.pendingCommand = data
                 self.console.breakCondition.notify_all()
-                notified = self.console.breakCondition.wait_for(
-                    lambda: self.console.debuggerResponse is not None, timeout=TIMEOUT
-                )
+                notified = self.console.breakCondition.wait_for(lambda: self.console.debuggerResponse is not None, timeout=TIMEOUT)
                 if not notified:
                     self.console.pendingCommand = None
                     return b":TIMEOUT"
@@ -100,17 +290,13 @@ class CommandPipeHandler:
     def dispatch(self, data):
         response = b":NOPE"
         if not data or b":" not in data:
-            log.critical(
-                "Unknown command received from the debug server: %s", data.strip()
-            )
+            log.critical("Unknown command received from the debug server: %s", data.strip())
         else:
             command, arguments = data.strip().split(b":", 1)
             # log.info((command, data, "console dispatch"))
             fn = getattr(self, f"_handle_{command.lower().decode()}", None)
             if not fn:
-                log.critical(
-                    "Unknown command received from the debug server: %s", data.strip()
-                )
+                log.critical("Unknown command received from the debug server: %s", data.strip())
             else:
                 try:
                     response = fn(arguments)
@@ -146,9 +332,7 @@ class DebugConsole:
 
     def OpenConsole(self):
         """Creates (but does not show) the console window."""
-        self.frame = ConsoleFrame(
-            self, self.title, self.windowPosition, self.windowSize
-        )
+        self.frame = ConsoleFrame(self, self.title, self.windowPosition, self.windowSize)
         self.frame.Hide()
 
     def launch(self):
@@ -192,15 +376,9 @@ class ConsoleFrame(wx.Frame):
             ]
         )
         self.SetAcceleratorTable(accels)
-        self.Bind(
-            wx.EVT_MENU, lambda evt: self.panel.SendCommand("S"), id=self.ID_STEP_INTO
-        )
-        self.Bind(
-            wx.EVT_MENU, lambda evt: self.panel.SendCommand("O"), id=self.ID_STEP_OVER
-        )
-        self.Bind(
-            wx.EVT_MENU, lambda evt: self.panel.SendCommand("C"), id=self.ID_CONTINUE
-        )
+        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("S"), id=self.ID_STEP_INTO)
+        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("O"), id=self.ID_STEP_OVER)
+        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("C"), id=self.ID_CONTINUE)
 
     def OnClose(self, event):
         """Handles window close event gracefully."""
@@ -218,9 +396,9 @@ class ConsolePanel(wx.Panel):
         self.pipeHandle = None
         self.connected = self.parent.parent.connected
         self.readLock = threading.Lock()
-        self.maxHistory = 512
-        self.stackHistory = deque(maxlen=self.maxHistory)
-        self.stackSet = set()
+        self.slotCount = 512
+        self.prevHighlight = None
+        self.initMemdmp = True
         self.InitGUI()
         wx.CallLater(100, self.InitPipe)
 
@@ -236,21 +414,6 @@ class ConsolePanel(wx.Panel):
         mainSizer.Add(self.thread_list, 1, wx.EXPAND | wx.ALL, 5)
         self.thread_list.Bind(wx.EVT_LISTBOX, self.switch_thread)
 
-        # Disassembly
-        mainSizer.Add(wx.StaticText(self, label="Disassembly"), 0, wx.ALL, 5)
-        self.disasmDisplay = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
-        mainSizer.Add(self.disasmDisplay, 1, wx.EXPAND | wx.ALL, 5)
-       '
-        # Stack Frames
-        mainSizer.Add(wx.StaticText(self, label="Stack Frames"), 0, wx.ALL, 5)
-        self.stack_display = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
-        mainSizer.Add(self.stack_display, 1, wx.EXPAND | wx.ALL, 5)
-
-        # Memory Watch
-        mainSizer.Add(wx.StaticText(self, label="Memory Watch"), 0, wx.ALL, 5)
-        self.memory_watch_list = wx.ListBox(self)
-        mainSizer.Add(self.memory_watch_list, 1, wx.EXPAND | wx.ALL, 5)
-
         # Breakpoints
         mainSizer.Add(wx.StaticText(self, label="Breakpoints"), 0, wx.ALL, 5)
         self.breakpoints_list = wx.ListBox(self)
@@ -258,25 +421,21 @@ class ConsolePanel(wx.Panel):
         self.breakpoints_list.Bind(wx.EVT_LISTBOX_DCLICK, self.breakpoint)
         """
 
-        self.hilightAttr = wx.TextAttr()
-        self.hilightAttr.SetBackgroundColour(wx.Colour(211, 211, 211))
-        fontCourier = wx.Font(
-            10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL
-        )
+        fontCourier = wx.Font(10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
         topSizer = wx.BoxSizer(wx.HORIZONTAL)
 
         # Console Output
         consoleSizer = wx.BoxSizer(wx.VERTICAL)
-        consoleSizer.Add(wx.StaticText(self, label="Console Output"), 0, wx.ALL, 5)
-        self.outputConsole = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
-        self.outputConsole.SetFont(fontCourier)
-        consoleSizer.Add(self.outputConsole, 2, wx.EXPAND | wx.ALL, 5)
+        consoleSizer.Add(wx.StaticText(self, label="Disassembly Console"), 0, wx.ALL, 5)
+        self.disassemblyConsole = ConsoleListCtrl(self)
+        self.disassemblyConsole.SetFont(fontCourier)
+        consoleSizer.Add(self.disassemblyConsole, 2, wx.EXPAND | wx.ALL, 5)
         topSizer.Add(consoleSizer, 7, wx.EXPAND)
 
         # Registers
         regsSizer = wx.BoxSizer(wx.VERTICAL)
         regsSizer.Add(wx.StaticText(self, label="Registers"), 0, wx.ALL, 5)
-        self.regsDisplay = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        self.regsDisplay = RegsTextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
         self.regsDisplay.SetFont(fontCourier)
         regsSizer.Add(self.regsDisplay, 1, wx.EXPAND | wx.ALL, 5)
         topSizer.Add(regsSizer, 3, wx.EXPAND)
@@ -288,14 +447,12 @@ class ConsolePanel(wx.Panel):
         # Memory Dump
         memSizer = wx.BoxSizer(wx.VERTICAL)
         memSizer.Add(wx.StaticText(self, label="Memory Dump"), 0, wx.ALL, 5)
-        self.memDumpDisplay = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        self.memDumpDisplay = MemDumpListCtrl(self)
         self.memDumpDisplay.SetFont(fontCourier)
         memSizer.Add(self.memDumpDisplay, 2, wx.EXPAND | wx.ALL, 5)
 
         # Address input field
-        memSizer.Add(
-            wx.StaticText(self, label="Memory Dump Address:"), 0, wx.LEFT | wx.TOP, 5
-        )
+        memSizer.Add(wx.StaticText(self, label="Memory Dump Address:"), 0, wx.LEFT | wx.TOP, 5)
         self.memAddressInput = wx.TextCtrl(self, style=wx.TE_PROCESS_ENTER)
         self.memAddressInput.SetFont(fontCourier)
         memSizer.Add(self.memAddressInput, 0, wx.EXPAND | wx.ALL, 5)
@@ -304,30 +461,13 @@ class ConsolePanel(wx.Panel):
 
         # Stack
         stackSizer = wx.BoxSizer(wx.VERTICAL)
-        self.stackDisplay = dv.DataViewCtrl(
-            self, style=dv.DV_ROW_LINES | dv.DV_VERT_RULES | dv.DV_MULTIPLE
-        )
-        self.stackModel = StackModel(list(self.stackHistory))
-        self.stackDisplay.AssociateModel(self.stackModel)
-        self.stackDisplay.AppendTextColumn(
-            "Address", 0, width=150, mode=dv.DATAVIEW_CELL_INERT
-        )
-        self.stackDisplay.AppendTextColumn(
-            "Value", 1, width=150, mode=dv.DATAVIEW_CELL_INERT
-        )
-        self.stackDisplay.AppendTextColumn(
-            "String", 2, width=200, mode=dv.DATAVIEW_CELL_INERT
-        )
+        stackSizer.Add(wx.StaticText(self, label="Stack"), 0, wx.ALL, 5)
+        self.stackDisplay = StackListCtrl(self)
         self.stackDisplay.SetFont(fontCourier)
 
-        stackSizer.Add(wx.StaticText(self, label="Stack"), 0, wx.ALL, 5)
         stackSizer.Add(self.stackDisplay, 1, wx.EXPAND | wx.ALL, 5)
         bottomSizer.Add(stackSizer, 5, wx.EXPAND)
         mainSizer.Add(bottomSizer, 1, wx.EXPAND)
-
-        # Status Bar
-        self.statusBar = wx.StaticText(self, label="Status: Disconnected")
-        mainSizer.Add(self.statusBar, 0, wx.EXPAND | wx.ALL, 5)
 
         # Debugging Controls
         debugButtons = wx.BoxSizer(wx.HORIZONTAL)
@@ -339,20 +479,34 @@ class ConsolePanel(wx.Panel):
             (self.stepOverBtn, "O"),
             (self.continueBtn, "C"),
         ):
-            # cap the width (height left at default)
             btn.SetMinSize(wx.Size(MAX_BTN_W, -1))
             btn.Bind(wx.EVT_BUTTON, lambda evt, c=cmd: self.SendCommand(c))
             debugButtons.Add(btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
 
-        # shove any leftover space to the right
         debugButtons.AddStretchSpacer()
         mainSizer.Add(debugButtons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 5)
 
+        # Console box
+        self.outputConsole = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        self.outputConsole.SetFont(fontCourier)
+        charH = self.outputConsole.GetCharHeight()
+        self.outputConsole.SetMinSize(wx.Size(-1, charH * 3))
+        mainSizer.Add(wx.StaticText(self, label="Console Output"), 0, wx.LEFT | wx.TOP, 5)
+        mainSizer.Add(self.outputConsole, 0, wx.EXPAND | wx.ALL, 5)
+
         # Input box
-        mainSizer.Add(wx.StaticText(self, label="Command Input"), 0, wx.ALL, 5)
+        inputSizer = wx.BoxSizer(wx.HORIZONTAL)
+        inputSizer.Add(wx.StaticText(self, label="Command Input"), 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 5)
         self.inputBox = wx.TextCtrl(self, style=wx.TE_PROCESS_ENTER)
         self.inputBox.Bind(wx.EVT_TEXT_ENTER, self.OnEnter)
-        mainSizer.Add(self.inputBox, 0, wx.EXPAND | wx.ALL, 5)
+        inputSizer.Add(self.inputBox, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 5)
+        inputSizer.AddStretchSpacer(1)
+
+        # Status Bar
+        self.statusBar = wx.StaticText(self, label="Status: Disconnected")
+        inputSizer.Add(self.statusBar, 0, wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, 5)
+
+        mainSizer.Add(inputSizer, 0, wx.EXPAND)
 
         self.SetSizer(mainSizer)
 
@@ -382,17 +536,28 @@ class ConsolePanel(wx.Panel):
         self.memAddressInput.Clear()
         event.Skip()
 
-    def AppendOutput(self, text):
+    def AppendOutput(self, data):
+        """Appends text to the output console."""
+        self.disassemblyConsole.UpdateData(data)
+        #self.disassemblyConsole.UpdateData(data)
+
+    def AppendConsole(self, text):
         """Appends text to the output console."""
         self.outputConsole.AppendText(text + "\n")
 
     def UpdateOutput(self, text):
         self.AppendOutput(text)
-        self.SendCommand("N")
-        self.SendCommand("N")
-        self.SendCommand("N")
         self.SendCommand("R")
-        self.SendCommand("M")
+        self.SendCommand("N")
+        self.disassemblyConsole.HighlightIp()
+        if self.initMemdmp:
+            self.SendCommand("M")
+            self.initMemdmp = False
+        else:
+            addr = self.memDumpDisplay.GetFirstHexAddress()
+            self.memAddressInput.SetValue(addr)
+            self.OnAddressEnter(wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.memAddressInput.GetId()))
+
         self.SendCommand("K")
 
     def UpdateRegs(self, text):
@@ -402,55 +567,11 @@ class ConsolePanel(wx.Panel):
 
     def UpdateStack(self, data):
         """Update stack display."""
-        for line in data.splitlines():
-            parts = [p.strip() for p in line.split(",", 2)]
-            if len(parts) < 2:
-                continue
-            addr, val = parts[0], parts[1]
-            asciiStr = parts[2] if len(parts) == 3 else ""
+        self.stackDisplay.UpdateData(data)
 
-            if addr in self.stackSet:
-                for i, tpl in enumerate(self.stackHistory):
-                    if tpl[0] == addr:
-                        self.stackHistory[i] = (addr, val, asciiStr)
-                        break
-            else:
-                if len(self.stackHistory) == self.maxHistory:
-                    old = self.stackHistory.popleft()
-                    self.stackSet.remove(old[0])
-                self.stackHistory.append((addr, val, asciiStr))
-                self.stackSet.add(addr)
-
-        self.stackModel.data = list(self.stackHistory)
-        self.stackModel.Reset(len(self.stackHistory))
-
-        regs = self.regsDisplay.GetValue()
-        m = re.search(r"\b[ER]SP\s*=\s*(0x[0-9A-Fa-f]+)", regs)
-        sp = m.group(1) if m else None
-        spIdx = next(
-            (i for i, (a, _, _) in enumerate(self.stackHistory) if a == sp),
-            len(self.stackHistory) - 1,
-        )
-
-        self.stackModel.hilightRow = spIdx
-
-        if self.stackHistory:
-            first = self.stackModel.GetItem(0)
-            rect = self.stackDisplay.GetItemRect(first)
-            rowH = rect.height
-            visRows = max(1, self.stackDisplay.GetClientSize().height // rowH)
-        else:
-            visRows = 1
-
-        half = visRows // 2
-        anchor = max(0, spIdx - half)
-        anchorItem = self.stackModel.GetItem(anchor)
-        self.stackDisplay.EnsureVisible(anchorItem)
-
-    def UpdateMemDump(self, text):
+    def UpdateMemDump(self, data):
         """Update memory dump display."""
-        self.memDumpDisplay.Clear()
-        self.memDumpDisplay.SetValue(text)
+        self.memDumpDisplay.UpdateData(data)
 
     def UpdateStatus(self, status):
         self.statusBar.SetLabel(status)
@@ -474,9 +595,7 @@ class ConsolePanel(wx.Panel):
     def SendInit(self):
         if self.pipeHandle:
             log.info("[DEBUG CONSOLE] Sending init command...")
-            threading.Thread(
-                target=self.SendCommand, args=("init",), daemon=True
-            ).start()
+            threading.Thread(target=self.SendCommand, args=("init",), daemon=True).start()
         else:
             wx.CallLater(100, self.SendInit)
 
@@ -489,15 +608,17 @@ class ConsolePanel(wx.Panel):
             if not self.parent.IsShown():
                 self.parent.Show()
                 self.parent.Layout()
-            self.AppendOutput(data)
+            self.AppendConsole(data)
             self.SendCommand("I")
         elif data == "TIMEOUT":
-            self.AppendOutput("Operation timed out")
+            self.AppendConsole("Operation timed out")
         else:
             if command == "R":
                 self.UpdateRegs(data)
-            elif command in ("N", "H", "B", "D"):
+            elif command == "N":
                 self.AppendOutput(data)
+            elif command in ("H", "B", "D"):
+                self.AppendConsole(data)
             elif command == "I":
                 self.UpdateOutput(data)
             elif command == "M":
@@ -505,7 +626,7 @@ class ConsolePanel(wx.Panel):
             elif command == "K":
                 self.UpdateStack(data)
             elif command in ("O", "S", "C"):
-                self.AppendOutput(data)
+                self.AppendConsole(data)
                 self.SendCommand("I")
             else:
                 log.error("[DEBUG CONSOLE] Invalid command: %s", command)
@@ -594,3 +715,4 @@ class ConsolePanel(wx.Panel):
             win32file.CloseHandle(self.pipeHandle)
             self.pipeHandle = None
             log.info("[DEBUG CONSOLE] Pipe handle closed")
+
