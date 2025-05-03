@@ -1,11 +1,15 @@
 import logging
 import re
+import struct
 import threading
+from collections import namedtuple
+from typing import List, Tuple
 
 import pywintypes
 import win32event
 import win32file
 import wx
+from distorm3 import Decode, Decode32Bits, Decode64Bits
 
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
 
@@ -716,3 +720,132 @@ class ConsolePanel(wx.Panel):
             self.pipeHandle = None
             log.info("[DEBUG CONSOLE] Pipe handle closed")
 
+
+DecodedInstruction = namedtuple('DecodedInstruction', ['address', 'bytes', 'text'])
+
+class DisasmListCtrl(wx.ListCtrl):
+    def __init__(self, parent, processHandle, bits: int = 64):
+        style = wx.LC_REPORT | wx.LC_VIRTUAL | wx.LC_HRULES | wx.LC_VRULES
+        super().__init__(parent, style=style)
+        self.parent = parent
+        self.bits = bits
+        self.pageMap: List[Tuple[int, int, int]] = []
+        self.memCache = {}
+        self.decodeCache: List[DecodedInstruction] = []
+        self.currentRip = None
+        self.Bind(wx.EVT_LIST_CACHE_HINT, self.OnCacheHint)
+        self.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.OnItemActivated)
+
+    def LoadPageMap(self):
+        """
+        Populate self.pageMap by sending a 'P' command.
+        Assumes parent.SendCommand('P') returns a bytes blob in format:
+          [uint32 count]
+          count × [uint64 BaseAddress, uint64 RegionSize, uint32 Protect]
+        """
+        data = self.parent.SendCommand('P')
+        if not data or len(data) < 4:
+            return
+        count = struct.unpack_from('<I', data, 0)[0]
+        entry_size = struct.calcsize('<QQI')
+        offset = 4
+        for _ in range(count):
+            if offset + entry_size > len(data):
+                break
+            baseAddr, regionSize, protect = struct.unpack_from('<QQI', data, offset)
+            self.pageMap.append((baseAddr, regionSize, protect))
+            offset += entry_size
+        self.pageMap.sort(key=lambda x: x[0])
+
+    def OnCacheHint(self, evt):
+        """Prefetch memory/decodes for the range of visible rows."""
+        startIdx, endIdx = evt.GetCacheFrom(), evt.GetCacheTo()
+        for idx in (startIdx, endIdx):
+            if idx < len(self.decodeCache):
+                self.EnsureDecoded(self.decodeCache[idx].address)
+
+    def EnsureDecoded(self, addr: int):
+        """Ensure the memory page containing `addr` is read and decoded."""
+        pageBase = self.FindPage(addr)
+        if pageBase not in self.memCache:
+            self.LoadPage(pageBase)
+            self.DecodePage(pageBase)
+
+    def FindPage(self, addr: int) -> int:
+        """Return the baseAddress of the page covering `addr`."""
+        for baseAddress, regionSize, _ in self.pageMap:
+            if baseAddress <= addr < baseAddress + regionSize:
+                return baseAddress
+        raise ValueError(f"Address {addr:#x} not in any pageMap entry")
+
+    def LoadPage(self, baseAddress: int):
+        """Request a block of memory at `baseAddress` via SendCommand."""
+        data = self.parent.SendCommand("I", baseAddress)
+        self.memCache[baseAddress] = data
+
+    def DecodePage(self, baseAddress: int):
+        """Disassemble the entire page at `baseAddress` into decodeCache."""
+        mem = self.memCache[baseAddress]
+        mode = Decode64Bits if self.bits == 64 else Decode32Bits
+        insts = list(Decode(baseAddress, mem, mode))
+        self.decodeCache.extend(
+            DecodedInstruction(addr, bytes_, instr)
+            for addr, bytes_, instr in insts
+        )
+        self.decodeCache.sort(key=lambda inst: inst.address)
+        self.SetItemCount(len(self.decodeCache))
+
+    def OnGetItemText(self, item: int, col: int) -> str:
+        inst = self.decodeCache[item]
+        if col == 0:
+            return f"{inst.address:#010x}"
+        elif col == 1:
+            return inst.bytes.hex()
+        return inst.text
+
+    def OnGetItemAttr(self, item: int) -> wx.ListItemAttr:
+        inst = self.decodeCache[item]
+        mnemonic = inst.text.split()[0].lower()
+        attr = wx.ListItemAttr()
+        if mnemonic == 'call':
+            attr.SetTextColour(wx.BLUE)
+        elif mnemonic in ('jmp', 'je', 'jne', 'jg', 'jl'):
+            attr.SetTextColour(wx.GREEN)
+        return attr
+
+    def OnItemActivated(self, evt):
+        idx = evt.GetIndex()
+        inst = self.decodeCache[idx]
+        mnemonic = inst.text.split()[0].lower()
+        if mnemonic == 'call' or mnemonic.startswith('j'):
+            relOffset = int(inst.text.split()[-1], 16)
+            target = inst.address + len(inst.bytes) + relOffset
+            self.JumpTo(target)
+
+    def JumpTo(self, address: int):
+        """Center the view on `address`, decoding pages if needed."""
+        self.EnsureDecoded(address)
+        idx = self.FindInstructionIndex(address)
+        if idx != -1:
+            self.Select(idx)
+            self.EnsureVisible(idx)
+
+    def UpdateRip(self, newRip: int):
+        self.currentRip = newRip
+        if not self.pageMap:
+            self.LoadPageMap()
+        self.JumpTo(newRip)
+
+    def FindInstructionIndex(self, address: int) -> int:
+        """Binary-search the decodeCache for the given address."""
+        lo, hi = 0, len(self.decodeCache) - 1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            midAddr = self.decodeCache[mid].address
+            if midAddr == address:
+                return mid
+            if midAddr < address:
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return -1

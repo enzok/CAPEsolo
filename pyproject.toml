@@ -26,6 +26,7 @@ setuptools = "==80.1.0"
 typing-extensions = "==4.13.2"
 ruff = "==0.11.8"
 poetry-core = "^2.1.2"
+distorm3 = "^3.5.2"
 
 [tool.poetry.scripts]
 CAPEsolo = "CAPEsolo.cli:main"
