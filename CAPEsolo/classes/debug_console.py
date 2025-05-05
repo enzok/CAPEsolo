@@ -1,6 +1,5 @@
 import logging
 import re
-import struct
 import threading
 from collections import namedtuple
 from typing import List, Tuple
@@ -9,7 +8,7 @@ import pywintypes
 import win32event
 import win32file
 import wx
-from distorm3 import Decode, Decode32Bits, Decode64Bits
+from capstone import CS_ARCH_X86, CS_MODE_32, CS_MODE_64, Cs
 
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
 
@@ -18,6 +17,176 @@ log = logging.getLogger(__name__)
 TIMEOUT = 600
 BUFFER_SIZE = 0x10000
 DBGCMD = "DBGCMD"
+
+DecodedInstruction = namedtuple("DecodedInstruction", ["address", "bytes", "text"])
+
+
+class DisassemblyListCtrl(wx.ListCtrl):
+    def __init__(self, parent, bits=64):
+        style = wx.LC_REPORT | wx.LC_VIRTUAL | wx.LC_HRULES | wx.LC_VRULES
+        super().__init__(parent, style=style)
+        self.parent = parent
+        self.InsertColumn(0, "Address", width=120)
+        self.InsertColumn(1, "Bytes", width=180)
+        self.InsertColumn(2, "Disassembly", width=300)
+        self.SetItemCount(0)
+        self.pageMap: List[Tuple[int, int, int]] = []
+        self.memCache = {}
+        self.decodeCache: List[DecodedInstruction] = []
+        self.pendingPageBase: int = None
+        self.currentRip: int = None
+        self.bits = bits
+        mode = CS_MODE_64 if bits == 64 else CS_MODE_32
+        self.cs = Cs(CS_ARCH_X86, mode)
+        self.cs.detail = False
+        self.Bind(wx.EVT_LIST_CACHE_HINT, self.OnCacheHint)
+        self.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.OnItemActivated)
+
+    def RequestPageMap(self):
+        self.parent.SendCommand("P")
+
+    def RequestPage(self, baseAddress: int):
+        self.pendingPageBase = baseAddress
+        self.parent.SendCommand("I", hex(baseAddress))
+
+    def JumpTo(self, address: int):
+        self.currentRip = address
+        self.RequestDecodeSync(address)
+
+    def LoadPageMap(self, data: str):
+        if not data:
+            return
+
+        self.decodeCache.clear()
+        self.memCache.clear()
+        self.SetItemCount(0)
+        entries = data.split("|")
+        if not entries or entries[0] == "":
+            return
+
+        self.pageMap = []
+        for entry in entries:
+            try:
+                base_str, size_str, protect_str = entry.split(',')
+                baseAddr = int(base_str, 16)
+                regionSize = int(size_str)
+                protect = int(protect_str, 16)
+                self.pageMap.append((baseAddr, regionSize, protect))
+            except (ValueError, AttributeError) as e:
+                log.error("[DEBUG CONSOLE] Failed to parse entry '%s': %s", entry, e)
+                continue
+
+        self.pageMap.sort(key=lambda x: x[0])
+
+    def LoadPage(self, data: bytes):
+        if self.pendingPageBase is None:
+            return
+
+        if isinstance(data, str):
+            data = data.encode('latin-1')
+
+        self.memCache[self.pendingPageBase] = data
+
+    def OnCacheHint(self, evt):
+        for idx in (evt.GetCacheFrom(), evt.GetCacheTo()):
+            if idx < len(self.decodeCache):
+                self.EnsureDecoded(self.decodeCache[idx].address)
+
+    def EnsureDecoded(self, addr: int):
+        pageBase = self.FindPage(addr)
+        if pageBase not in self.memCache:
+            self.RequestPage(pageBase)
+
+    def DecodePending(self):
+        base = self.pendingPageBase
+        mem = self.memCache.get(base)
+        if not mem:
+            return
+
+        for inst in self.cs.disasm(mem, base):
+            addr = inst.address
+            bts = inst.bytes
+            txt = f"{inst.mnemonic} {inst.op_str}".strip()
+            self.decodeCache.append(DecodedInstruction(addr, bts, txt))
+
+        self.decodeCache.sort(key=lambda inst: inst.address)
+        self.SetItemCount(len(self.decodeCache))
+
+    def FindPage(self, addr: int) -> int:
+        for base, size, _ in self.pageMap:
+            if base <= addr < base + size:
+                return base
+        raise ValueError(f"[DEBUG CONSOLE] Address {addr:#x} not in any page")
+
+    def OnGetItemText(self, item: int, col: int) -> str:
+        if item < 0 or item >= len(self.decodeCache):
+            return ""
+
+        inst = self.decodeCache[item]
+        if col == 0:
+            return f"{inst.address:#010x}"
+
+        if col == 1:
+            return inst.bytes.hex()
+
+        return inst.text
+
+    def OnGetItemAttr(self, item: int) -> wx.ItemAttr:
+        attr = wx.ItemAttr()
+        if item < 0 or item >= len(self.decodeCache):
+            return attr
+
+        inst = self.decodeCache[item]
+        mnem = inst.text.split()[0].lower()
+        attr = wx.ItemAttr()
+        if mnem == "call":
+            attr.SetTextColour(wx.BLUE)
+        elif mnem in ("jmp", "je", "jne", "jg", "jl"):
+            attr.SetTextColour(wx.GREEN)
+        return attr
+
+    def OnItemActivated(self, evt):
+        idx = evt.GetIndex()
+        inst = self.decodeCache[idx]
+        mnem = inst.text.split()[0].lower()
+        if mnem == "call" or mnem.startswith("j"):
+            rel = int(inst.text.split()[-1], 16)
+            target = inst.address + len(inst.bytes) + rel
+            self.JumpTo(target)
+
+    def HighlightIp(self):
+        if self.currentRip is None:
+            return
+        idx = self.FindInstructionIndex(self.currentRip)
+        if idx != -1:
+            self.Select(idx)
+            self.EnsureVisible(idx)
+
+    def RequestDecodeSync(self, address: int):
+        if not self.pageMap:
+            self.RequestPageMap()
+            return
+
+        pageBase = self.FindPage(address)
+        if pageBase not in self.memCache:
+            self.RequestPage(pageBase)
+            return
+
+        self.DecodePending()
+        self.HighlightIp()
+
+    def FindInstructionIndex(self, address: int) -> int:
+        lo, hi = 0, len(self.decodeCache) - 1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            addr = self.decodeCache[mid].address
+            if addr == address:
+                return mid
+            if addr < address:
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return -1
 
 
 class RegsTextCtrl(wx.TextCtrl):
@@ -48,6 +217,7 @@ class StackListCtrl(wx.ListCtrl):
     def __init__(self, parent):
         super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
         self.parent = parent
+        self.spVal = None
         self.InsertColumn(0, "Address", width=170)
         self.InsertColumn(1, "Value", width=170)
         self.InsertColumn(2, "", width=170)
@@ -68,11 +238,11 @@ class StackListCtrl(wx.ListCtrl):
 
         regsText = self.parent.regsDisplay.GetValue()
         m = re.search(r"\b([ER]SP):\s*([0-9A-Fa-f]+)", regsText)
-        spVal = m.group(2) if m else None
+        self.spVal = m.group(2) if m else None
         spIdx = len(rows) // 2
-        if spVal:
+        if self.spVal:
             for i, (addr, _) in enumerate(rows):
-                if addr.lower() == spVal.lower():
+                if addr.lower() == self.spVal.lower():
                     spIdx = i
                     break
 
@@ -193,57 +363,6 @@ class MemDumpListCtrl(wx.ListCtrl):
         return self.data[0][0] if self.data else None
 
 
-class ConsoleListCtrl(wx.ListCtrl):
-    def __init__(self, parent):
-        super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.parent = parent
-        self.InsertColumn(0, "Address", width=170)
-        self.InsertColumn(1, "Hex Dump", width=170)
-        self.InsertColumn(2, "Disassembly", width=300)
-        self.data = []
-        self.highlightedIdx = None
-
-    def UpdateData(self, data):
-        """Populate the list control from a string of lines."""
-        for line in data.splitlines():
-            parts = [p.strip() for p in line.split(",", 2)]
-
-            if not parts:
-                continue
-
-            addr = parts[0]
-            hexstr = parts[1] if len(parts) > 1 else ""
-            disasm = parts[2] if len(parts) > 2 else ""
-            row = (addr, hexstr, disasm)
-            if row not in self.data:
-                self.data.append(row)
-                idx = self.InsertItem(self.GetItemCount(), addr)
-                self.SetItem(idx, 1, hexstr)
-                self.SetItem(idx, 2, disasm)
-
-        self.Refresh()
-        self.EnsureVisible(len(data) - 1)
-
-    def HighlightIp(self):
-        highlightIdx = 0
-        regsText = self.parent.regsDisplay.GetValue()
-        m = re.search(r"\b([ER]IP):\s*([0-9A-Fa-f]+)", regsText)
-        ipVal = m.group(2) if m else None
-
-        if ipVal:
-            for i, (addr, _, _) in enumerate(self.data):
-                if addr.lower() == ipVal.lower():
-                    highlightIdx = i
-                    break
-
-        if self.highlightedIdx is not None:
-            self.SetItemBackgroundColour(self.highlightedIdx, wx.Colour(255, 255, 255))
-
-        self.SetItemBackgroundColour(highlightIdx, wx.Colour(211, 211, 211))
-        self.highlightedIdx = highlightIdx
-        self.Refresh()
-
-
 class CommandPipeHandler:
     """Handles messages received on the command pipe from the debug server."""
 
@@ -294,13 +413,13 @@ class CommandPipeHandler:
     def dispatch(self, data):
         response = b":NOPE"
         if not data or b":" not in data:
-            log.critical("Unknown command received from the debug server: %s", data.strip())
+            log.critical("[DEBUG CONSOLE] Unknown command received from the debug server: %s", data.strip())
         else:
             command, arguments = data.strip().split(b":", 1)
             # log.info((command, data, "console dispatch"))
             fn = getattr(self, f"_handle_{command.lower().decode()}", None)
             if not fn:
-                log.critical("Unknown command received from the debug server: %s", data.strip())
+                log.critical("[DEBUG CONSOLE] Unknown command received from the debug server: %s", data.strip())
             else:
                 try:
                     response = fn(arguments)
@@ -308,7 +427,7 @@ class CommandPipeHandler:
                 except Exception as e:
                     log.error(e, exc_info=True)
                     log.exception(
-                        "Pipe command handler exception (command %s args %s)",
+                        "[DEBUG CONSOLE] Pipe command handler exception (command %s args %s)",
                         command,
                         arguments,
                     )
@@ -393,6 +512,15 @@ class ConsoleFrame(wx.Frame):
 class ConsolePanel(wx.Panel):
     """A wxPython panel that supports multi-threaded debugging with labeled sections, hotkeys, and logging."""
 
+    # Command constants
+    CMD_PAGE_MAP = "P"
+    CMD_PAGE_LOAD = "I"
+    CMD_REG_UPDATE = "R"
+    CMD_MEM_DUMP = "M"
+    CMD_STACK_UPDATE = "K"
+    CMD_EXECUTION = ("O", "S")
+    CMD_CONSOLE = ("C", "B", "D")
+
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
@@ -403,6 +531,7 @@ class ConsolePanel(wx.Panel):
         self.slotCount = 512
         self.prevHighlight = None
         self.initMemdmp = True
+        self.ipVal = None
         self.InitGUI()
         wx.CallLater(100, self.InitPipe)
 
@@ -431,7 +560,7 @@ class ConsolePanel(wx.Panel):
         # Console Output
         consoleSizer = wx.BoxSizer(wx.VERTICAL)
         consoleSizer.Add(wx.StaticText(self, label="Disassembly Console"), 0, wx.ALL, 5)
-        self.disassemblyConsole = ConsoleListCtrl(self)
+        self.disassemblyConsole = DisassemblyListCtrl(self, bits=64)
         self.disassemblyConsole.SetFont(fontCourier)
         consoleSizer.Add(self.disassemblyConsole, 2, wx.EXPAND | wx.ALL, 5)
         topSizer.Add(consoleSizer, 7, wx.EXPAND)
@@ -540,33 +669,16 @@ class ConsolePanel(wx.Panel):
         self.memAddressInput.Clear()
         event.Skip()
 
-    def AppendOutput(self, data):
-        """Appends text to the output console."""
-        self.disassemblyConsole.UpdateData(data)
-        #self.disassemblyConsole.UpdateData(data)
-
     def AppendConsole(self, text):
         """Appends text to the output console."""
         self.outputConsole.AppendText(text + "\n")
 
-    def UpdateOutput(self, text):
-        self.AppendOutput(text)
-        self.SendCommand("R")
-        self.SendCommand("N")
-        self.disassemblyConsole.HighlightIp()
-        if self.initMemdmp:
-            self.SendCommand("M")
-            self.initMemdmp = False
-        else:
-            addr = self.memDumpDisplay.GetFirstHexAddress()
-            self.memAddressInput.SetValue(addr)
-            self.OnAddressEnter(wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.memAddressInput.GetId()))
-
-        self.SendCommand("K")
-
     def UpdateRegs(self, text):
         """Update registers display."""
         self.regsDisplay.Clear()
+        regsText = self.regsDisplay.GetValue()
+        m = re.search(r"\b([ER]IP):\s*([0-9A-Fa-f]+)", regsText)
+        self.ipVal = m.group(2) if m else None
         self.regsDisplay.SetValue(text)
 
     def UpdateStack(self, data):
@@ -603,38 +715,6 @@ class ConsolePanel(wx.Panel):
         else:
             wx.CallLater(100, self.SendInit)
 
-    def ProcessServerOutput(self, data):
-        """Processes debugger responses."""
-        command, data = data.split(":", 1)
-        if data and not self.connected:
-            self.connected = True
-            self.UpdateStatus("Status: Connected")
-            if not self.parent.IsShown():
-                self.parent.Show()
-                self.parent.Layout()
-            self.AppendConsole(data)
-            self.SendCommand("I")
-        elif data == "TIMEOUT":
-            self.AppendConsole("Operation timed out")
-        else:
-            if command == "R":
-                self.UpdateRegs(data)
-            elif command == "N":
-                self.AppendOutput(data)
-            elif command in ("H", "B", "D"):
-                self.AppendConsole(data)
-            elif command == "I":
-                self.UpdateOutput(data)
-            elif command == "M":
-                self.UpdateMemDump(data)
-            elif command == "K":
-                self.UpdateStack(data)
-            elif command in ("O", "S", "C"):
-                self.AppendConsole(data)
-                self.SendCommand("I")
-            else:
-                log.error("[DEBUG CONSOLE] Invalid command: %s", command)
-
     def ReadResponse(self):
         """Reads a full response from the pipe in a thread-safe manner."""
         with self.readLock:
@@ -644,7 +724,7 @@ class ConsolePanel(wx.Panel):
                 response = data.decode("utf-8").strip()
                 return response
             except Exception as e:
-                log.error("Error reading response: %s", e)
+                log.error("[DEBUG CONSOLE] Reading response: %s", e)
                 return ""
 
     def WaitForResponse(self):
@@ -720,132 +800,118 @@ class ConsolePanel(wx.Panel):
             self.pipeHandle = None
             log.info("[DEBUG CONSOLE] Pipe handle closed")
 
+    def RefreshViewState(self):
+        self.SendCommand("R")
+        if self.initMemdmp:
+            self.SendCommand("M")
+            self.initMemdmp = False
+        else:
+            addr = self.memDumpDisplay.GetFirstHexAddress()
+            self.memAddressInput.SetValue(addr)
+            self.OnAddressEnter(wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.memAddressInput.GetId()))
+        self.SendCommand("K")
 
-DecodedInstruction = namedtuple('DecodedInstruction', ['address', 'bytes', 'text'])
+    def HandleConnection(self, payload):
+        """Handle initial connection logic."""
+        self.connected = True
+        self.UpdateStatus("Status: Connected")
+        if not self.parent.IsShown():
+            self.parent.Show()
+            self.parent.Layout()
+        self.AppendConsole(payload)
+        self.disassemblyConsole.RequestPageMap()
 
-class DisasmListCtrl(wx.ListCtrl):
-    def __init__(self, parent, processHandle, bits: int = 64):
-        style = wx.LC_REPORT | wx.LC_VIRTUAL | wx.LC_HRULES | wx.LC_VRULES
-        super().__init__(parent, style=style)
-        self.parent = parent
-        self.bits = bits
-        self.pageMap: List[Tuple[int, int, int]] = []
-        self.memCache = {}
-        self.decodeCache: List[DecodedInstruction] = []
-        self.currentRip = None
-        self.Bind(wx.EVT_LIST_CACHE_HINT, self.OnCacheHint)
-        self.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.OnItemActivated)
+    def DispatchCommand(self, command, payload):
+        wx.CallAfter(self._DispatchCommand, command, payload)
 
-    def LoadPageMap(self):
-        """
-        Populate self.pageMap by sending a 'P' command.
-        Assumes parent.SendCommand('P') returns a bytes blob in format:
-          [uint32 count]
-          count × [uint64 BaseAddress, uint64 RegionSize, uint32 Protect]
-        """
-        data = self.parent.SendCommand('P')
-        if not data or len(data) < 4:
+    def _DispatchCommand(self, command, payload):
+        """Dispatch commands to their respective handlers."""
+        handlers = {
+            self.CMD_PAGE_MAP: self.HandlePageMap,
+            self.CMD_PAGE_LOAD: self.HandlePageLoad,
+            self.CMD_REG_UPDATE: self.HandleRegUpdate,
+            self.CMD_MEM_DUMP: self.HandleMemDump,
+            self.CMD_STACK_UPDATE: self.HandleStackUpdate,
+        }
+
+        if command in self.CMD_CONSOLE:
+            self.HandleConsoleOutput(payload)
             return
-        count = struct.unpack_from('<I', data, 0)[0]
-        entry_size = struct.calcsize('<QQI')
-        offset = 4
-        for _ in range(count):
-            if offset + entry_size > len(data):
-                break
-            baseAddr, regionSize, protect = struct.unpack_from('<QQI', data, offset)
-            self.pageMap.append((baseAddr, regionSize, protect))
-            offset += entry_size
-        self.pageMap.sort(key=lambda x: x[0])
 
-    def OnCacheHint(self, evt):
-        """Prefetch memory/decodes for the range of visible rows."""
-        startIdx, endIdx = evt.GetCacheFrom(), evt.GetCacheTo()
-        for idx in (startIdx, endIdx):
-            if idx < len(self.decodeCache):
-                self.EnsureDecoded(self.decodeCache[idx].address)
+        if command in self.CMD_EXECUTION:
+            self.HandleExecution(payload)
+            return
 
-    def EnsureDecoded(self, addr: int):
-        """Ensure the memory page containing `addr` is read and decoded."""
-        pageBase = self.FindPage(addr)
-        if pageBase not in self.memCache:
-            self.LoadPage(pageBase)
-            self.DecodePage(pageBase)
+        handler = handlers.get(command)
+        if handler:
+            handler(payload)
+        else:
+            log.warning("[DEBUG CONSOLE] Unknown command '%s' received", command)
 
-    def FindPage(self, addr: int) -> int:
-        """Return the baseAddress of the page covering `addr`."""
-        for baseAddress, regionSize, _ in self.pageMap:
-            if baseAddress <= addr < baseAddress + regionSize:
-                return baseAddress
-        raise ValueError(f"Address {addr:#x} not in any pageMap entry")
+    def HandlePageMap(self, payload):
+        self.disassemblyConsole.LoadPageMap(payload)
+        self.disassemblyConsole.RequestDecodeSync(self.disassemblyConsole.currentRip)
 
-    def LoadPage(self, baseAddress: int):
-        """Request a block of memory at `baseAddress` via SendCommand."""
-        data = self.parent.SendCommand("I", baseAddress)
-        self.memCache[baseAddress] = data
+    def HandlePageLoad(self, payload):
+        self.disassemblyConsole.LoadPage(payload)
+        self.disassemblyConsole.RequestDecodeSync(self.disassemblyConsole.currentRip)
+        self.RefreshViewState()
 
-    def DecodePage(self, baseAddress: int):
-        """Disassemble the entire page at `baseAddress` into decodeCache."""
-        mem = self.memCache[baseAddress]
-        mode = Decode64Bits if self.bits == 64 else Decode32Bits
-        insts = list(Decode(baseAddress, mem, mode))
-        self.decodeCache.extend(
-            DecodedInstruction(addr, bytes_, instr)
-            for addr, bytes_, instr in insts
-        )
-        self.decodeCache.sort(key=lambda inst: inst.address)
-        self.SetItemCount(len(self.decodeCache))
+    def HandleRegUpdate(self, payload):
+        self.UpdateRegs(payload)
+        if self.ipVal:
+            self.disassemblyConsole.currentRip = self.ipVal
+        self.disassemblyConsole.RequestDecodeSync(self.disassemblyConsole.currentRip)
 
-    def OnGetItemText(self, item: int, col: int) -> str:
-        inst = self.decodeCache[item]
-        if col == 0:
-            return f"{inst.address:#010x}"
-        elif col == 1:
-            return inst.bytes.hex()
-        return inst.text
+    def HandleMemDump(self, payload):
+        self.UpdateMemDump(payload)
 
-    def OnGetItemAttr(self, item: int) -> wx.ListItemAttr:
-        inst = self.decodeCache[item]
-        mnemonic = inst.text.split()[0].lower()
-        attr = wx.ListItemAttr()
-        if mnemonic == 'call':
-            attr.SetTextColour(wx.BLUE)
-        elif mnemonic in ('jmp', 'je', 'jne', 'jg', 'jl'):
-            attr.SetTextColour(wx.GREEN)
-        return attr
+    def HandleStackUpdate(self, payload):
+        self.UpdateStack(payload)
 
-    def OnItemActivated(self, evt):
-        idx = evt.GetIndex()
-        inst = self.decodeCache[idx]
-        mnemonic = inst.text.split()[0].lower()
-        if mnemonic == 'call' or mnemonic.startswith('j'):
-            relOffset = int(inst.text.split()[-1], 16)
-            target = inst.address + len(inst.bytes) + relOffset
-            self.JumpTo(target)
+    def HandleConsoleOutput(self, payload):
+        self.AppendConsole(payload)
 
-    def JumpTo(self, address: int):
-        """Center the view on `address`, decoding pages if needed."""
-        self.EnsureDecoded(address)
-        idx = self.FindInstructionIndex(address)
-        if idx != -1:
-            self.Select(idx)
-            self.EnsureVisible(idx)
+    def HandleExecution(self, payload):
+        """Handle execution commands (O, S) by parsing CIP and updating disassembly."""
+        m = re.search(r"0x[0-9a-fA-F]+", payload)
+        if m:
+            cip = int(m.group(0), 16)
+            self.disassemblyConsole.currentRip = cip
+            self.AppendConsole(payload)
+            self.disassemblyConsole.RequestDecodeSync(self.disassemblyConsole.currentRip)
+            self.RefreshViewState()
+        else:
+            log.error("[DEBUG CONSOLE] Failed to parse CIP from payload: %s", payload)
 
-    def UpdateRip(self, newRip: int):
-        self.currentRip = newRip
-        if not self.pageMap:
-            self.LoadPageMap()
-        self.JumpTo(newRip)
+    def ProcessServerOutput(self, data):
+        wx.CallAfter(self._ProcessServerOutput, data)
 
-    def FindInstructionIndex(self, address: int) -> int:
-        """Binary-search the decodeCache for the given address."""
-        lo, hi = 0, len(self.decodeCache) - 1
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            midAddr = self.decodeCache[mid].address
-            if midAddr == address:
-                return mid
-            if midAddr < address:
-                lo = mid + 1
-            else:
-                hi = mid - 1
-        return -1
+    def _ProcessServerOutput(self, data):
+        """Process server output by parsing command and payload, then dispatching."""
+        if not data or ":" not in data:
+            log.error("[DEBUG CONSOLE] Invalid data format: %s", data)
+            return
+
+        try:
+            command, payload = data.split(":", 1)
+        except ValueError:
+            log.error("[DEBUG CONSOLE] Failed to parse data: %s", data)
+            return
+
+        if not self.connected and payload:
+            m = re.search(r"0x[0-9a-fA-F]+", payload)
+            if m:
+                cip = int(m.group(0), 16)
+                self.disassemblyConsole.bits = 64 if cip > 0xFFFFFFFF else 32
+                self.disassemblyConsole.currentRip = cip
+                log.debug("[DEBUG CONSOLE] Detected CIP=0x%x, setting bits=%d", cip, self.disassemblyConsole.bits)
+
+            self.HandleConnection(payload)
+            return
+
+        if not command or not payload:
+            log.error("[DEBUG CONSOLE] Empty command = '%s' or payload = '%s'", command, payload)
+            return
+
+        self.DispatchCommand(command, payload)
