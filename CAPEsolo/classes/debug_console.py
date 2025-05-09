@@ -1,6 +1,7 @@
 import logging
 import re
 import threading
+import time
 from collections import namedtuple
 from typing import Dict, List, Optional, Tuple
 
@@ -10,18 +11,18 @@ import win32file
 import wx
 from capstone import CS_ARCH_X86, CS_MODE_32, CS_MODE_64, Cs, CsError
 
-from CAPEsolo.lib.common.defines import PAGE_READONLY, PAGE_READWRITE, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE
+from CAPEsolo.lib.common.defines import PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, PAGE_READONLY, PAGE_READWRITE
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
 
 log = logging.getLogger(__name__)
 
-TIMEOUT = 600
+TIMEOUT = 6000
 PAGE_SIZE = 0x1000
 BUFFER_SIZE = 0x10000
-MAX_CACHE_SIZE = 0xA00000
 CHUNK_SIZE = BUFFER_SIZE // 2
 DBGCMD = "DBGCMD"
 READABLE_FLAGS = PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE
+COLOR_LIGHT_YELLOW = wx.Colour(255, 255, 150)
 
 DecodedInstruction = namedtuple("DecodedInstruction", ["address", "bytes", "text"])
 
@@ -113,10 +114,9 @@ class DisassemblyListCtrl(wx.ListCtrl):
     def HighlightIp(self, index):
         if index >= 0:
             for i in range(self.GetItemCount()):
-                self.SetItemBackgroundColour(i, wx.NullColour)
-                self.Select(i, on=0)
+                self.SetItemBackgroundColour(i, wx.Colour(wx.WHITE))
 
-            self.SetItemBackgroundColour(index, wx.Colour(135, 206, 250))
+            self.SetItemBackgroundColour(index, wx.Colour(wx.CYAN))
             self.CenterRow(index)
         else:
             log.warning("[DEBUG CONSOLE] CIP %#x not found in decodeCache", self.parent.cip)
@@ -153,11 +153,16 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         menu = wx.Menu()
         miCopy = menu.Append(wx.ID_ANY, "Copy")
-        miGoTo = menu.Append(wx.ID_ANY, "GoTo")
-        miGoToSelected = menu.Append(wx.ID_ANY, "GoTo Selected Address")
+        miGoTo = menu.Append(wx.ID_ANY, "Go To")
+        miGoToSelected = menu.Append(wx.ID_ANY, "Go To Selected Address")
+        miGoToCIP = menu.Append(wx.ID_ANY, "Go To CIP")
+        miRunTo = menu.Append(wx.ID_ANY, "Run To")
+
         menu.Bind(wx.EVT_MENU, lambda e: self.OnCopy(idx), miCopy)
         menu.Bind(wx.EVT_MENU, self.OnGoTo, miGoTo)
         menu.Bind(wx.EVT_MENU, lambda e: self.OnGoToSelected(idx), miGoToSelected)
+        menu.Bind(wx.EVT_MENU, self.OnGoToCIP, miGoToCIP)
+        menu.Bind(wx.EVT_MENU, lambda e: self.OnRunTo(idx), miRunTo)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
@@ -173,7 +178,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
                 clipboard.Close()
 
     def OnGoTo(self, event):
-        dialog = wx.TextEntryDialog(self, "Enter hex address (e.g., 0x12345678):", "GoTo Address", "0x")
+        dialog = wx.TextEntryDialog(self, "Enter hex address (e.g., 0x12345678):", "Go To Address", "0x")
         if dialog.ShowModal() == wx.ID_OK:
             addr_str = dialog.GetValue().strip()
             try:
@@ -195,6 +200,20 @@ class DisassemblyListCtrl(wx.ListCtrl):
             log.error("[DEBUG CONSOLE] Invalid selected address: %s (%s)", addr_str, e)
             wx.MessageBox(f"Invalid selected address: {addr_str}", "Error", wx.OK | wx.ICON_ERROR)
 
+    def OnGoToCIP(self, event):
+        cipIndex = self.GetCipIndex(self.parent.cip)
+        self.HighlightIp(cipIndex)
+
+    def OnRunTo(self, idx):
+        addrStr = self.GetItemText(idx, 0).strip()
+        try:
+            addr = int(addrStr, 16)
+            payload = f"{addr:#X}"
+            self.parent.SendCommand("T", payload)
+        except ValueError as e:
+            log.error("[DEBUG CONSOLE] Invalid address for Run To: %s (%s)", addrStr, e)
+            wx.MessageBox(f"Invalid address for Run To: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
+
 class RegsTextCtrl(wx.TextCtrl):
     def __init__(self, parent, style):
         """TextCtrl subclass"""
@@ -204,8 +223,28 @@ class RegsTextCtrl(wx.TextCtrl):
 
     def OnContextMenu(self, event):
         menu = wx.Menu()
-        miFollow = menu.Append(wx.ID_ANY, "Follow Value")
+        miFollow = menu.Append(wx.ID_ANY, "Dump Value")
+        miClearZeroFlag = menu.Append(wx.ID_ANY, "Clear Zero Flag")
+        miSetZeroFlag = menu.Append(wx.ID_ANY, "Set Zero Flag")
+        miFlipZeroFlag = menu.Append(wx.ID_ANY, "Flip Zero Flag")
+        miClearSignFlag = menu.Append(wx.ID_ANY, "Clear Sign Flag")
+        miSetSignFlag = menu.Append(wx.ID_ANY, "Set Sign Flag")
+        miFlipSignFlag = menu.Append(wx.ID_ANY, "Flip Sign Flag")
+        miClearCarryFlag = menu.Append(wx.ID_ANY, "Clear Carry Flag")
+        miSetCarryFlag = menu.Append(wx.ID_ANY, "Set Carry Flag")
+        miFlipCarryFlag = menu.Append(wx.ID_ANY, "Flip Carry Flag")
+
         menu.Bind(wx.EVT_MENU, self.OnFollowValue, miFollow)
+        menu.Bind(wx.EVT_MENU, self.ClearZeroFlag, miClearZeroFlag)
+        menu.Bind(wx.EVT_MENU, self.SetZeroFlag, miSetZeroFlag)
+        menu.Bind(wx.EVT_MENU, self.FlipZeroFlag, miFlipZeroFlag)
+        menu.Bind(wx.EVT_MENU, self.ClearSignFlag, miClearSignFlag)
+        menu.Bind(wx.EVT_MENU, self.SetSignFlag, miSetSignFlag)
+        menu.Bind(wx.EVT_MENU, self.FlipSignFlag, miFlipSignFlag)
+        menu.Bind(wx.EVT_MENU, self.ClearCarryFlag, miClearCarryFlag)
+        menu.Bind(wx.EVT_MENU, self.SetCarryFlag, miSetCarryFlag)
+        menu.Bind(wx.EVT_MENU, self.FlipCarryFlag, miFlipCarryFlag)
+
         pos = event.GetPosition()
         pos = self.ScreenToClient(pos)
         self.PopupMenu(menu, pos)
@@ -218,6 +257,37 @@ class RegsTextCtrl(wx.TextCtrl):
             evt = wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.parent.memAddressInput.GetId())
             self.parent.OnAddressEnter(evt)
 
+    def ClearZeroFlag(self, event):
+        self.FlagCommand("ClearZeroFlag")
+
+    def SetZeroFlag(self, event):
+        self.FlagCommand("SetZeroFlag")
+
+    def FlipZeroFlag(self, event):
+        self.FlagCommand("FlipZeroFlag")
+
+    def ClearSignFlag(self, event):
+        self.FlagCommand("ClearSignFlag")
+
+    def SetSignFlag(self, event):
+        self.FlagCommand("SetSignFlag")
+
+    def FlipSignFlag(self, event):
+        self.FlagCommand("FlipSignFlag")
+
+    def ClearCarryFlag(self, event):
+        self.FlagCommand("ClearCarryFlag")
+
+    def SetCarryFlag(self, event):
+        self.FlagCommand("SetCarryFlag")
+
+    def FlipCarryFlag(self, event):
+        self.FlagCommand("FlipCarryFlag")
+
+    def FlagCommand(self, cmd):
+        self.parent.SendCommand("E", cmd)
+        self.parent.SendCommand("K")
+
 
 class StackListCtrl(wx.ListCtrl):
     def __init__(self, parent):
@@ -226,7 +296,7 @@ class StackListCtrl(wx.ListCtrl):
         self.spVal = None
         self.InsertColumn(0, "Address", width=170)
         self.InsertColumn(1, "Value", width=170)
-        self.InsertColumn(2, "", width=170)
+        self.InsertColumn(2, "", width=70)
         self.data = []
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
 
@@ -262,7 +332,7 @@ class StackListCtrl(wx.ListCtrl):
             self.SetItem(i, 2, "")
 
             if i == spIdx:
-                self.SetItemBackgroundColour(i, wx.Colour(255, 255, 150))
+                self.SetItemBackgroundColour(i, COLOR_LIGHT_YELLOW)
 
         self.Refresh()
         self.CenterRow(spIdx)
@@ -282,8 +352,8 @@ class StackListCtrl(wx.ListCtrl):
             return
 
         menu = wx.Menu()
-        miFollowAddr = menu.Append(wx.ID_ANY, "Follow Address")
-        miFollowVal = menu.Append(wx.ID_ANY, "Follow Value")
+        miFollowAddr = menu.Append(wx.ID_ANY, "Dump Address")
+        miFollowVal = menu.Append(wx.ID_ANY, "Dump Value")
 
         menu.Bind(
             wx.EVT_MENU,
@@ -398,6 +468,7 @@ class CommandPipeHandler:
 
     def __init__(self, console):
         self.console = console
+        self.connected = False
 
     def _handle_break(self, data):
         with self.console.breakCondition:
@@ -417,28 +488,30 @@ class CommandPipeHandler:
     def _handle_dbgcmd(self, data):
         cmd, _ = data.split(b":", 1)
         with self.console.breakCondition:
-            if cmd == b"INIT" and not self.console.connected:
+            if cmd == b"INIT" and not self.connected:
                 notified = self.console.breakCondition.wait_for(lambda: self.console.debuggerResponse, timeout=TIMEOUT)
                 if notified:
-                    response = b":" + self.console.debuggerResponse
+                    response = b"INIT:" + self.console.debuggerResponse
                     self.console.debuggerResponse = None
+                    self.connected = True
                     return response
                 else:
-                    return b":TIMEOUT"
-            else:
-                self.console.pendingCommand = data
-                self.console.breakCondition.notify_all()
-                notified = self.console.breakCondition.wait_for(lambda: self.console.debuggerResponse is not None, timeout=TIMEOUT)
-                if not notified:
-                    self.console.pendingCommand = None
+                    self.console.debuggerResponse = None
                     return b":TIMEOUT"
 
-                response = b":" + self.console.debuggerResponse
-                if cmd:
-                    response = cmd + response
+            self.console.pendingCommand = data
+            self.console.breakCondition.notify_all()
+            notified = self.console.breakCondition.wait_for(lambda: self.console.debuggerResponse is not None, timeout=TIMEOUT)
+            if not notified:
+                self.console.pendingCommand = None
+                return b":TIMEOUT"
 
-                self.console.debuggerResponse = None
-                return response
+            response = b":" + self.console.debuggerResponse
+            if cmd:
+                response = cmd + response
+
+            self.console.debuggerResponse = None
+            return response
 
     def dispatch(self, data):
         response = b":NOPE"
@@ -453,7 +526,8 @@ class CommandPipeHandler:
             else:
                 try:
                     response = fn(arguments)
-                    log.info(response)
+                    if response.decode("ascii")[0] not in ("M", "R", "K", "I"):
+                        log.info(response)
                 except Exception as e:
                     log.error(e, exc_info=True)
                     log.exception(
@@ -481,7 +555,6 @@ class DebugConsole:
         self.lastCommand = None
         self.debuggerResponse = None
         self.commandPipe = None
-        self.connected = False
 
     def OpenConsole(self):
         """Creates (but does not show) the console window."""
@@ -543,31 +616,33 @@ class ConsolePanel(wx.Panel):
     """A wxPython panel that supports multi-threaded debugging with labeled sections, hotkeys, and logging."""
 
     # Command constants
-    CMD_PAGE_MAP = "P"
+    CMD_CONTINUE = "C"
+    CMD_BREAKPOINT = "B"
     CMD_PAGE_LOAD = "I"
-    CMD_REG_UPDATE = "R"
-    CMD_MEM_DUMP = "M"
     CMD_STACK_UPDATE = "K"
-    CMD_EXECUTION = ("O", "S")
-    CMD_CONSOLE = ("C", "B", "D")
+    CMD_MEM_DUMP = "M"
+    CMD_PAGE_MAP = "P"
+    CMD_REG_UPDATE = "R"
+    CMD_EXECUTION = ("O", "S", "T")
+    CMD_CONSOLE = ("D")
 
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
         self.pipe = parent.pipe
         self.pipeHandle = None
-        self.connected = self.parent.parent.connected
+        self.connected = False
         self.readLock = threading.Lock()
         self.slotCount = 512
         self.prevHighlight = None
         self.initMemdmp = True
         self.cip = None
         self.bits = 64
-        self.pageCache: Dict[int, bytes] = {}
-        self.cacheSize = 0
-        self.cacheLock = threading.Lock()
+        self.pageBuffers: Dict[int, bytes] = {}
         self.requestedPages = set()
         self.pendingPageRange = None
+        self.forceNextJump = False
+        self.pageLock = threading.Lock()
         self.InitGUI()
         wx.CallLater(100, self.InitPipe)
 
@@ -852,18 +927,6 @@ class ConsolePanel(wx.Panel):
 
         self.SendCommand(self.CMD_STACK_UPDATE)
 
-    def HandleConnection(self, payload):
-        """Handle initial connection logic."""
-        self.connected = True
-        self.UpdateStatus("Status: Connected")
-        if not self.parent.IsShown():
-            self.parent.Show()
-            self.parent.Layout()
-        self.AppendConsole(payload)
-        self.disassemblyConsole.LoadPageMap("")
-        self.SendCommand(self.CMD_PAGE_MAP)
-        self.RefreshViewState()
-
     def DispatchCommand(self, command, payload):
         """Dispatch commands to their respective handlers."""
         handlers = {
@@ -872,6 +935,8 @@ class ConsolePanel(wx.Panel):
             self.CMD_REG_UPDATE: self.HandleRegUpdate,
             self.CMD_MEM_DUMP: self.HandleMemDump,
             self.CMD_STACK_UPDATE: self.HandleStackUpdate,
+            self.CMD_CONTINUE: self.HandleContinue,
+            self.CMD_BREAKPOINT: self.HandleBreakpoint,
         }
 
         if command in self.CMD_CONSOLE:
@@ -911,14 +976,12 @@ class ConsolePanel(wx.Panel):
                 prevRegion = sortedPageMap[currentIdx - 1]
                 if prevRegion[2] & READABLE_FLAGS:
                     regions.append(prevRegion)
-                    log.debug("[DEBUG CONSOLE] Adding prev region: %#x-%#x", prevRegion[0], prevRegion[0] + prevRegion[1])
 
         if regionSize < CHUNK_SIZE or bytesAfter < half:
             if currentIdx < len(sortedPageMap) - 1:
                 nextRegion = sortedPageMap[currentIdx + 1]
                 if nextRegion[2] & READABLE_FLAGS:
                     regions.append(nextRegion)
-                    log.debug("[DEBUG CONSOLE] Adding next region: %#x-%#x", nextRegion[0], nextRegion[0] + nextRegion[1])
 
         pages = set()
         for base, size, prot in regions:
@@ -928,6 +991,7 @@ class ConsolePanel(wx.Panel):
             firstPage = (base // PAGE_SIZE) * PAGE_SIZE
             lastPage = ((base + size - 1) // PAGE_SIZE) * PAGE_SIZE
             page = firstPage
+
             while page <= lastPage:
                 if desiredStart - PAGE_SIZE <= page <= desiredEnd:
                     pages.add(page)
@@ -937,35 +1001,46 @@ class ConsolePanel(wx.Panel):
             log.error("[DEBUG CONSOLE] No valid pages found for address %#x", address)
             return
 
-        self.requestedPages.clear()
-        self.pendingPageRange = (min(pages), max(pages))
-        pagesToRequest = []
-        for page in sorted(pages):
-            if page in self.pageCache:
-                log.debug("[DEBUG CONSOLE] Page %#x already in cache", page)
-            else:
-                pagesToRequest.append(page)
-                self.requestedPages.add(page)
+        with self.pageLock:
+            if self.requestedPages and not self.forceNextJump:
+                return
 
-        if not pagesToRequest:
-            self.disassemblyConsole.HighlightIp(address)
-        else:
-            for page in pagesToRequest:
+            self.forceNextJump = False
+            self.pageBuffers.clear()
+            self.requestedPages.clear()
+            self.pendingPageRange = (min(pages), max(pages))
+            for page in sorted(pages):
+                self.requestedPages.add(page)
                 self.disassemblyConsole.RequestPage(page)
 
         self.RefreshViewState()
 
+    def HandleConnection(self, payload):
+        """Handle initial connection logic."""
+        self.connected = True
+        self.UpdateStatus("Status: Connected")
+        if not self.parent.IsShown():
+            self.parent.Show()
+            self.parent.Layout()
+        self.AppendConsole(payload)
+        self.disassemblyConsole.LoadPageMap("")
+        self.SendCommand(self.CMD_PAGE_MAP)
+
+    def HandleBreakpoint(self, payload):
+        self.AppendConsole(payload)
+        self.GetCip(payload)
+
+    def HandleContinue(self, payload):
+        self.AppendConsole(payload)
+
     def HandlePageMap(self, payload):
-        with self.cacheLock:
-            self.pageCache.clear()
-            self.cacheSize = 0
         self.disassemblyConsole.LoadPageMap(payload)
         self.JumpTo(self.cip)
 
     def HandlePageLoad(self, payload):
         """Process page load response, using pendingPageBase from DisassemblyListCtrl."""
         try:
-            requestAddr, pageData = payload.split(",", 1)
+            requestAddr, pageData = payload.split("|", 1)
             pageBase = int(requestAddr, 16)
         except ValueError as e:
             log.error("[DEBUG CONSOLE] Invalid page load payload format: %s (%s)", payload, str(e))
@@ -987,53 +1062,42 @@ class ConsolePanel(wx.Panel):
         if len(pageData) == 0:
             log.error("[DEBUG CONSOLE] Empty page data for page %#x", pageBase)
             return
+
         if len(pageData) > expectedSize:
             log.warning("[DEBUG CONSOLE] Page data for %#x exceeds expected size (%d > %d)", pageBase, len(pageData), expectedSize)
             pageData = pageData[:expectedSize]
 
-        with self.cacheLock:
-            newSize = self.cacheSize + len(pageData)
-            if newSize > MAX_CACHE_SIZE and not self.requestedPages:
-                self.pageCache.clear()
-                self.cacheSize = 0
-                log.debug("[DEBUG CONSOLE] Cleared pageCache due to size limit (10MB)")
-
-            self.pageCache[pageBase] = pageData
-            self.cacheSize += len(pageData)
-
-        if pageBase in self.requestedPages:
-            self.requestedPages.remove(pageBase)
+        with self.pageLock:
+            self.pageBuffers[pageBase] = pageData
+            self.requestedPages.discard(pageBase)
+            complete = not self.requestedPages
 
         log.debug("[DEBUG CONSOLE] Received page %#x, %d pages remaining", pageBase, len(self.requestedPages))
 
-        if self.pendingPageRange and not self.requestedPages:
+        if complete:
             self.UpdateDisassemblyView()
 
     def UpdateDisassemblyView(self):
         """Combine instructions from all requested pages and update the view."""
-        if not self.pendingPageRange:
-            return
+        with self.pageLock:
+            firstPage, lastPage = self.pendingPageRange
+            buffers = dict(self.pageBuffers)
 
-        firstPage, lastPage = self.pendingPageRange
         csMode = CS_MODE_64 if self.bits == 64 else CS_MODE_32
         cs = Cs(CS_ARCH_X86, csMode)
         cs.detail = False
 
         insts: List[DecodedInstruction] = []
-        with self.cacheLock:
-            for page in range(firstPage, lastPage + PAGE_SIZE, PAGE_SIZE):
-                if page not in self.pageCache:
-                    log.warning("[DEBUG CONSOLE] Page %x not in cache" % page)
-                    continue
 
-                pageData = self.pageCache[page]
-                try:
-                    for insn in cs.disasm(pageData, page):
-                        text = f"{insn.mnemonic} {insn.op_str}".strip()
-                        insts.append(DecodedInstruction(insn.address, insn.bytes, text))
-                except CsError as e:
-                    log.error("[DEBUG CONSOLE] Capstone error decoding page %x: %s", page, str(e))
-                    continue
+        for page in range(firstPage, lastPage + PAGE_SIZE, PAGE_SIZE):
+            pageData = buffers.get(page)
+            try:
+                for ins in cs.disasm(pageData, page):
+                    text = f"{ins.mnemonic} {ins.op_str}".strip()
+                    insts.append(DecodedInstruction(ins.address, ins.bytes, text))
+            except CsError as e:
+                log.error("[DEBUG CONSOLE] Capstone error on page %x: %s", page, str(e))
+                continue
 
         log.debug("[DEBUG CONSOLE] Disassembled %d instructions", len(insts))
         insts.sort(key=lambda i: i.address)
@@ -1063,6 +1127,14 @@ class ConsolePanel(wx.Panel):
         else:
             log.error("[DEBUG CONSOLE] Failed to parse CIP from payload: %s", payload)
 
+    def GetCip(self, data):
+        m = re.search(r"0x[0-9a-fA-F]+", data)
+        if m:
+            cip = int(m.group(0), 16)
+            self.bits = 64 if cip > 0xFFFFFFFF else 32
+            self.cip = cip
+            # log.debug("[DEBUG CONSOLE] Detected CIP=0x%x, setting bits=%d", cip, self.bits)
+
     def ProcessServerOutput(self, data):
         """Process server output by parsing command and payload, then dispatching."""
         if not data or ":" not in data:
@@ -1075,19 +1147,13 @@ class ConsolePanel(wx.Panel):
             log.error("[DEBUG CONSOLE] Failed to parse data: %s", data)
             return
 
-        if not self.connected and payload:
-            m = re.search(r"0x[0-9a-fA-F]+", payload)
-            if m:
-                cip = int(m.group(0), 16)
-                self.bits = 64 if cip > 0xFFFFFFFF else 32
-                self.cip = cip
-                log.debug("[DEBUG CONSOLE] Detected CIP=0x%x, setting bits=%d", cip, self.bits)
-
-            self.HandleConnection(payload)
-            return
-
         if not command or not payload:
             log.error("[DEBUG CONSOLE] Empty command = '%s' or payload = '%s'", command, payload)
+            return
+
+        if command == "INIT" and not self.connected:
+            self.GetCip(payload)
+            self.HandleConnection(payload)
             return
 
         self.DispatchCommand(command, payload)
