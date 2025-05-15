@@ -118,6 +118,16 @@ class StartPanel(wx.Panel):
         self.LoadAnalysisConfFile()
         self.Bind(EVT_ANALYZER_COMPLETE, self.OnAnalyzerComplete)
 
+        """ for debugging the panel layout
+        mainFrame = self.GetMainFrame()
+        width, height = mainFrame.GetSize()
+        size = wx.Size(int(width * 2), height)
+        position = mainFrame.GetPosition()
+        dbgConsole = DebugConsole(self, "Debug Console", position, size)
+        dbgConsole.OpenConsole()
+        dbgConsole.frame.Show()
+        """
+
     def InitUi(self):
         vbox = wx.BoxSizer(wx.VERTICAL)
 
