@@ -8,7 +8,7 @@ import pywintypes
 import win32event
 import win32file
 import wx
-from capstone import CS_ARCH_X86, CS_MODE_32, CS_MODE_64, Cs, CsError
+from distorm3 import Decode, Decode32Bits, Decode64Bits
 
 from CAPEsolo.lib.common.defines import PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, PAGE_READONLY, PAGE_READWRITE
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
@@ -37,7 +37,6 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.pageMap: List[Tuple[int, int, int]] = []
         self.decodeCache: List[DecodedInstruction] = []
         self.cacheLock = threading.Lock()
-        self.pendingPageBase: Optional[int] = None
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
 
     def LoadPageMap(self, data: str):
@@ -70,8 +69,6 @@ class DisassemblyListCtrl(wx.ListCtrl):
         return None
 
     def RequestPage(self, pageBase: int):
-        with self.cacheLock:
-            self.pendingPageBase = pageBase
         self.parent.SendCommand(ConsolePanel.CMD_PAGE_LOAD, hex(pageBase))
 
     def SetInstructions(self, insts: List[DecodedInstruction]):
@@ -82,8 +79,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
                 self.DeleteAllItems()
                 for i, inst in enumerate(insts):
                     idx = self.InsertItem(i, f"{inst.address:016X}")
-                    self.SetItem(idx, 1, inst.bytes.hex().upper())
-                    self.SetItem(idx, 2, inst.text.upper())
+                    self.SetItem(idx, 1, inst.bytes.upper())
+                    self.SetItem(idx, 2, inst.text)
                     mnemonic = inst.text.split()[0].lower()
                     if mnemonic == "call":
                         self.SetItemTextColour(idx, wx.BLUE)
@@ -93,7 +90,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
             self.Thaw()
 
         cipIndex = self.GetCipIndex()
-        if cipIndex:
+        if cipIndex != -1:
             self.HighlightIp(cipIndex)
 
     def GetCipIndex(self, cip=None):
@@ -111,7 +108,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         return cipIndex
 
-    def GetInstuctionIndex(self, addr: int):
+    def GetInstructionIndex(self, addr: int):
         index = -1
         with self.cacheLock:
             for i, inst in enumerate(self.decodeCache):
@@ -153,6 +150,24 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         self.EnsureVisible(rowIdx)
         self.EnsureVisible(anchor)
+
+    def TopRow(self, rowIdx):
+        """Scroll the specified row so it becomes the topmost visible row."""
+        visRows = self.GetCountPerPage()
+        if visRows <= 0:
+            rowH = 15
+            rect = self.GetItemRect(0, wx.LIST_RECT_BOUNDS)
+            if rect and rect.height > 0:
+                rowH = rect.height
+            visRows = self.GetClientSize().height // rowH
+
+        maxTop = max(0, len(self.decodeCache) - visRows)
+        topIdx = max(0, min(rowIdx, maxTop))
+
+        self.EnsureVisible(topIdx)
+        bottomIdx = topIdx + visRows - 1
+        if bottomIdx < self.GetItemCount():
+            self.EnsureVisible(bottomIdx)
 
     def OnContextMenu(self, event):
         pos = event.GetPosition()
@@ -267,16 +282,16 @@ class DisassemblyListCtrl(wx.ListCtrl):
             wx.MessageBox(f"Invalid address forDelete Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def ClearBpBackground(self, addr):
-        index = self.GetInstuctionIndex(addr)
+        index = self.GetInstructionIndex(addr)
         self.SetItemBackgroundColour(index, wx.Colour(wx.WHITE))
 
     def SetBpBackground(self, addr):
-        index = self.GetInstuctionIndex(addr)
+        index = self.GetInstructionIndex(addr)
         self.SetItemBackgroundColour(index, wx.Colour(COLOR_LIGHT_RED))
 
     def GoToInstruction(self, addr):
         addr = int(addr, 16)
-        index = self.GetInstuctionIndex(addr)
+        index = self.GetInstructionIndex(addr)
         self.CenterRow(index)
         self.Refresh()
 
@@ -823,8 +838,6 @@ class ConsolePanel(wx.Panel):
         self.bits = 64
         self.pageBuffers: Dict[int, bytes] = {}
         self.requestedPages = set()
-        self.pendingPageRange = None
-        self.forceNextJump = False
         self.pageLock = threading.Lock()
         self.InitGUI()
         wx.CallLater(100, self.InitPipe)
@@ -1173,36 +1186,20 @@ class ConsolePanel(wx.Panel):
             log.warning("[DEBUG CONSOLE] Unknown command '%s' received", command)
 
     def JumpTo(self, address: int):
-        """Use pageMap to find aligned page, then load & decode if page is readable."""
+        """Use pageMap to find page."""
         self.cip = address
         region = self.disassemblyConsole.FindPage(address)
         if region is None:
             self.SendCommand(self.CMD_PAGE_MAP)
             return
 
-        regionBase, regionSize, regionProt = region
-        regionEnd = regionBase + regionSize
-        half = CHUNK_SIZE // 2
-        desiredStart = address - half
-        desiredEnd = address + half
-        bytesBefore = address - regionBase
-        bytesAfter = regionEnd - address
-        regions = [(regionBase, regionSize, regionProt)]
+        desiredStart = self.cip
+        desiredEnd = self.cip + CHUNK_SIZE
         pageMap = self.disassemblyConsole.pageMap
-        currentIdx = next(i for i, r in enumerate(pageMap) if r[0] == regionBase)
-        if regionSize < CHUNK_SIZE or bytesBefore < half:
-            if currentIdx > 0:
-                prevRegion = pageMap[currentIdx - 1]
-                regions.append(prevRegion)
-
-        if regionSize < CHUNK_SIZE or bytesAfter < half:
-            if currentIdx < len(pageMap) - 1:
-                nextRegion = pageMap[currentIdx + 1]
-                regions.append(nextRegion)
-
         pages = set()
-        for base, size, prot in regions:
-            if base > desiredEnd or base + size < desiredStart:
+        for base, size, prot in pageMap:
+            regionEnd = base + size
+            if regionEnd < desiredStart or base > desiredEnd:
                 continue
 
             firstPage = (base // PAGE_SIZE) * PAGE_SIZE
@@ -1218,13 +1215,8 @@ class ConsolePanel(wx.Panel):
             return
 
         with self.pageLock:
-            if self.requestedPages and not self.forceNextJump:
-                return
-
-            self.forceNextJump = False
             self.pageBuffers.clear()
             self.requestedPages.clear()
-            self.pendingPageRange = (min(pages), max(pages))
             for page in sorted(pages):
                 self.requestedPages.add(page)
                 self.disassemblyConsole.RequestPage(page)
@@ -1321,7 +1313,7 @@ class ConsolePanel(wx.Panel):
         self.JumpTo(self.cip)
 
     def HandlePageLoad(self, payload):
-        """Process page load response, using pendingPageBase from DisassemblyListCtrl."""
+        """Process page load response."""
         try:
             requestAddr, pageData = payload.split("|", 1)
             pageBase = int(requestAddr, 16)
@@ -1360,35 +1352,6 @@ class ConsolePanel(wx.Panel):
         if complete:
             self.UpdateDisassemblyView()
 
-    def UpdateDisassemblyView(self):
-        """Combine instructions from all requested pages and update the view."""
-        with self.pageLock:
-            firstPage, lastPage = self.pendingPageRange
-            buffers = dict(self.pageBuffers)
-
-        csMode = CS_MODE_64 if self.bits == 64 else CS_MODE_32
-        cs = Cs(CS_ARCH_X86, csMode)
-        cs.detail = False
-        cs.skipdata = True
-        cs.skipdata_setup = ("DB", None, None)
-
-        insts: List[DecodedInstruction] = []
-
-        for page in range(firstPage, lastPage + PAGE_SIZE, PAGE_SIZE):
-            pageData = buffers.get(page)
-            try:
-                for ins in cs.disasm(pageData, page):
-                    text = f"{ins.mnemonic} {ins.op_str}".strip()
-                    insts.append(DecodedInstruction(ins.address, ins.bytes, text))
-            except CsError as e:
-                log.error("[DEBUG CONSOLE] Capstone error on page %x: %s", page, str(e))
-                continue
-
-        #log.debug("[DEBUG CONSOLE] Disassembled %d instructions", len(insts))
-        insts.sort(key=lambda i: i.address)
-        self.disassemblyConsole.SetInstructions(insts)
-        self.RefreshViewState()
-
     def HandleRegUpdate(self, payload):
         self.UpdateRegs(payload)
 
@@ -1411,6 +1374,41 @@ class ConsolePanel(wx.Panel):
             self.JumpTo(cip)
         else:
             log.error("[DEBUG CONSOLE] Failed to parse CIP from payload: %s", payload)
+
+    def UpdateDisassemblyView(self):
+        """Combine instructions from all requested pages and update the view."""
+        with self.pageLock:
+            buffers = dict(self.pageBuffers)
+
+        sortedPages = sorted(buffers.keys())
+        if not sortedPages:
+            return
+
+        prefix = []
+        if hasattr(self.disassemblyConsole, 'decodeCache'):
+            prefix = [inst for inst in self.disassemblyConsole.decodeCache if inst.address < self.cip]
+
+        baseAddress = self.cip
+        fullData = b""
+        for page in sortedPages:
+            pageData = buffers[page]
+            pageEnd = page + len(pageData)
+            start = max(self.cip, page)
+            end = min(self.cip + CHUNK_SIZE, pageEnd)
+            if start < end:
+                fullData += pageData[start - page : end - page]
+
+        decodeMode = Decode64Bits if self.bits == 64 else Decode32Bits
+        insts: List[DecodedInstruction] = []
+        for address, size, text, bytes in Decode(baseAddress, fullData, decodeMode):
+            insts.append(DecodedInstruction(address, bytes, text))
+
+        insts = prefix + insts
+
+        #log.debug("[DEBUG CONSOLE] Disassembled %d instructions", len(insts))
+        insts.sort(key=lambda i: i.address)
+        self.disassemblyConsole.SetInstructions(insts)
+        self.RefreshViewState()
 
     def GetCip(self, data):
         m = re.search(r"0x[0-9a-fA-F]+", data)
