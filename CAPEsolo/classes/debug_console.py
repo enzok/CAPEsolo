@@ -3,7 +3,7 @@ import re
 import threading
 import zlib
 from collections import namedtuple
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import pywintypes
 import win32event
@@ -11,769 +11,27 @@ import win32file
 import wx
 from distorm3 import Decode, Decode32Bits, Decode64Bits
 
-from CAPEsolo.lib.common.defines import PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, PAGE_READONLY, PAGE_READWRITE
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
+from .debug_controls import (
+    BreakpointsListCtrl,
+    DisassemblyListCtrl,
+    DecodedInstruction,
+    MemDumpListCtrl,
+    ModulesListCtrl,
+    RegsTextCtrl,
+    StackListCtrl,
+    ThreadListCtrl,
+)
+from .debug_graph import FlowGraphDialog
+from .debug_pipe import CommandPipeHandler
 
 log = logging.getLogger(__name__)
 
-TIMEOUT = 6000
 PAGE_SIZE = 4 * 1024
 BUFFER_SIZE = 65 * 1024
 CHUNK_SIZE = BUFFER_SIZE // 2
-MAX_IDLE = 1
 DBGCMD = "DBGCMD"
-READABLE_FLAGS = PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE
-COLOR_LIGHT_YELLOW = wx.Colour(255, 255, 150)
-COLOR_LIGHT_RED = wx.Colour(255, 102, 102)
-
-DecodedInstruction = namedtuple("DecodedInstruction", ["address", "bytes", "text"])
-
-
-def IsValidHex(s):
-    if len(s) < 8 or (s.startswith('0x') or s.startswith('0X')) and len(s) < 10:
-        return False
-
-    pattern = r'^(0[xX])?[0-9a-fA-F]+$'
-    return bool(re.match(pattern, s))
-
-
-class DisassemblyListCtrl(wx.ListCtrl):
-    def __init__(self, parent):
-        super().__init__(parent, style=wx.LC_REPORT)
-        self.parent = parent
-        self.InsertColumn(0, "Address", width=150)
-        self.InsertColumn(1, "Hex bytes", width=180)
-        self.InsertColumn(2, "Disassembly", width=400)
-        self.pageMap: List[Tuple[int, int, int]] = []
-        self.decodeCache: List[DecodedInstruction] = []
-        self.cacheLock = threading.Lock()
-        self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
-
-    def LoadPageMap(self, data: str):
-        if not data:
-            return
-
-        self.pageMap.clear()
-        for entry in data.split("|"):
-            if not entry:
-                continue
-
-            try:
-                base, size, protect = entry.split(",")
-                baseAddr = int(base, 16)
-                regionSize = int(size)
-                protect = int(protect, 16)
-                self.pageMap.append((baseAddr, regionSize, protect))
-            except (ValueError, AttributeError) as e:
-                log.error("[DEBUG CONSOLE] Failed to parse entry '%s': %s", entry, e)
-                continue
-
-        self.pageMap.sort(key=lambda x: x[0])
-
-    def FindPage(self, addr: int) -> Optional[Tuple[int, int, int]]:
-        for base, size, prot in self.pageMap:
-            if base <= addr < base + size and (prot & READABLE_FLAGS):
-                return base, size, prot
-
-        # log.warning("[DEBUG CONSOLE] Address: 0x%x not in page map, fetching update page map", addr)
-        return None
-
-    def RequestPage(self, pageBase: int):
-        self.parent.SendCommand(ConsolePanel.CMD_PAGE_LOAD, hex(pageBase))
-
-    def SetInstructions(self, insts: List[DecodedInstruction], append: bool = False):
-        self.Freeze()
-        try:
-            with self.cacheLock:
-                if not append:
-                    self.decodeCache = []
-                    self.DeleteAllItems()
-
-                startIndex = len(self.decodeCache)
-                self.decodeCache.extend(insts)
-                for offset, inst in enumerate(insts):
-                    row = startIndex + offset
-                    idx = self.InsertItem(row, f"{inst.address:016X}")
-                    self.SetItem(idx, 1, inst.bytes.upper())
-                    self.SetItem(idx, 2, inst.text)
-                    mnemonic = inst.text.split()[0].lower()
-                    if mnemonic == "call":
-                        self.SetItemTextColour(idx, wx.BLUE)
-                    elif mnemonic in ("jmp", "je", "jne", "jg", "jl"):
-                        self.SetItemTextColour(idx, wx.GREEN)
-        finally:
-            self.Thaw()
-
-        if append:
-            self.Refresh()
-        else:
-            cipIndex = self.GetCipIndex()
-            if cipIndex != -1:
-                self.HighlightIp(cipIndex)
-
-    def GetCipIndex(self, cip=None):
-        cipIndex = -1
-        if not cip:
-            cip = self.parent.cip
-        if cip is None:
-            return
-
-        with self.cacheLock:
-            for i, inst in enumerate(self.decodeCache):
-                if inst.address == cip:
-                    cipIndex = i
-                    break
-
-        return cipIndex
-
-    def GetInstructionIndex(self, addr: int):
-        index = -1
-        with self.cacheLock:
-            for i, inst in enumerate(self.decodeCache):
-                if inst.address == addr:
-                    index = i
-                    break
-        return index
-
-    def HighlightIp(self, index):
-        if index >= 0:
-            for i in range(self.GetItemCount()):
-                if self.GetItemBackgroundColour(i) != COLOR_LIGHT_YELLOW:
-                    self.SetItemBackgroundColour(i, wx.Colour(wx.WHITE))
-
-            self.SetItemBackgroundColour(index, wx.Colour(wx.CYAN))
-            self.CenterRow(index)
-        else:
-            log.warning("[DEBUG CONSOLE] Instruction %#x not found in disassembly", self.parent.cip)
-
-        self.Refresh()
-
-    def CenterRow(self, rowIdx):
-        """Center the specified row in the view."""
-        visRows = self.GetCountPerPage()
-        if visRows <= 0:
-            rowH = 15
-            rect = self.GetItemRect(0, wx.LIST_RECT_BOUNDS)
-            rowH = rect.height if rect and rect.height > 0 else rowH
-            clientH = self.GetClientSize().height
-            visRows = clientH // rowH
-
-        visRows = min(visRows, len(self.decodeCache))
-        if visRows <= 0:
-            visRows = 15
-
-        anchor = max(0, rowIdx + (visRows // 2))
-        maxTop = max(0, len(self.decodeCache) - visRows)
-        anchor = min(anchor, maxTop)
-
-        self.EnsureVisible(rowIdx)
-        self.EnsureVisible(anchor)
-
-    def TopRow(self, rowIdx):
-        """Scroll the specified row so it becomes the topmost visible row."""
-        visRows = self.GetCountPerPage()
-        if visRows <= 0:
-            rowH = 15
-            rect = self.GetItemRect(0, wx.LIST_RECT_BOUNDS)
-            if rect and rect.height > 0:
-                rowH = rect.height
-            visRows = self.GetClientSize().height // rowH
-
-        maxTop = max(0, len(self.decodeCache) - visRows)
-        topIdx = max(0, min(rowIdx, maxTop))
-
-        self.EnsureVisible(topIdx)
-        bottomIdx = topIdx + visRows - 1
-        if bottomIdx < self.GetItemCount():
-            self.EnsureVisible(bottomIdx)
-
-    def OnContextMenu(self, event):
-        pos = event.GetPosition()
-        pos = self.ScreenToClient(pos)
-        idx, flags = self.HitTest(pos)
-        if idx == wx.NOT_FOUND:
-            return
-
-        menu = wx.Menu()
-        miCopy = menu.Append(wx.ID_ANY, "Copy")
-        miGoTo = menu.Append(wx.ID_ANY, "Go To")
-        miGoToSelected = menu.Append(wx.ID_ANY, "Go To Selected Address")
-        miGoToCIP = menu.Append(wx.ID_ANY, "Go To EIP/RIP")
-        menu.AppendSeparator()
-        miStepInto = menu.Append(wx.ID_ANY, "Step Into")
-        miStepOver = menu.Append(wx.ID_ANY, "Step Over")
-        miStepOut = menu.Append(wx.ID_ANY, "Step Out")
-        miRunUntil = menu.Append(wx.ID_ANY, "Run Until")
-        menu.AppendSeparator()
-        bpMenu = wx.Menu()
-        for slot in ("Next", "0", "1", "2", "3"):
-            bpId = wx.NewIdRef()
-            bpMenu.Append(bpId, slot)
-            self.Bind(wx.EVT_MENU, lambda evt, s=slot: self.OnSetBreakpoint(evt, idx, s), id=bpId)
-
-        menu.AppendSubMenu(bpMenu, "Set Breakpoint")
-        miDeleteBreakpoint = menu.Append(wx.ID_ANY, "Delete Breakpoint")
-
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnCopy(idx), miCopy)
-        menu.Bind(wx.EVT_MENU, self.OnGoTo, miGoTo)
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnGoToSelected(idx), miGoToSelected)
-        menu.Bind(wx.EVT_MENU, self.OnGoToCIP, miGoToCIP)
-        menu.Bind(wx.EVT_MENU, self.OnStepInto, miStepInto)
-        menu.Bind(wx.EVT_MENU, self.OnStepOver, miStepOver)
-        menu.Bind(wx.EVT_MENU, self.OnStepOut, miStepOut)
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnRunUntil(idx), miRunUntil)
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(idx), miDeleteBreakpoint)
-        self.PopupMenu(menu, pos)
-        menu.Destroy()
-
-    def OnCopy(self, idx):
-        row_text = f"{self.GetItemText(idx, 0)}\t{self.GetItemText(idx, 1)}\t{self.GetItemText(idx, 2)}"
-        clipboard = wx.Clipboard()
-        if clipboard.Open():
-            try:
-                clipboard.SetData(wx.TextDataObject(row_text))
-            except Exception as e:
-                wx.MessageBox(f"Failed to copy to clipboard: {e}", "Error", wx.OK | wx.ICON_ERROR)
-            finally:
-                clipboard.Close()
-
-    def OnGoTo(self, event):
-        dialog = wx.TextEntryDialog(self, "Enter hex address (e.g., 0x12345678) or Register:", "Go To Address")
-        if dialog.ShowModal() == wx.ID_OK:
-            entry = dialog.GetValue().strip()
-            target = None
-            regsText = self.parent.regsDisplay.GetValue()
-            reg = entry.upper()
-            m = re.search(rf"\b{reg}\b\s*:\s*([0-9A-Fa-f]+)", regsText)
-            if m:
-                target = m.group(1)
-
-            if target is None:
-                if not entry.lower().startswith("0x"):
-                    target = "0x" + entry
-
-                try:
-                    int(target, 16)
-                except ValueError:
-                    wx.MessageBox(f"Invalid hex address: {entry}", "Error", wx.OK | wx.ICON_ERROR)
-                    dialog.Destroy()
-                    return
-
-            try:
-                index = self.GoToInstruction(target)
-                if index == wx.NOT_FOUND:
-                    wx.MessageBox(f"Instruction address not found: {entry}", "Warning", wx.OK | wx.ICON_WARNING)
-            except Exception as e:
-                wx.MessageBox(f"Invalid register or hex address: {entry}", "Error", wx.OK | wx.ICON_ERROR)
-
-        dialog.Destroy()
-
-    def OnGoToSelected(self, index):
-        addrStr = self.GetItemText(index, 0).strip()
-        try:
-            self.GoToInstruction(addrStr)
-        except ValueError as e:
-            wx.MessageBox(f"Invalid selected address: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
-
-    def OnGoToCIP(self, event):
-        cipIndex = self.GetCipIndex(self.parent.cip)
-        self.HighlightIp(cipIndex)
-
-    def OnStepInto(self):
-        self.parent.SendCommand("S")
-
-    def OnStepOver(self):
-        self.parent.SendCommand("O")
-
-    def OnStepOut(self):
-        self.parent.SendCommand("U")
-
-    def OnRunUntil(self, index):
-        addrStr = self.GetItemText(index, 0).strip()
-        try:
-            addr = int(addrStr, 16)
-            payload = f"{addr:#X}"
-            self.parent.SendCommand("T", payload)
-        except ValueError as e:
-            wx.MessageBox(f"Invalid address for Run Until: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
-
-    def OnSetBreakpoint(self, event, index, slot):
-        addrStr = self.GetItemText(index, 0).strip()
-        try:
-            addr = int(addrStr, 16)
-            payload = f"{slot.lower()}|{addr:#X}"
-            self.parent.SendCommand("B", payload)
-        except ValueError as e:
-            wx.MessageBox(f"Invalid address for Set Breakpoint Until: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
-
-    def OnDeleteBreakpoint(self, index):
-        addrStr = self.GetItemText(index, 0).strip()
-        try:
-            addr = int(addrStr, 16)
-            payload = f"{addr:#X}"
-            self.parent.SendCommand("D", payload)
-        except ValueError as e:
-            wx.MessageBox(f"Invalid address forDelete Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
-
-    def ClearBpBackground(self, addr):
-        index = self.GetInstructionIndex(addr)
-        self.SetItemBackgroundColour(index, wx.Colour(wx.WHITE))
-
-    def SetBpBackground(self, addr):
-        index = self.GetInstructionIndex(addr)
-        self.SetItemBackgroundColour(index, wx.Colour(COLOR_LIGHT_RED))
-
-    def GoToInstruction(self, addr):
-        addr = int(addr, 16)
-        index = self.GetInstructionIndex(addr)
-        self.CenterRow(index)
-        self.Select(index)
-        self.Focus(index)
-        self.Refresh()
-        return index
-
-
-class RegsTextCtrl(wx.TextCtrl):
-    def __init__(self, parent, style):
-        """TextCtrl subclass"""
-        super().__init__(parent, style=style)
-        self.parent = parent
-        self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
-
-    def OnContextMenu(self, event):
-        menu = wx.Menu()
-        miDumpAddress = menu.Append(wx.ID_ANY, "Dump Memory Address")
-        miFollowAddress = menu.Append(wx.ID_ANY, "Follow Address")
-        menu.AppendSeparator()
-        miClearZeroFlag = menu.Append(wx.ID_ANY, "Clear Zero Flag")
-        miSetZeroFlag = menu.Append(wx.ID_ANY, "Set Zero Flag")
-        miFlipZeroFlag = menu.Append(wx.ID_ANY, "Flip Zero Flag")
-        menu.AppendSeparator()
-        miClearSignFlag = menu.Append(wx.ID_ANY, "Clear Sign Flag")
-        miSetSignFlag = menu.Append(wx.ID_ANY, "Set Sign Flag")
-        miFlipSignFlag = menu.Append(wx.ID_ANY, "Flip Sign Flag")
-        menu.AppendSeparator()
-        miClearCarryFlag = menu.Append(wx.ID_ANY, "Clear Carry Flag")
-        miSetCarryFlag = menu.Append(wx.ID_ANY, "Set Carry Flag")
-        miFlipCarryFlag = menu.Append(wx.ID_ANY, "Flip Carry Flag")
-
-        menu.Bind(wx.EVT_MENU, self.OnDumpAddress, miDumpAddress)
-        menu.Bind(wx.EVT_MENU, self.OnFollowAddress, miFollowAddress)
-        menu.Bind(wx.EVT_MENU, self.ClearZeroFlag, miClearZeroFlag)
-        menu.Bind(wx.EVT_MENU, self.SetZeroFlag, miSetZeroFlag)
-        menu.Bind(wx.EVT_MENU, self.FlipZeroFlag, miFlipZeroFlag)
-        menu.Bind(wx.EVT_MENU, self.ClearSignFlag, miClearSignFlag)
-        menu.Bind(wx.EVT_MENU, self.SetSignFlag, miSetSignFlag)
-        menu.Bind(wx.EVT_MENU, self.FlipSignFlag, miFlipSignFlag)
-        menu.Bind(wx.EVT_MENU, self.ClearCarryFlag, miClearCarryFlag)
-        menu.Bind(wx.EVT_MENU, self.SetCarryFlag, miSetCarryFlag)
-        menu.Bind(wx.EVT_MENU, self.FlipCarryFlag, miFlipCarryFlag)
-
-        pos = event.GetPosition()
-        pos = self.ScreenToClient(pos)
-        self.PopupMenu(menu, pos)
-        menu.Destroy()
-
-    def OnDumpAddress(self, event):
-        sel = self.GetStringSelection().strip()
-        if sel:
-            self.parent.memAddressInput.SetValue(sel)
-            evt = wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.parent.memAddressInput.GetId())
-            self.parent.OnAddressEnter(evt)
-
-    def OnFollowAddress(self, event):
-        addrStr = self.GetStringSelection().strip()
-        if addrStr and IsValidHex(addrStr):
-            self.parent.disassemblyConsole.GoToInstruction(addrStr)
-
-    def ClearZeroFlag(self, event):
-        self.FlagCommand("ClearZeroFlag")
-
-    def SetZeroFlag(self, event):
-        self.FlagCommand("SetZeroFlag")
-
-    def FlipZeroFlag(self, event):
-        self.FlagCommand("FlipZeroFlag")
-
-    def ClearSignFlag(self, event):
-        self.FlagCommand("ClearSignFlag")
-
-    def SetSignFlag(self, event):
-        self.FlagCommand("SetSignFlag")
-
-    def FlipSignFlag(self, event):
-        self.FlagCommand("FlipSignFlag")
-
-    def ClearCarryFlag(self, event):
-        self.FlagCommand("ClearCarryFlag")
-
-    def SetCarryFlag(self, event):
-        self.FlagCommand("SetCarryFlag")
-
-    def FlipCarryFlag(self, event):
-        self.FlagCommand("FlipCarryFlag")
-
-    def FlagCommand(self, cmd):
-        self.parent.SendCommand("E", cmd)
-        self.parent.SendCommand("K")
-
-
-class StackListCtrl(wx.ListCtrl):
-    def __init__(self, parent):
-        super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.parent = parent
-        self.spVal = None
-        self.InsertColumn(0, "Address", width=170)
-        self.InsertColumn(1, "Value", width=170)
-        self.InsertColumn(2, "", width=70)
-        self.data = []
-        self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
-
-    def UpdateData(self, data):
-        """Populate the list with rows and highlight the specified index."""
-        rows = []
-        for line in data.splitlines():
-            parts = [p.strip() for p in line.split(",", 1)]
-
-            if len(parts) < 2:
-                continue
-
-            addr, val = parts[0], parts[1]
-            rows.append((addr, val))
-
-        regsText = self.parent.regsDisplay.GetValue()
-        m = re.search(r"\b([ER]SP):\s*([0-9A-Fa-f]+)", regsText)
-        self.spVal = m.group(2) if m else None
-        spIdx = len(rows) // 2
-        if self.spVal:
-            for i, (addr, _) in enumerate(rows):
-                if addr.lower() == self.spVal.lower():
-                    spIdx = i
-                    break
-
-        self.DeleteAllItems()
-        self.data = rows
-
-        for i, (addr, val) in enumerate(rows):
-            self.InsertItem(i, str(addr))
-            self.SetItem(i, 1, str(val))
-            self.SetItem(i, 2, "")
-
-            if i == spIdx:
-                self.SetItemBackgroundColour(i, COLOR_LIGHT_YELLOW)
-
-        self.Refresh()
-        self.CenterRow(spIdx)
-
-    @staticmethod
-    def GetAscii(dataBytes) -> str:
-        """Inspect an 8-byte qword for printable ASCII; return '.' for non-printable."""
-        buf = dataBytes[:8].ljust(8, b"\x00")
-        asciiStr = "".join(chr(b) if 32 <= b < 127 else "." for b in buf)
-        return asciiStr
-
-    def OnContextMenu(self, event):
-        pos = event.GetPosition()
-        pos = self.ScreenToClient(pos)
-        index, flags = self.HitTest(pos)
-        if index == wx.NOT_FOUND:
-            return
-
-        menu = wx.Menu()
-        miFollowAddr = menu.Append(wx.ID_ANY, "Dump Address")
-        miFollowVal = menu.Append(wx.ID_ANY, "Dump Value")
-
-        menu.Bind(
-            wx.EVT_MENU,
-            lambda e, r=index: (
-                self.parent.memAddressInput.SetValue(self.data[r][0]),
-                self.parent.OnAddressEnter(wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.parent.memAddressInput.GetId())),
-            ),
-            miFollowAddr,
-        )
-        menu.Bind(
-            wx.EVT_MENU,
-            lambda e, r=index: (
-                self.parent.memAddressInput.SetValue(self.data[r][1]),
-                self.parent.OnAddressEnter(wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.parent.memAddressInput.GetId())),
-            ),
-            miFollowVal,
-        )
-
-        self.PopupMenu(menu, pos)
-        menu.Destroy()
-
-    def CenterRow(self, rowIdx):
-        """Center the specified row in the view."""
-        if not self.data or rowIdx < 0 or rowIdx >= len(self.data):
-            return
-
-        visRows = self.GetCountPerPage()
-        if visRows <= 0:
-            rowH = 15
-            rect = self.GetItemRect(0, wx.LIST_RECT_BOUNDS)
-            rowH = rect.height if rect and rect.height > 0 else rowH
-            clientH = self.GetClientSize().height
-            visRows = clientH // rowH
-
-        visRows = min(visRows, len(self.data))
-        if visRows <= 0:
-            visRows = 15
-
-        anchor = max(0, rowIdx + (visRows // 2))
-        maxTop = max(0, len(self.data) - visRows)
-        anchor = min(anchor, maxTop)
-
-        self.EnsureVisible(rowIdx)
-        self.EnsureVisible(anchor)
-
-
-class MemDumpListCtrl(wx.ListCtrl):
-    def __init__(self, parent):
-        super().__init__(parent, style=wx.LC_REPORT)
-        self.InsertColumn(0, "Address", width=170)
-        self.InsertColumn(1, "Hex Dump", width=400)
-        self.InsertColumn(2, "Ascii", width=150)
-        self.data = []
-        self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
-
-    def UpdateData(self, data):
-        """Populate the list control from a string of lines."""
-        self.DeleteAllItems()
-        self.data.clear()
-
-        for i, line in enumerate(data.splitlines()):
-            parts = [p.strip() for p in line.split(",", 1)]
-            if not parts:
-                continue
-
-            addr = parts[0]
-            hexStr = parts[1] if len(parts) > 1 else ""
-            asciiChars = []
-            for byteToken in hexStr.split():
-                try:
-                    val = int(byteToken, 16)
-                    asciiChars.append(chr(val) if 32 <= val < 127 else ".")
-                except ValueError:
-                    asciiChars.append(".")
-
-            asciiStr = "".join(asciiChars)
-            self.data.append((addr, hexStr, asciiStr))
-            index = self.InsertItem(i, addr)
-            self.SetItem(index, 1, hexStr)
-            self.SetItem(index, 2, asciiStr)
-
-    def GetFirstHexAddress(self):
-        """Return the address string from the first row, or None if empty."""
-        return self.data[0][0] if self.data else None
-
-    def OnContextMenu(self, event):
-        pos = event.GetPosition()
-        pos = self.ScreenToClient(pos)
-        index, flags = self.HitTest(pos)
-        if index == wx.NOT_FOUND:
-            return
-
-        menu = wx.Menu()
-        miCopy = menu.Append(wx.ID_ANY, "Copy")
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnCopy(index), miCopy)
-        self.PopupMenu(menu, pos)
-        menu.Destroy()
-
-    def OnCopy(self, idx):
-        row_text = f"{self.GetItemText(idx, 0)}\t{self.GetItemText(idx, 1)}\t{self.GetItemText(idx, 2)}"
-        clipboard = wx.Clipboard()
-        if clipboard.Open():
-            try:
-                clipboard.SetData(wx.TextDataObject(row_text))
-            except Exception as e:
-                log.error("[DEBUG CONSOLE] Failed to copy to clipboard: %s", e)
-            finally:
-                clipboard.Close()
-
-
-class ThreadListCtrl(wx.ListCtrl):
-    """List control to display threads with columns: TID, Start Address."""
-
-    def __init__(self, parent):
-        super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.data: List[Tuple[str, str]] = []
-        self.InsertColumn(0, "TID", width=60)
-        self.InsertColumn(1, "Start Address", width=160)
-
-    def UpdateData(self, threadEntries: List[Tuple[str, str]]):
-        """Populate the list with thread info: (tid, start address)."""
-        self.DeleteAllItems()
-        self.data = threadEntries
-        for i, (tid, addr) in enumerate(threadEntries):
-            index = self.InsertItem(i, tid)
-            self.SetItem(index, 1, addr)
-            if i == 0:
-                font = self.GetFont()
-                boldFont = wx.Font(font.GetPointSize(), font.GetFamily(), font.GetStyle(), wx.FONTWEIGHT_BOLD)
-                self.SetItemFont(index, boldFont)
-
-
-class BreakpointsListCtrl(wx.ListCtrl):
-    """List control to display breakpoints with columns: dr, Address."""
-
-    def __init__(self, parent):
-        super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.parent = parent
-        self.data: List[Tuple[str, str]] = []
-        self.InsertColumn(0, "DR", width=40)
-        self.InsertColumn(1, "Address", width=160)
-        self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
-
-    def UpdateData(self, bps: List[Tuple[str, str]]):
-        """Populate the list with thread info: (dr, address)."""
-        self.DeleteAllItems()
-        self.data = bps
-        for i, (dr, addr) in enumerate(bps):
-            index = self.InsertItem(i, dr)
-            self.SetItem(index, 1, addr)
-
-    def OnContextMenu(self, event):
-        pos = event.GetPosition()
-        pos = self.ScreenToClient(pos)
-        index, flags = self.HitTest(pos)
-        if index == wx.NOT_FOUND:
-            return
-
-        menu = wx.Menu()
-        miDeleteBreakpoint = menu.Append(wx.ID_ANY, "Delete Breakpoint")
-        menu.AppendSeparator()
-        miFollowBreakpoint = menu.Append(wx.ID_ANY, "Follow Address")
-
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(index), miDeleteBreakpoint)
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnFollowBreakpoint(index), miFollowBreakpoint)
-        self.PopupMenu(menu, pos)
-        menu.Destroy()
-
-    def OnDeleteBreakpoint(self, index):
-        addrStr = self.GetItemText(index, 1).strip()
-        try:
-            addr = int(addrStr, 16)
-            payload = f"{addr:#X}"
-            self.parent.SendCommand("D", payload)
-        except ValueError as e:
-            log.error("[DEBUG CONSOLE] Invalid address for Delete Breakpoint: %s (%s)", addrStr, e)
-            wx.MessageBox(f"Invalid address forDelete Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
-
-    def OnFollowBreakpoint(self, index):
-        addrStr = self.GetItemText(index, 1).strip()
-        self.parent.disassemblyConsole.GoToInstruction(addrStr)
-
-
-class ModulesListCtrl(wx.ListCtrl):
-    """List control to display modules with columns: Address, Name."""
-
-    def __init__(self, parent):
-        super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.parent = parent
-        self.data: List[Tuple[str, str]] = []
-        self.InsertColumn(0, "Address", width=160)
-        self.InsertColumn(1, "Size", width=80)
-        self.InsertColumn(2, "Name", width=160)
-        self.InsertColumn(3, "Path", width=160)
-        self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
-
-    def UpdateData(self, modules: List[Tuple[str, str]]):
-        """Populate the list"""
-        self.DeleteAllItems()
-        self.data = modules
-        for i, (addr, size, name, path) in enumerate(modules):
-            index = self.InsertItem(i, addr)
-            self.SetItem(index, 1, size)
-            self.SetItem(index, 2, name)
-            self.SetItem(index, 3, path)
-
-    def OnContextMenu(self, event):
-        pos = event.GetPosition()
-        pos = self.ScreenToClient(pos)
-        idx, flags = self.HitTest(pos)
-        if idx == wx.NOT_FOUND:
-            return
-
-        menu = wx.Menu()
-
-        self.PopupMenu(menu, pos)
-        menu.Destroy()
-
-
-class CommandPipeHandler:
-    """Handles messages received on the command pipe from the debug server."""
-
-    def __init__(self, console):
-        self.console = console
-        self.connected = False
-
-    def _handle_break(self, data):
-        with self.console.breakCondition:
-            if data:
-                self.console.debuggerResponse = data
-                self.console.breakCondition.notify_all()
-            if not self.console.pendingCommand:
-                notified = self.console.breakCondition.wait_for(lambda: self.console.pendingCommand is not None, timeout=TIMEOUT)
-                if not notified:
-                    self.console.pendingCommand = None
-                    return b":TIMEOUT"
-                command = self.console.pendingCommand
-                self.console.pendingCommand = None
-                return command
-            return None
-
-    def _handle_dbgcmd(self, data):
-        cmd, _ = data.split(b":", 1)
-        with self.console.breakCondition:
-            if cmd == b"INIT" and not self.connected:
-                notified = self.console.breakCondition.wait_for(lambda: self.console.debuggerResponse, timeout=TIMEOUT)
-                if notified:
-                    response = b"INIT:" + self.console.debuggerResponse
-                    self.console.debuggerResponse = None
-                    self.connected = True
-                    return response
-                else:
-                    self.console.debuggerResponse = None
-                    return b":TIMEOUT"
-
-            self.console.pendingCommand = data
-            self.console.breakCondition.notify_all()
-            notified = self.console.breakCondition.wait_for(lambda: self.console.debuggerResponse is not None, timeout=TIMEOUT)
-            if not notified:
-                self.console.pendingCommand = None
-                return b":TIMEOUT"
-
-            response = b":" + self.console.debuggerResponse
-            if cmd:
-                response = cmd + response
-
-            self.console.debuggerResponse = None
-            return response
-
-    def dispatch(self, data):
-        response = b":NOPE"
-        if not data or b":" not in data:
-            log.critical("[DEBUG CONSOLE] Unknown command received from the debug server: %s", data.strip())
-        else:
-            command, arguments = data.strip().split(b":", 1)
-            # log.info((command, data, "console dispatch"))
-            fn = getattr(self, f"_handle_{command.lower().decode()}", None)
-            if not fn:
-                log.critical("[DEBUG CONSOLE] Unknown command received from the debug server: %s", data.strip())
-            else:
-                try:
-                    response = fn(arguments)
-                    # if response.decode("ascii")[0] not in ("M", "R", "K", "I"):
-                    # log.info(response)
-                except Exception as e:
-                    log.error(e, exc_info=True)
-                    log.exception(
-                        "[DEBUG CONSOLE] Pipe command handler exception (command %s args %s)",
-                        command,
-                        arguments,
-                    )
-        return response
+DEBUG_PIPE = r"\\.\pipe\debugger_pipe"
 
 
 class DebugConsole:
@@ -784,7 +42,7 @@ class DebugConsole:
         self.title = title
         self.windowPosition = windowPosition
         self.windowSize = windowSize
-        self.pipe = r"\\.\pipe\debugger_pipe"
+        self.pipe = DEBUG_PIPE
         self.frame = None
 
         # These shared condition variables and buffers are used by the pipe handler.
@@ -801,6 +59,7 @@ class DebugConsole:
 
     def launch(self):
         """Starts the pipe server and waits for a connection from the debug server."""
+        # noinspection PyTypeChecker
         self.commandPipe = PipeServer(
             PipeDispatcher,
             self.pipe,
@@ -1234,6 +493,9 @@ class ConsolePanel(wx.Panel):
         else:
             log.warning("[DEBUG CONSOLE] Unknown command '%s' received", command)
 
+    def RequestPage(self, pageBase: int):
+        self.SendCommand(self.CMD_PAGE_LOAD, hex(pageBase))
+
     def JumpTo(self, address: int):
         """Use pageMap to find page."""
         self.cip = address
@@ -1268,7 +530,7 @@ class ConsolePanel(wx.Panel):
             self.requestedPages.clear()
             for page in sorted(pages):
                 self.requestedPages.add(page)
-                self.disassemblyConsole.RequestPage(page)
+                self.RequestPage(page)
 
         self.RefreshViewState()
 
@@ -1376,6 +638,19 @@ class ConsolePanel(wx.Panel):
 
         self.DispatchCommand(command, payload)
 
+    def ShowFlowGraph(self):
+        insts = self.disassemblyConsole.decodeCache
+        if not insts:
+            wx.MessageBox("Nothing to graph!", "Info", wx.OK | wx.ICON_INFORMATION)
+            return
+
+        busy = wx.BusyInfo("Generating graph, please wait...", self)
+        wx.YieldIfNeeded()
+        dlg = FlowGraphDialog(self, insts)
+        del busy
+        dlg.ShowModal()
+        dlg.Destroy()
+
     def HandleConnection(self, payload):
         """Handle initial connection logic."""
         self.connected = True
@@ -1392,7 +667,6 @@ class ConsolePanel(wx.Panel):
         m = re.search(r"0x[0-9a-fA-F]+", payload)
         if m:
             addr = int(m.group(0), 16)
-            self.disassemblyConsole.SetBpBackground(addr)
             self.SendCommand(self.CMD_BREAKPOINT_LIST)
 
     def HandleDeleteBreakpoint(self, payload):
@@ -1400,7 +674,6 @@ class ConsolePanel(wx.Panel):
         m = re.search(r"0x[0-9a-fA-F]+", payload)
         if m:
             addr = int(m.group(0), 16)
-            self.disassemblyConsole.ClearBpBackground(addr)
             self.SendCommand(self.CMD_BREAKPOINT_LIST)
 
     def HandleContinue(self, payload):
