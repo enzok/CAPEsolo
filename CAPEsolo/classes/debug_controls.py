@@ -198,7 +198,10 @@ class DisassemblyListCtrl(wx.ListCtrl):
         menu.AppendSubMenu(bpMenu, "Set Breakpoint")
         miDeleteBreakpoint = menu.Append(wx.ID_ANY, "Delete Breakpoint")
         menu.AppendSeparator()
-        miGraph = menu.Append(wx.ID_ANY, "Generate Flow Graph")
+        miGraphText = "Flow Graph"
+        if not HAS_GRAPHVIZ:
+            miGraphText += ": Install Graphviz"
+        miGraph = menu.Append(wx.ID_ANY, miGraphText)
         miGraph.Enable(HAS_GRAPHVIZ)
 
         menu.Bind(wx.EVT_MENU, lambda e: self.OnCopy(idx), miCopy)

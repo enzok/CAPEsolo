@@ -22,7 +22,7 @@ from .debug_controls import (
     StackListCtrl,
     ThreadListCtrl,
 )
-from .debug_graph import FlowGraphDialog
+from .debug_graph import CfgBuilder
 from .debug_pipe import CommandPipeHandler
 
 log = logging.getLogger(__name__)
@@ -147,6 +147,7 @@ class ConsolePanel(wx.Panel):
         self.pageLock = threading.Lock()
         self.pageHashes = {}
         self.idleDecodeQueue = []
+        self.symbols = []
         self.InitGUI()
         wx.CallLater(100, self.InitPipe)
 
@@ -601,7 +602,8 @@ class ConsolePanel(wx.Panel):
         decodeMode = Decode64Bits if self.bits == 64 else Decode32Bits
         insts: List[DecodedInstruction] = []
         for address, size, text, hexBytes in Decode(baseAddress, bytes(fullData), decodeMode):
-            insts.append(DecodedInstruction(address, hexBytes, text))
+            patchText = self.PatchDisasmText(text)
+            insts.append(DecodedInstruction(address, hexBytes, patchText))
 
         insts = prefix + insts
         insts.sort(key=lambda i: i.address)
@@ -614,6 +616,30 @@ class ConsolePanel(wx.Panel):
             cip = int(m.group(0), 16)
             self.bits = 64 if cip > 0xFFFFFFFF else 32
             self.cip = cip
+
+    def PatchDisasmText(self, disasmText: str) -> str:
+        matches = list(re.finditer(r'\[?0x[0-9a-fA-F]+\]?', disasmText))
+        patched = disasmText
+        offset = 0
+
+        for match in matches:
+            raw = match.group()
+            stripped = raw.strip('[]')
+            try:
+                addrInt = int(stripped, 16)
+            except ValueError:
+                continue
+
+            if addrInt in self.symbols:
+                replacement = self.symbols[addrInt]
+                if raw.startswith('[') and raw.endswith(']'):
+                    replacement = f"[{replacement}]"
+
+                start, end = match.start() + offset, match.end() + offset
+                patched = patched[:start] + replacement + patched[end:]
+                offset += len(replacement) - (end - start)
+
+        return patched
 
     def ProcessServerOutput(self, data):
         """Process server output by parsing command and payload, then dispatching."""
@@ -644,12 +670,9 @@ class ConsolePanel(wx.Panel):
             wx.MessageBox("Nothing to graph!", "Info", wx.OK | wx.ICON_INFORMATION)
             return
 
-        busy = wx.BusyInfo("Generating graph, please wait...", self)
-        wx.YieldIfNeeded()
-        dlg = FlowGraphDialog(self, insts)
-        del busy
-        dlg.ShowModal()
-        dlg.Destroy()
+        cfg = CfgBuilder(insts)
+        cfg.BuildBlocks()
+        wx.CallLater(1, cfg.ShowFlowGraph)
 
     def HandleConnection(self, payload):
         """Handle initial connection logic."""
@@ -722,15 +745,41 @@ class ConsolePanel(wx.Panel):
             log.warning("[DEBUG CONSOLE] %s", payload)
             return
 
+        modInfo = []
         modules: List[Tuple[str, str]] = []
-        if "|" not in payload:
-            return
+        symbols: Dict[int, str] = {}
+        moduleBlocks = payload.strip().split("\n")
 
-        for mod in payload.split("|"):
+        for block in moduleBlocks:
+            if not block.strip():
+                continue
+
             try:
-                modules.append(mod.split(","))
+                modInfo, *exportData = block.split("||")
             except ValueError:
                 continue
+
+            modParts = modInfo.split(",")
+            if len(modParts) != 4:
+                continue
+
+            modBase, modSize, modName, modPath = modParts
+            modules.append(modParts)
+
+            if exportData:
+                exports = exportData[0].split("|")
+                for entry in exports:
+                    if not entry.strip():
+                        continue
+
+                    try:
+                        rva, absAddr, symName = entry.split(",", 2)
+                        absInt = int(absAddr.strip(), 16)
+                        symbols[absInt] = f"{modName.strip()}!{symName.strip()}"
+                    except ValueError:
+                        continue
+
+        self.symbols = symbols
         if modules:
             self.UpdateModules(modules)
 
