@@ -114,6 +114,7 @@ class StartPanel(wx.Panel):
         self.parent.targetFile = self.targetFile
         self.timer = None
         self.idbg = False
+        self.dbgConsole = None
         self.InitUi()
         self.LoadAnalysisConfFile()
         self.Bind(EVT_ANALYZER_COMPLETE, self.OnAnalyzerComplete)
@@ -546,6 +547,10 @@ class StartPanel(wx.Panel):
             upload_files,
         )
 
+        if self.dbgConsole:
+            self.log("Shutting down debug console.")
+            self.dbgConsole.shutdown()
+
         files = Files()
         files.dump_files()
         upload_files("debugger")
@@ -557,11 +562,13 @@ class StartPanel(wx.Panel):
                 self.analyzer.command_pipe.stop()
             else:
                 self.log("Analyzer object has no attribute 'command_pipe'")
+
             self.analyzer.log_pipe_server.stop()
             disconnect_pipes()
             disconnect_logger()
             for pid in INJECT_LIST:
                 self.log(f"Monitor injection attempted but failed for process {pid}")
+
             self.log("Run completed")
             self.resultserver.shutdown_server()
         except Exception:
@@ -691,6 +698,7 @@ class StartPanel(wx.Panel):
         )
 
         self.analyzer = None
+
         try:
             self.resultserver = ResultServer("localhost", 9999, self.analysisDir)
             self.analyzer = Analyzer()
@@ -700,8 +708,8 @@ class StartPanel(wx.Panel):
             size = wx.Size(int(width * 2), height)
             position = mainFrame.GetPosition()
             if self.idbg:
-                dbgConsole = DebugConsole(self, "Debug Console", position, size)
-                dbgConsole.launch()
+                self.dbgConsole = DebugConsole(self, "Debug Console", position, size)
+                self.dbgConsole.launch()
             timerWindow = CountdownTimer(self, self.countdown, position, size)
             timerWindow.Show()
             self.StartAnalyzerThread(self.analyzer)

@@ -850,8 +850,8 @@ class SymbolsDialog(wx.Dialog):
         sizer = wx.BoxSizer(wx.VERTICAL)
 
         listCtrl = wx.ListCtrl(self, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
-        listCtrl.InsertColumn(0, "Address", width=200)
-        listCtrl.InsertColumn(1, "Name", width=300)
+        listCtrl.InsertColumn(0, "Address", width=120)
+        listCtrl.InsertColumn(1, "Name", width=350)
         for i, (symName, addr) in enumerate(symbols):
             row = listCtrl.InsertItem(i, f"{int(addr):#x}")
             listCtrl.SetItem(row, 1, symName)

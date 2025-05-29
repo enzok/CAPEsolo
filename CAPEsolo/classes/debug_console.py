@@ -3,11 +3,13 @@ import logging
 import re
 import threading
 import zlib
+from contextlib import suppress
 from typing import Dict, List, Tuple
 
 import pywintypes
 import win32event
 import win32file
+import winerror
 import wx
 from distorm3 import Decode, Decode32Bits, Decode64Bits
 
@@ -67,7 +69,7 @@ class DebugConsole:
     def shutdown(self):
         """Gracefully shuts down the debug console and disconnects any open pipes."""
         if self.frame:
-            self.frame.Close()
+            wx.CallAfter(self.frame.Close)
         disconnect_pipes()
 
 
@@ -79,6 +81,7 @@ class ConsoleFrame(wx.Frame):
         self.panel = ConsolePanel(self)
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
+        self.ID_STOP = wx.NewIdRef()
         self.ID_STEP_INTO = wx.NewIdRef()
         self.ID_STEP_OVER = wx.NewIdRef()
         self.ID_STEP_OUT = wx.NewIdRef()
@@ -90,13 +93,14 @@ class ConsoleFrame(wx.Frame):
                 (wx.ACCEL_NORMAL, wx.WXK_F8, self.ID_STEP_OVER),
                 (wx.ACCEL_NORMAL, wx.WXK_F9, self.ID_STEP_OUT),
                 (wx.ACCEL_NORMAL, wx.WXK_F10, self.ID_CONTINUE),
-            ]
+                (wx.ACCEL_CTRL, ord('Q'), self.ID_STOP), ]
         )
         self.SetAcceleratorTable(accels)
         self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("S"), id=self.ID_STEP_INTO)
         self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("O"), id=self.ID_STEP_OVER)
         self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("U"), id=self.ID_STEP_OUT)
         self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("C"), id=self.ID_CONTINUE)
+        self.Bind(wx.EVT_MENU, lambda evt: self.panel.ShutdownConsole(), id=self.ID_STOP)
 
     def OnClose(self, event):
         """Handles window close event gracefully."""
@@ -362,6 +366,9 @@ class ConsolePanel(wx.Panel):
     def ReadResponse(self):
         """Reads a full response from the pipe in a thread-safe manner."""
         with self.readLock:
+            if not self.pipeHandle:
+                return ""
+
             try:
                 # Read up to BUFFER_SIZE bytes; adjust if needed.
                 result, data = win32file.ReadFile(self.pipeHandle, BUFFER_SIZE)
@@ -373,6 +380,9 @@ class ConsolePanel(wx.Panel):
 
     def WaitForResponse(self):
         """Waits for a response and then updates the GUI (called in a background thread)."""
+        if not self.pipeHandle:
+            return
+
         response = self.ReadResponse()
         if response:
             wx.CallAfter(self.ProcessServerOutput, response)
@@ -441,9 +451,13 @@ class ConsolePanel(wx.Panel):
         """Stops the reading thread."""
         self.connected = False
         if self.pipeHandle:
-            win32file.CloseHandle(self.pipeHandle)
-            self.pipeHandle = None
-            log.info("[DEBUG CONSOLE] Pipe handle closed")
+            try:
+                win32file.CloseHandle(self.pipeHandle)
+            except Exception as e:
+                log.error("[DEBUG CONSOLE] Error closing pipe handle: %s", e)
+            finally:
+                self.pipeHandle = None
+                log.info("[DEBUG CONSOLE] Pipe handle closed")
 
     def RefreshViewState(self):
         self.SendCommand(self.CMD_REG_UPDATE)
@@ -638,6 +652,7 @@ class ConsolePanel(wx.Panel):
                 if raw.startswith("[") and raw.endswith("]"):
                     replacement = f"[{replacement}]"
 
+                log.debug("[DEBUG CONSOLE] Replaced %s with %s", raw, replacement)
                 start, end = match.start() + offset, match.end() + offset
                 patched = patched[:start] + replacement + patched[end:]
                 offset += len(replacement) - (end - start)
