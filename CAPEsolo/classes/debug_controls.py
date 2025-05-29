@@ -75,30 +75,30 @@ class DisassemblyListCtrl(wx.ListCtrl):
                     self.decodeCache = []
                     self.DeleteAllItems()
 
-                startIndex = len(self.decodeCache)
+                startRow = len(self.decodeCache)
                 self.decodeCache.extend(insts)
                 for offset, inst in enumerate(insts):
-                    row = startIndex + offset
-                    idx = self.InsertItem(row, f"{inst.address:016X}")
-                    self.SetItem(idx, 1, inst.bytes.upper())
-                    self.SetItem(idx, 2, inst.text)
+                    row = startRow + offset
+                    row = self.InsertItem(row, f"{inst.address:016X}")
+                    self.SetItem(row, 1, inst.bytes.upper())
+                    self.SetItem(row, 2, inst.text)
                     mnemonic = inst.text.split()[0].lower()
                     if mnemonic == "call":
-                        self.SetItemTextColour(idx, wx.BLUE)
+                        self.SetItemTextColour(row, wx.BLUE)
                     elif mnemonic in ("jmp", "je", "jne", "jg", "jl"):
-                        self.SetItemTextColour(idx, wx.GREEN)
+                        self.SetItemTextColour(row, wx.GREEN)
         finally:
             self.Thaw()
 
         if append:
             self.Refresh()
         else:
-            cipIndex = self.GetCipIndex()
-            if cipIndex != -1:
-                self.HighlightIp(cipIndex)
+            row = self.GetCipRow()
+            if row != -1:
+                self.HighlightIp(row)
 
-    def GetCipIndex(self, cip=None):
-        cipIndex = -1
+    def GetCipRow(self, cip=None):
+        row = -1
         if not cip:
             cip = self.parent.cip
         if cip is None:
@@ -107,34 +107,34 @@ class DisassemblyListCtrl(wx.ListCtrl):
         with self.cacheLock:
             for i, inst in enumerate(self.decodeCache):
                 if inst.address == cip:
-                    cipIndex = i
+                    row = i
                     break
 
-        return cipIndex
+        return row
 
-    def GetInstructionIndex(self, addr: int):
-        index = -1
+    def GetInstructionRow(self, addr: int):
+        row = -1
         with self.cacheLock:
             for i, inst in enumerate(self.decodeCache):
                 if inst.address == addr:
-                    index = i
+                    row = i
                     break
-        return index
+        return row
 
-    def HighlightIp(self, index):
-        if index >= 0:
+    def HighlightIp(self, row):
+        if row >= 0:
             for i in range(self.GetItemCount()):
                 if self.GetItemBackgroundColour(i) != COLOR_LIGHT_YELLOW:
                     self.SetItemBackgroundColour(i, wx.Colour(wx.WHITE))
 
-            self.SetItemBackgroundColour(index, wx.Colour(wx.CYAN))
-            self.CenterRow(index)
+            self.SetItemBackgroundColour(row, wx.Colour(wx.CYAN))
+            self.CenterRow(row)
         else:
             log.warning("[DEBUG CONSOLE] Instruction %#x not found in disassembly", self.parent.cip)
 
         self.Refresh()
 
-    def CenterRow(self, rowIdx):
+    def CenterRow(self, row):
         """Center the specified row in the view."""
         visRows = self.GetCountPerPage()
         if visRows <= 0:
@@ -148,14 +148,14 @@ class DisassemblyListCtrl(wx.ListCtrl):
         if visRows <= 0:
             visRows = 15
 
-        anchor = max(0, rowIdx + (visRows // 2))
+        anchor = max(0, row + (visRows // 2))
         maxTop = max(0, len(self.decodeCache) - visRows)
         anchor = min(anchor, maxTop)
 
-        self.EnsureVisible(rowIdx)
+        self.EnsureVisible(row)
         self.EnsureVisible(anchor)
 
-    def TopRow(self, rowIdx):
+    def TopRow(self, row):
         """Scroll the specified row so it becomes the topmost visible row."""
         visRows = self.GetCountPerPage()
         if visRows <= 0:
@@ -166,18 +166,18 @@ class DisassemblyListCtrl(wx.ListCtrl):
             visRows = self.GetClientSize().height // rowH
 
         maxTop = max(0, len(self.decodeCache) - visRows)
-        topIdx = max(0, min(rowIdx, maxTop))
+        row = max(0, min(row, maxTop))
 
-        self.EnsureVisible(topIdx)
-        bottomIdx = topIdx + visRows - 1
-        if bottomIdx < self.GetItemCount():
-            self.EnsureVisible(bottomIdx)
+        self.EnsureVisible(row)
+        row = row + visRows - 1
+        if row < self.GetItemCount():
+            self.EnsureVisible(row)
 
     def OnContextMenu(self, event):
         pos = event.GetPosition()
         pos = self.ScreenToClient(pos)
-        idx, flags = self.HitTest(pos)
-        if idx == wx.NOT_FOUND:
+        row, flags = self.HitTest(pos)
+        if row == wx.NOT_FOUND:
             return
 
         menu = wx.Menu()
@@ -195,7 +195,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         for slot in ("Next", "0", "1", "2", "3"):
             bpId = wx.NewIdRef()
             bpMenu.Append(bpId, slot)
-            self.Bind(wx.EVT_MENU, lambda evt, s=slot: self.OnSetBreakpoint(evt, idx, s), id=bpId)
+            self.Bind(wx.EVT_MENU, lambda evt, s=slot: self.OnSetBreakpoint(evt, row, s), id=bpId)
 
         menu.AppendSubMenu(bpMenu, "Set Breakpoint")
         miDeleteBreakpoint = menu.Append(wx.ID_ANY, "Delete Breakpoint")
@@ -206,25 +206,45 @@ class DisassemblyListCtrl(wx.ListCtrl):
         miGraph = menu.Append(wx.ID_ANY, miGraphText)
         miGraph.Enable(HAS_GRAPHVIZ)
 
+        self.Bind(wx.EVT_MENU, self.OnCopy, miCopy)
         self.Bind(wx.EVT_MENU, self.OnGoTo, miGoTo)
-        self.Bind(wx.EVT_MENU, lambda e: self.OnGoToSelected(idx), miGoToSelected)
         self.Bind(wx.EVT_MENU, self.OnGoToCIP, miGoToCIP)
         self.Bind(wx.EVT_MENU, self.OnStepInto, miStepInto)
         self.Bind(wx.EVT_MENU, self.OnStepOver, miStepOver)
         self.Bind(wx.EVT_MENU, self.OnStepOut, miStepOut)
-        self.Bind(wx.EVT_MENU, lambda e: self.OnRunUntil(idx), miRunUntil)
-        self.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(idx), miDeleteBreakpoint)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnGoToSelected(row), miGoToSelected)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnRunUntil(row), miRunUntil)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(row), miDeleteBreakpoint)
         self.Bind(wx.EVT_MENU, lambda e: self.parent.ShowFlowGraph(), miGraph)
-        self.Bind(wx.EVT_MENU, lambda e: self.OnCopy(idx), miCopy)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
-    def OnCopy(self, idx):
-        rowText = f"{self.GetItemText(idx, 0)}\t{self.GetItemText(idx, 1)}\t{self.GetItemText(idx, 2)}"
+    def OnCopy(self, event):
+        rows = []
+        row = -1
+        while True:
+            row = self.GetNextItem(row, wx.LIST_NEXT_ALL, wx.LIST_STATE_SELECTED)
+            if row == -1:
+                break
+
+            rows.append(row)
+
+        if not rows:
+            return
+
+        lines = []
+        for row in rows:
+            cols = []
+            for col in range(self.GetColumnCount()):
+                cols.append(self.GetItemText(row, col))
+
+            lines.append("\t".join(cols))
+
+        text = "\n".join(lines)
         clipboard = wx.TheClipboard
         if clipboard.Open():
             try:
-                clipboard.SetData(wx.TextDataObject(rowText))
+                clipboard.SetData(wx.TextDataObject(text))
                 clipboard.Flush()
             except Exception as e:
                 wx.MessageBox(f"Failed to copy to clipboard: {e}", "Error", wx.OK | wx.ICON_ERROR)
@@ -243,8 +263,9 @@ class DisassemblyListCtrl(wx.ListCtrl):
                 target = m.group(1)
 
             if target is None:
-                if not entry.lower().startswith("0x"):
-                    target = "0x" + entry
+                target = entry.lower()
+                if not target.startswith("0x"):
+                    target = "0x" + target
 
                 try:
                     int(target, 16)
@@ -254,24 +275,24 @@ class DisassemblyListCtrl(wx.ListCtrl):
                     return
 
             try:
-                index = self.GoToInstruction(target)
-                if index == wx.NOT_FOUND:
+                row = self.GoToInstruction(target)
+                if row == wx.NOT_FOUND:
                     wx.MessageBox(f"Instruction address not found: {entry}", "Warning", wx.OK | wx.ICON_WARNING)
             except Exception as e:
                 wx.MessageBox(f"Invalid register or hex address: {entry}", "Error", wx.OK | wx.ICON_ERROR)
 
         dialog.Destroy()
 
-    def OnGoToSelected(self, index):
-        addrStr = self.GetItemText(index, 0).strip()
+    def OnGoToSelected(self, row):
+        addrStr = self.GetItemText(row, 0).strip()
         try:
             self.GoToInstruction(addrStr)
         except ValueError as e:
             wx.MessageBox(f"Invalid selected address: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnGoToCIP(self, event):
-        cipIndex = self.GetCipIndex(self.parent.cip)
-        self.HighlightIp(cipIndex)
+        row = self.GetCipRow(self.parent.cip)
+        self.HighlightIp(row)
 
     def OnStepInto(self, event):
         self.parent.SendCommand("S")
@@ -282,8 +303,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
     def OnStepOut(self, event):
         self.parent.SendCommand("U")
 
-    def OnRunUntil(self, index):
-        addrStr = self.GetItemText(index, 0).strip()
+    def OnRunUntil(self, row):
+        addrStr = self.GetItemText(row, 0).strip()
         try:
             addr = int(addrStr, 16)
             payload = f"{addr:#X}"
@@ -291,8 +312,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
         except ValueError as e:
             wx.MessageBox(f"Invalid address for Run Until: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
-    def OnSetBreakpoint(self, event, index, slot):
-        addrStr = self.GetItemText(index, 0).strip()
+    def OnSetBreakpoint(self, event, row, slot):
+        addrStr = self.GetItemText(row, 0).strip()
         try:
             addr = int(addrStr, 16)
             payload = f"{slot.lower()}|{addr:#X}"
@@ -300,8 +321,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
         except ValueError as e:
             wx.MessageBox(f"Invalid address for Set Breakpoint Until: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
-    def OnDeleteBreakpoint(self, index):
-        addrStr = self.GetItemText(index, 0).strip()
+    def OnDeleteBreakpoint(self, row):
+        addrStr = self.GetItemText(row, 0).strip()
         try:
             addr = int(addrStr, 16)
             payload = f"{addr:#X}"
@@ -310,23 +331,23 @@ class DisassemblyListCtrl(wx.ListCtrl):
             wx.MessageBox(f"Invalid address forDelete Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def ClearBpBackground(self, addr):
-        index = self.GetInstructionIndex(addr)
-        self.SetItemBackgroundColour(index, wx.Colour(wx.WHITE))
+        row = self.GetInstructionRow(addr)
+        self.SetItemBackgroundColour(row, wx.Colour(wx.WHITE))
         self.Refresh()
 
     def SetBpBackground(self, addr):
-        index = self.GetInstructionIndex(addr)
-        self.SetItemBackgroundColour(index, wx.Colour(COLOR_LIGHT_RED))
+        row = self.GetInstructionRow(addr)
+        self.SetItemBackgroundColour(row, wx.Colour(COLOR_LIGHT_RED))
         self.Refresh()
 
     def GoToInstruction(self, addr):
         addr = int(addr, 16)
-        index = self.GetInstructionIndex(addr)
-        self.CenterRow(index)
-        self.Select(index)
-        self.Focus(index)
+        row = self.GetInstructionRow(addr)
+        self.CenterRow(row)
+        self.Select(row)
+        self.Focus(row)
         self.Refresh()
-        return index
+        return row
 
     def OnMouseOver(self, event):
         x, y = event.GetPosition()
@@ -468,7 +489,7 @@ class RegsTextCtrl(wx.TextCtrl):
 
 class StackListCtrl(wx.ListCtrl):
     def __init__(self, parent):
-        super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        super().__init__(parent, style=wx.LC_REPORT)
         self.parent = parent
         self.spVal = None
         self.InsertColumn(0, "Address", width=170)
@@ -478,7 +499,7 @@ class StackListCtrl(wx.ListCtrl):
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
 
     def UpdateData(self, data):
-        """Populate the list with rows and highlight the specified index."""
+        """Populate the list with rows and highlight."""
         rows = []
         for line in data.splitlines():
             parts = [p.strip() for p in line.split(",", 1)]
@@ -492,11 +513,11 @@ class StackListCtrl(wx.ListCtrl):
         regsText = self.parent.regsDisplay.GetValue()
         m = re.search(r"\b([ER]SP):\s*([0-9A-Fa-f]+)", regsText)
         self.spVal = m.group(2) if m else None
-        spIdx = len(rows) // 2
+        row = len(rows) // 2
         if self.spVal:
             for i, (addr, _) in enumerate(rows):
                 if addr.lower() == self.spVal.lower():
-                    spIdx = i
+                    row = i
                     break
 
         self.DeleteAllItems()
@@ -507,11 +528,11 @@ class StackListCtrl(wx.ListCtrl):
             self.SetItem(i, 1, str(val))
             self.SetItem(i, 2, "")
 
-            if i == spIdx:
+            if i == row:
                 self.SetItemBackgroundColour(i, COLOR_LIGHT_YELLOW)
 
         self.Refresh()
-        self.CenterRow(spIdx)
+        self.CenterRow(row)
 
     @staticmethod
     def GetAscii(dataBytes) -> str:
@@ -523,8 +544,8 @@ class StackListCtrl(wx.ListCtrl):
     def OnContextMenu(self, event):
         pos = event.GetPosition()
         pos = self.ScreenToClient(pos)
-        index, flags = self.HitTest(pos)
-        if index == wx.NOT_FOUND:
+        row, flags = self.HitTest(pos)
+        if row == wx.NOT_FOUND:
             return
 
         menu = wx.Menu()
@@ -532,10 +553,10 @@ class StackListCtrl(wx.ListCtrl):
         miFollowAddr = menu.Append(wx.ID_ANY, "Dump Address")
         miFollowVal = menu.Append(wx.ID_ANY, "Dump Value")
 
-        self.Bind(wx.EVT_MENU, lambda e: self.OnCopy(index), miCopy)
+        self.Bind(wx.EVT_MENU, self.OnCopy, miCopy)
         self.Bind(
             wx.EVT_MENU,
-            lambda e, r=index: (
+            lambda e, r=row: (
                 self.parent.memAddressInput.SetValue(self.data[r][0]),
                 self.parent.OnAddressEnter(wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.parent.memAddressInput.GetId())),
             ),
@@ -543,7 +564,7 @@ class StackListCtrl(wx.ListCtrl):
         )
         self.Bind(
             wx.EVT_MENU,
-            lambda e, r=index: (
+            lambda e, r=row: (
                 self.parent.memAddressInput.SetValue(self.data[r][1]),
                 self.parent.OnAddressEnter(wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.parent.memAddressInput.GetId())),
             ),
@@ -553,21 +574,41 @@ class StackListCtrl(wx.ListCtrl):
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
-    def OnCopy(self, idx):
-        rowText = f"{self.GetItemText(idx, 0)}\t{self.GetItemText(idx, 1)}\t{self.GetItemText(idx, 2)}"
+    def OnCopy(self, event):
+        rows = []
+        row = -1
+        while True:
+            row = self.GetNextItem(row, wx.LIST_NEXT_ALL, wx.LIST_STATE_SELECTED)
+            if row == -1:
+                break
+
+            rows.append(row)
+
+        if not rows:
+            return
+
+        lines = []
+        for row in rows:
+            cols = []
+            for col in range(self.GetColumnCount()):
+                cols.append(self.GetItemText(row, col))
+
+            lines.append("\t".join(cols))
+
+        text = "\n".join(lines)
         clipboard = wx.TheClipboard
         if clipboard.Open():
             try:
-                clipboard.SetData(wx.TextDataObject(rowText))
+                clipboard.SetData(wx.TextDataObject(text))
                 clipboard.Flush()
             except Exception as e:
-                log.error("[DEBUG CONSOLE] Failed to copy to clipboard: %s", e)
+                wx.MessageBox(f"Failed to copy to clipboard: {e}", "Error", wx.OK | wx.ICON_ERROR)
             finally:
                 clipboard.Close()
 
-    def CenterRow(self, rowIdx):
+    def CenterRow(self, row):
         """Center the specified row in the view."""
-        if not self.data or rowIdx < 0 or rowIdx >= len(self.data):
+        if not self.data or row < 0 or row >= len(self.data):
             return
 
         visRows = self.GetCountPerPage()
@@ -582,11 +623,11 @@ class StackListCtrl(wx.ListCtrl):
         if visRows <= 0:
             visRows = 15
 
-        anchor = max(0, rowIdx + (visRows // 2))
+        anchor = max(0, row + (visRows // 2))
         maxTop = max(0, len(self.data) - visRows)
         anchor = min(anchor, maxTop)
 
-        self.EnsureVisible(rowIdx)
+        self.EnsureVisible(row)
         self.EnsureVisible(anchor)
 
 
@@ -621,9 +662,9 @@ class MemDumpListCtrl(wx.ListCtrl):
 
             asciiStr = "".join(asciiChars)
             self.data.append((addr, hexStr, asciiStr))
-            index = self.InsertItem(i, addr)
-            self.SetItem(index, 1, hexStr)
-            self.SetItem(index, 2, asciiStr)
+            row = self.InsertItem(i, addr)
+            self.SetItem(row, 1, hexStr)
+            self.SetItem(row, 2, asciiStr)
 
     def GetFirstHexAddress(self):
         """Return the address string from the first row, or None if empty."""
@@ -632,25 +673,41 @@ class MemDumpListCtrl(wx.ListCtrl):
     def OnContextMenu(self, event):
         pos = event.GetPosition()
         pos = self.ScreenToClient(pos)
-        index, flags = self.HitTest(pos)
-        if index == wx.NOT_FOUND:
-            return
-
         menu = wx.Menu()
         miCopy = menu.Append(wx.ID_ANY, "Copy")
-        self.Bind(wx.EVT_MENU, lambda e: self.OnCopy(index), miCopy)
+        self.Bind(wx.EVT_MENU, self.OnCopy, miCopy)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
-    def OnCopy(self, idx):
-        rowText = f"{self.GetItemText(idx, 0)}\t{self.GetItemText(idx, 1)}\t{self.GetItemText(idx, 2)}"
+    def OnCopy(self, event):
+        rows = []
+        row = -1
+        while True:
+            row = self.GetNextItem(row, wx.LIST_NEXT_ALL, wx.LIST_STATE_SELECTED)
+            if row == -1:
+                break
+
+            rows.append(row)
+
+        if not rows:
+            return
+
+        lines = []
+        for row in rows:
+            cols = []
+            for col in range(self.GetColumnCount()):
+                cols.append(self.GetItemText(row, col))
+
+            lines.append("\t".join(cols))
+
+        text = "\n".join(lines)
         clipboard = wx.TheClipboard
         if clipboard.Open():
             try:
-                clipboard.SetData(wx.TextDataObject(rowText))
+                clipboard.SetData(wx.TextDataObject(text))
                 clipboard.Flush()
             except Exception as e:
-                log.error("[DEBUG CONSOLE] Failed to copy to clipboard: %s", e)
+                wx.MessageBox(f"Failed to copy to clipboard: {e}", "Error", wx.OK | wx.ICON_ERROR)
             finally:
                 clipboard.Close()
 
@@ -669,12 +726,12 @@ class ThreadListCtrl(wx.ListCtrl):
         self.DeleteAllItems()
         self.data = threadEntries
         for i, (tid, addr) in enumerate(threadEntries):
-            index = self.InsertItem(i, tid)
-            self.SetItem(index, 1, addr)
+            row = self.InsertItem(i, tid)
+            self.SetItem(row, 1, addr)
             if i == 0:
                 font = self.GetFont()
                 boldFont = wx.Font(font.GetPointSize(), font.GetFamily(), font.GetStyle(), wx.FONTWEIGHT_BOLD)
-                self.SetItemFont(index, boldFont)
+                self.SetItemFont(row, boldFont)
 
 
 class BreakpointsListCtrl(wx.ListCtrl):
@@ -697,15 +754,15 @@ class BreakpointsListCtrl(wx.ListCtrl):
         self.DeleteAllItems()
         self.data = bps
         for i, (dr, addr) in enumerate(bps):
-            index = self.InsertItem(i, dr)
-            self.SetItem(index, 1, addr)
+            row = self.InsertItem(i, dr)
+            self.SetItem(row, 1, addr)
             self.parent.disassemblyConsole.SetBpBackground(addr)
 
     def OnContextMenu(self, event):
         pos = event.GetPosition()
         pos = self.ScreenToClient(pos)
-        index, flags = self.HitTest(pos)
-        if index == wx.NOT_FOUND:
+        row, flags = self.HitTest(pos)
+        if row == wx.NOT_FOUND:
             return
 
         menu = wx.Menu()
@@ -713,13 +770,13 @@ class BreakpointsListCtrl(wx.ListCtrl):
         menu.AppendSeparator()
         miFollowBreakpoint = menu.Append(wx.ID_ANY, "Follow Address")
 
-        self.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(index), miDeleteBreakpoint)
-        self.Bind(wx.EVT_MENU, lambda e: self.OnFollowBreakpoint(index), miFollowBreakpoint)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(row), miDeleteBreakpoint)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnFollowBreakpoint(row), miFollowBreakpoint)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
-    def OnDeleteBreakpoint(self, index):
-        addrStr = self.GetItemText(index, 1).strip()
+    def OnDeleteBreakpoint(self, row):
+        addrStr = self.GetItemText(row, 1).strip()
         try:
             addr = int(addrStr, 16)
             payload = f"{addr:#X}"
@@ -728,8 +785,8 @@ class BreakpointsListCtrl(wx.ListCtrl):
             log.error("[DEBUG CONSOLE] Invalid address for Delete Breakpoint: %s (%s)", addrStr, e)
             wx.MessageBox(f"Invalid address forDelete Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
-    def OnFollowBreakpoint(self, index):
-        addrStr = self.GetItemText(index, 1).strip()
+    def OnFollowBreakpoint(self, row):
+        addrStr = self.GetItemText(row, 1).strip()
         self.parent.disassemblyConsole.GoToInstruction(addrStr)
 
 
@@ -744,17 +801,16 @@ class ModulesListCtrl(wx.ListCtrl):
         self.InsertColumn(1, "Size", width=80)
         self.InsertColumn(2, "Name", width=160)
         self.InsertColumn(3, "Path", width=160)
-        self.Bind(wx.EVT_MOTION, self.OnMouseHover)
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
 
     def UpdateData(self, modules: List[Tuple[str, str, str, str]]):
         """Populate the list"""
         self.DeleteAllItems()
         for i, (addr, size, name, path) in enumerate(modules):
-            index = self.InsertItem(i, addr)
-            self.SetItem(index, 1, size)
-            self.SetItem(index, 2, name)
-            self.SetItem(index, 3, path)
+            row = self.InsertItem(i, addr)
+            self.SetItem(row, 1, size)
+            self.SetItem(row, 2, name)
+            self.SetItem(row, 3, path)
 
     def OnContextMenu(self, event):
         pos = event.GetPosition()
@@ -765,7 +821,7 @@ class ModulesListCtrl(wx.ListCtrl):
 
         menu = wx.Menu()
         mi = menu.Append(wx.ID_ANY, "Symbols")
-        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnShowSymbols(r), mi)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnShowSymbols(row), mi)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
@@ -785,48 +841,20 @@ class ModulesListCtrl(wx.ListCtrl):
         dlg.ShowModal()
         dlg.Destroy()
 
-    def OnMouseHover(self, event):
-        x, y = event.GetPosition()
-        row, flags = self.HitTest(wx.Point(x, y))
-        if row == wx.NOT_FOUND or row == self.lastHoverRow:
-            return event.Skip()
-
-        modName = self.GetItemText(row, 2)
-        matches = []
-        for addr, full in self.parent.symbols.items():
-            if full.startswith(modName + "!"):
-                _, symName = full.split("!", 1)
-                matches.append((symName, addr))
-
-        if not matches:
-            return event.Skip()
-
-        lines = []
-        lines.append("Address\tName")
-        lines.append("-------\t----")
-        for symName, addr in matches:
-            lines.append(f"{addr:#x}\t{symName}")
-
-        tip = "\n".join(lines)
-        self.SetToolTip(tip)
-
-        self.lastHoverRow = row
-        return event.Skip()
-
 
 class SymbolsDialog(wx.Dialog):
     def __init__(self, parent, mod_name, symbols):
         super().__init__(
-            parent, title=f"Symbols for {mod_name}", size=wx.Size(400, 300), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
+            parent, title=f"Symbols for {mod_name}", size=wx.Size(500, 600), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
         )
         sizer = wx.BoxSizer(wx.VERTICAL)
 
         listCtrl = wx.ListCtrl(self, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
-        listCtrl.InsertColumn(0, "Address", width=150)
-        listCtrl.InsertColumn(1, "Name", width=200)
+        listCtrl.InsertColumn(0, "Address", width=200)
+        listCtrl.InsertColumn(1, "Name", width=300)
         for i, (symName, addr) in enumerate(symbols):
-            idx = listCtrl.InsertItem(i, f"{addr:#x}")
-            listCtrl.SetItem(idx, 1, symName)
+            row = listCtrl.InsertItem(i, f"{int(addr):#x}")
+            listCtrl.SetItem(row, 1, symName)
 
         sizer.Add(listCtrl, 1, wx.EXPAND | wx.ALL, 10)
         btn = wx.Button(self, wx.ID_OK, "Close")

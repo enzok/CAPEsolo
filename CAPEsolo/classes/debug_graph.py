@@ -89,7 +89,7 @@ class CfgBuilder:
 
     def BuildBlocks(self):
         addrToInstr = {addr: (addr, hexBytes, text) for addr, hexBytes, text in self.instructions}
-        leaders = set([self.entryPoint])
+        leaders = {self.entryPoint}
 
         for i, (addr, _, text) in enumerate(self.instructions):
             parts = text.split()
@@ -182,8 +182,8 @@ class CfgBuilder:
             mnemonic = parts[0].lower() if parts else ""
             hasTarget = len(parts) > 1 and parts[1].startswith("0x")
             jumpTarget = int(parts[1], 16) if hasTarget else None
-            idx = self.instructions.index(lastInstr)
-            fallThrough = self.instructions[idx + 1][0] if idx + 1 < len(self.instructions) else None
+            row = self.instructions.index(lastInstr)
+            fallThrough = self.instructions[row + 1][0] if row + 1 < len(self.instructions) else None
 
             for target in block.targets:
                 fromID = f"n_{block.startAddr:08x}"

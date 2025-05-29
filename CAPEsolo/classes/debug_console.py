@@ -650,7 +650,7 @@ class ConsolePanel(wx.Panel):
 
     def LoadNextModuleSymbols(self):
         if not self.symbolModules:
-            log.info("[DEBUG CONSOLE] Finished loading all symbols.")
+            #log.info("[DEBUG CONSOLE] Finished loading all symbols.")
             return
 
         _, _, modName, _ = self.symbolModules.pop(0)
@@ -827,8 +827,8 @@ class ConsolePanel(wx.Panel):
             wx.CallAfter(self.LoadNextModuleSymbols)
             return
 
-        if data and modName:
-            exports = data[0].split("|", 1)
+        if data[0] and modName:
+            exports = data[0].split("|")
             for entry in exports:
                 if not entry:
                     continue
