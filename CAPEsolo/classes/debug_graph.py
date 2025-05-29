@@ -101,6 +101,7 @@ class CfgBuilder:
                         leaders.add(target)
                     except ValueError:
                         pass
+
                 if i + 1 < len(self.instructions):
                     leaders.add(self.instructions[i + 1][0])
 
@@ -125,6 +126,7 @@ class CfgBuilder:
                         currentBlock.AddTarget(target)
                     except ValueError:
                         pass
+
                 if mnemonic not in {"jmp", "ret", "retn"}:
                     nextIndex = self.instructions.index(instr) + 1
                     if nextIndex < len(self.instructions):
@@ -214,4 +216,5 @@ class CfgBuilder:
         server = LocalWebServer(serverPath)
         if not server.IsRunning():
             server.Start()
+
         server.OpenBrowser()

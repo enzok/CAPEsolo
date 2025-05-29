@@ -1,8 +1,8 @@
+import bisect
 import logging
 import re
 import threading
 import zlib
-from collections import namedtuple
 from typing import Dict, List, Tuple
 
 import pywintypes
@@ -12,16 +12,8 @@ import wx
 from distorm3 import Decode, Decode32Bits, Decode64Bits
 
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
-from .debug_controls import (
-    BreakpointsListCtrl,
-    DisassemblyListCtrl,
-    DecodedInstruction,
-    MemDumpListCtrl,
-    ModulesListCtrl,
-    RegsTextCtrl,
-    StackListCtrl,
-    ThreadListCtrl,
-)
+from .debug_controls import (BreakpointsListCtrl, DecodedInstruction, DisassemblyListCtrl, MemDumpListCtrl, ModulesListCtrl,
+    RegsTextCtrl, StackListCtrl, ThreadListCtrl)
 from .debug_graph import CfgBuilder
 from .debug_pipe import CommandPipeHandler
 
@@ -129,6 +121,7 @@ class ConsolePanel(wx.Panel):
     CMD_PAGE_MAP = "P"
     CMD_REG_UPDATE = "R"
     CMD_EXECUTION = ("O", "S", "T", "U")
+    CMD_SYMBOLS = "Y"
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -147,7 +140,11 @@ class ConsolePanel(wx.Panel):
         self.pageLock = threading.Lock()
         self.pageHashes = {}
         self.idleDecodeQueue = []
-        self.symbols = []
+        self.symbols: Dict[int, str] = {}
+        self.symbolModules = []
+        self.currentSymbolModule = None
+        self.symbolPage = 0
+        self.moduleRanges = []
         self.InitGUI()
         wx.CallLater(100, self.InitPipe)
 
@@ -462,7 +459,6 @@ class ConsolePanel(wx.Panel):
         self.SendCommand(self.CMD_STACK_UPDATE)
         self.SendCommand(self.CMD_THREADS)
         self.SendCommand(self.CMD_BREAKPOINT_LIST)
-        self.SendCommand(self.CMD_MODULE_LIST)
 
     def DispatchCommand(self, command, payload):
         """Dispatch commands to their respective handlers."""
@@ -478,6 +474,7 @@ class ConsolePanel(wx.Panel):
             self.CMD_BREAKPOINT_LIST: self.HandleBreakpointsList,
             self.CMD_THREADS: self.HandleThreads,
             self.CMD_MODULE_LIST: self.HandleModules,
+            self.CMD_SYMBOLS: self.HandleSymbols,
         }
 
         if command in self.CMD_CONSOLE:
@@ -500,6 +497,10 @@ class ConsolePanel(wx.Panel):
     def JumpTo(self, address: int):
         """Use pageMap to find page."""
         self.cip = address
+        if not self.AddressInModules(address):
+            self.SendCommand(self.CMD_MODULE_LIST)
+            return
+
         region = self.disassemblyConsole.FindPage(address)
         if region is None:
             self.SendCommand(self.CMD_PAGE_MAP)
@@ -552,7 +553,8 @@ class ConsolePanel(wx.Panel):
         mode = Decode64Bits if self.bits == 64 else Decode32Bits
         insts: List[DecodedInstruction] = []
         for address, size, text, hexBytes in Decode(baseAddress, bytes(hotData), mode):
-            insts.append(DecodedInstruction(address, hexBytes, text))
+            patchText = self.PatchDisasmText(text)
+            insts.append(DecodedInstruction(address, hexBytes, patchText))
 
         insts = prefix + insts
         self.disassemblyConsole.decodeCache = insts
@@ -569,7 +571,8 @@ class ConsolePanel(wx.Panel):
             mode = Decode64Bits if self.bits == 64 else Decode32Bits
             insts = []
             for address, size, text, hexBytes in Decode(pageBase, pageData, mode):
-                insts.append(DecodedInstruction(address, hexBytes, text))
+                patchText = self.PatchDisasmText(text)
+                insts.append(DecodedInstruction(address, hexBytes, patchText))
 
             self.disassemblyConsole.SetInstructions(insts, append=True)
 
@@ -618,13 +621,13 @@ class ConsolePanel(wx.Panel):
             self.cip = cip
 
     def PatchDisasmText(self, disasmText: str) -> str:
-        matches = list(re.finditer(r'\[?0x[0-9a-fA-F]+\]?', disasmText))
+        matches = list(re.finditer(r"\[?0x[0-9a-fA-F]+\]?", disasmText))
         patched = disasmText
         offset = 0
 
         for match in matches:
             raw = match.group()
-            stripped = raw.strip('[]')
+            stripped = raw.strip("[]")
             try:
                 addrInt = int(stripped, 16)
             except ValueError:
@@ -632,7 +635,7 @@ class ConsolePanel(wx.Panel):
 
             if addrInt in self.symbols:
                 replacement = self.symbols[addrInt]
-                if raw.startswith('[') and raw.endswith(']'):
+                if raw.startswith("[") and raw.endswith("]"):
                     replacement = f"[{replacement}]"
 
                 start, end = match.start() + offset, match.end() + offset
@@ -640,6 +643,24 @@ class ConsolePanel(wx.Panel):
                 offset += len(replacement) - (end - start)
 
         return patched
+
+    def GetAllSymbols(self, modules: List[Tuple[str, str, str, str]]):
+        self.symbolModules = list(modules)
+        self.LoadNextModuleSymbols()
+
+    def LoadNextModuleSymbols(self):
+        if not self.symbolModules:
+            log.info("[DEBUG CONSOLE] Finished loading all symbols.")
+            return
+
+        _, _, modName, _ = self.symbolModules.pop(0)
+        self.symbolPage = 0
+        self.currentSymbolModule = modName
+        self.RequestNextSymbolPage()
+
+    def RequestNextSymbolPage(self):
+        data = f"{self.currentSymbolModule}|{self.symbolPage}"
+        self.SendCommand(self.CMD_SYMBOLS, data)
 
     def ProcessServerOutput(self, data):
         """Process server output by parsing command and payload, then dispatching."""
@@ -674,6 +695,34 @@ class ConsolePanel(wx.Panel):
         cfg.BuildBlocks()
         wx.CallLater(1, cfg.ShowFlowGraph)
 
+    def PageCrcChanged(self, pageBase: int) -> bool:
+        """Return if the bytes at `pageBase` have changed since the last check."""
+        pageData = self.pageBuffers.get(pageBase)
+        if pageData is None:
+            return False
+
+        newHash = zlib.adler32(pageData) & 0xFFFFFFFF
+        oldHash = self.pageHashes.get(pageBase)
+        if newHash != oldHash:
+            self.pageHashes[pageBase] = newHash
+            return True
+        return False
+
+    def BuildModuleRanges(self, modules: List[Tuple[str, str, str, str]]):
+        for modBase, modSize, modName, modPath in modules:
+            start = int(modBase, 16)
+            end = start + int(modSize, 16)
+            self.moduleRanges.append((start, end, modName))
+        self.moduleRanges.sort()
+
+    def AddressInModules(self, cip: int) -> bool:
+        idx = bisect.bisect_right(self.moduleRanges, (cip,))
+        if idx:
+            start, end, modName = self.moduleRanges[idx - 1]
+            if start <= cip < end:
+                return True
+        return False
+
     def HandleConnection(self, payload):
         """Handle initial connection logic."""
         self.connected = True
@@ -683,7 +732,7 @@ class ConsolePanel(wx.Panel):
             self.parent.Layout()
         self.AppendConsole(payload)
         self.disassemblyConsole.LoadPageMap("")
-        self.SendCommand(self.CMD_PAGE_MAP)
+        self.SendCommand(self.CMD_MODULE_LIST)
 
     def HandleSetBreakpoint(self, payload):
         self.AppendConsole(payload)
@@ -718,8 +767,8 @@ class ConsolePanel(wx.Panel):
             self.UpdateBreakpoints(bps)
 
     def HandleThreads(self, payload):
-        if "Failed" in payload:
-            log.warning("[DEBUG CONSOLE] %s", payload)
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Threads: %s", payload)
             return
 
         curThread = None
@@ -741,47 +790,60 @@ class ConsolePanel(wx.Panel):
         self.UpdateThreads(threads)
 
     def HandleModules(self, payload):
-        if "Failed" in payload:
-            log.warning("[DEBUG CONSOLE] %s", payload)
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Modules: %s", payload)
             return
 
-        modInfo = []
-        modules: List[Tuple[str, str]] = []
-        symbols: Dict[int, str] = {}
-        moduleBlocks = payload.strip().split("\n")
+        modules: List[Tuple[str, str, str, str]] = []
+        if "|" not in payload:
+            return
 
-        for block in moduleBlocks:
-            if not block.strip():
-                continue
-
+        for mod in payload.split("|"):
             try:
-                modInfo, *exportData = block.split("||")
+                modBaseAddr, modSize, modName, modPath = mod.split(",")
+                modules.append((modBaseAddr, modSize, modName, modPath))
             except ValueError:
                 continue
 
-            modParts = modInfo.split(",")
-            if len(modParts) != 4:
-                continue
-
-            modBase, modSize, modName, modPath = modParts
-            modules.append(modParts)
-
-            if exportData:
-                exports = exportData[0].split("|")
-                for entry in exports:
-                    if not entry.strip():
-                        continue
-
-                    try:
-                        rva, absAddr, symName = entry.split(",", 2)
-                        absInt = int(absAddr.strip(), 16)
-                        symbols[absInt] = f"{modName.strip()}!{symName.strip()}"
-                    except ValueError:
-                        continue
-
-        self.symbols = symbols
         if modules:
+            self.BuildModuleRanges(modules)
+            self.GetAllSymbols(modules)
             self.UpdateModules(modules)
+
+        if self.AddressInModules(self.cip):
+            self.JumpTo(self.cip)
+
+    def HandleSymbols(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Symbols: %s", payload)
+            return
+
+        if "||" not in payload:
+            return
+
+        try:
+            modName, *data, status = payload.split("||", 2)
+        except ValueError:
+            wx.CallAfter(self.LoadNextModuleSymbols)
+            return
+
+        if data and modName:
+            exports = data[0].split("|", 1)
+            for entry in exports:
+                if not entry:
+                    continue
+
+                try:
+                    absAddr, symName = entry.split(",", 1)
+                    self.symbols[absAddr] = f"{modName}!{symName}"
+                except ValueError:
+                    continue
+
+        if status == "MORE":
+            self.symbolPage += 1
+            wx.CallAfter(self.RequestNextSymbolPage)
+        else:
+            wx.CallAfter(self.LoadNextModuleSymbols)
 
     def HandlePageMap(self, payload):
         self.disassemblyConsole.LoadPageMap(payload)
@@ -822,19 +884,6 @@ class ConsolePanel(wx.Panel):
             self.idleDecodeQueue.clear()
             self.idleDecodeQueue = [p for p in self.pageBuffers if p >= self.cip + PAGE_SIZE and self.PageCrcChanged(p)]
             wx.CallLater(1, self.ProcessNextIdlePage)
-
-    def PageCrcChanged(self, pageBase: int) -> bool:
-        """Return if the bytes at `pageBase` have changed since the last check."""
-        pageData = self.pageBuffers.get(pageBase)
-        if pageData is None:
-            return False
-
-        newHash = zlib.adler32(pageData) & 0xFFFFFFFF
-        oldHash = self.pageHashes.get(pageBase)
-        if newHash != oldHash:
-            self.pageHashes[pageBase] = newHash
-            return True
-        return False
 
     def HandleRegUpdate(self, payload):
         self.UpdateRegs(payload)

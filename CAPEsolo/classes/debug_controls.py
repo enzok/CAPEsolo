@@ -28,6 +28,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
     def __init__(self, parent):
         super().__init__(parent, style=wx.LC_REPORT)
         self.parent = parent
+        self.lastTipRow = None
         self.InsertColumn(0, "Address", width=150)
         self.InsertColumn(1, "Hex bytes", width=180)
         self.InsertColumn(2, "Disassembly", width=400)
@@ -35,6 +36,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.decodeCache: List[DecodedInstruction] = []
         self.cacheLock = threading.Lock()
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
+        self.Bind(wx.EVT_MOTION, self.OnMouseOver)
 
     def LoadPageMap(self, data: str):
         if not data:
@@ -204,25 +206,26 @@ class DisassemblyListCtrl(wx.ListCtrl):
         miGraph = menu.Append(wx.ID_ANY, miGraphText)
         miGraph.Enable(HAS_GRAPHVIZ)
 
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnCopy(idx), miCopy)
-        menu.Bind(wx.EVT_MENU, self.OnGoTo, miGoTo)
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnGoToSelected(idx), miGoToSelected)
-        menu.Bind(wx.EVT_MENU, self.OnGoToCIP, miGoToCIP)
-        menu.Bind(wx.EVT_MENU, self.OnStepInto, miStepInto)
-        menu.Bind(wx.EVT_MENU, self.OnStepOver, miStepOver)
-        menu.Bind(wx.EVT_MENU, self.OnStepOut, miStepOut)
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnRunUntil(idx), miRunUntil)
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(idx), miDeleteBreakpoint)
-        menu.Bind(wx.EVT_MENU, lambda e: self.parent.ShowFlowGraph(), miGraph)
+        self.Bind(wx.EVT_MENU, self.OnGoTo, miGoTo)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnGoToSelected(idx), miGoToSelected)
+        self.Bind(wx.EVT_MENU, self.OnGoToCIP, miGoToCIP)
+        self.Bind(wx.EVT_MENU, self.OnStepInto, miStepInto)
+        self.Bind(wx.EVT_MENU, self.OnStepOver, miStepOver)
+        self.Bind(wx.EVT_MENU, self.OnStepOut, miStepOut)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnRunUntil(idx), miRunUntil)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(idx), miDeleteBreakpoint)
+        self.Bind(wx.EVT_MENU, lambda e: self.parent.ShowFlowGraph(), miGraph)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnCopy(idx), miCopy)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
     def OnCopy(self, idx):
-        row_text = f"{self.GetItemText(idx, 0)}\t{self.GetItemText(idx, 1)}\t{self.GetItemText(idx, 2)}"
-        clipboard = wx.Clipboard()
+        rowText = f"{self.GetItemText(idx, 0)}\t{self.GetItemText(idx, 1)}\t{self.GetItemText(idx, 2)}"
+        clipboard = wx.TheClipboard
         if clipboard.Open():
             try:
-                clipboard.SetData(wx.TextDataObject(row_text))
+                clipboard.SetData(wx.TextDataObject(rowText))
+                clipboard.Flush()
             except Exception as e:
                 wx.MessageBox(f"Failed to copy to clipboard: {e}", "Error", wx.OK | wx.ICON_ERROR)
             finally:
@@ -270,13 +273,13 @@ class DisassemblyListCtrl(wx.ListCtrl):
         cipIndex = self.GetCipIndex(self.parent.cip)
         self.HighlightIp(cipIndex)
 
-    def OnStepInto(self):
+    def OnStepInto(self, event):
         self.parent.SendCommand("S")
 
-    def OnStepOver(self):
+    def OnStepOver(self, event):
         self.parent.SendCommand("O")
 
-    def OnStepOut(self):
+    def OnStepOut(self, event):
         self.parent.SendCommand("U")
 
     def OnRunUntil(self, index):
@@ -325,6 +328,44 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.Refresh()
         return index
 
+    def OnMouseOver(self, event):
+        x, y = event.GetPosition()
+        row, flags = self.HitTest(wx.Point(x, y))
+        if row == wx.NOT_FOUND or row == self.lastTipRow:
+            if row == wx.NOT_FOUND:
+                self.SetToolTip(None)
+                self.lastTipRow = None
+
+            return event.Skip()
+
+        inst = self.GetItemText(row, 2)
+        m = re.search(r"\[([A-Z]+)\s*\+\s*0x([0-9A-Fa-f]+)\]", inst)
+        if not m:
+            self.SetToolTip(None)
+            self.lastTipRow = None
+            return event.Skip()
+
+        regName, offHex = m.group(1), m.group(2)
+        regsText = self.parent.regsDisplay.GetValue()
+        rm = re.search(rf"{regName}:\s*([0-9A-Fa-f]+)", regsText)
+        if not rm:
+            self.SetToolTip(None)
+            self.lastTipRow = None
+            return event.Skip()
+
+        regVal = int(rm.group(1), 16)
+        addr = regVal + int(offHex, 16)
+        addrStr = f"{addr:#x}"
+        self.SetToolTip(addrStr)
+        if wx.TheClipboard.Open():
+            try:
+                wx.TheClipboard.SetData(wx.TextDataObject(addrStr))
+            finally:
+                wx.TheClipboard.Close()
+
+        self.lastTipRow = row
+        return event.Skip()
+
 
 class RegsTextCtrl(wx.TextCtrl):
     def __init__(self, parent, style):
@@ -335,6 +376,7 @@ class RegsTextCtrl(wx.TextCtrl):
 
     def OnContextMenu(self, event):
         menu = wx.Menu()
+        miCopy = menu.Append(wx.ID_ANY, "Copy")
         miDumpAddress = menu.Append(wx.ID_ANY, "Dump Memory Address")
         miFollowAddress = menu.Append(wx.ID_ANY, "Follow Address")
         menu.AppendSeparator()
@@ -350,17 +392,18 @@ class RegsTextCtrl(wx.TextCtrl):
         miSetCarryFlag = menu.Append(wx.ID_ANY, "Set Carry Flag")
         miFlipCarryFlag = menu.Append(wx.ID_ANY, "Flip Carry Flag")
 
-        menu.Bind(wx.EVT_MENU, self.OnDumpAddress, miDumpAddress)
-        menu.Bind(wx.EVT_MENU, self.OnFollowAddress, miFollowAddress)
-        menu.Bind(wx.EVT_MENU, self.ClearZeroFlag, miClearZeroFlag)
-        menu.Bind(wx.EVT_MENU, self.SetZeroFlag, miSetZeroFlag)
-        menu.Bind(wx.EVT_MENU, self.FlipZeroFlag, miFlipZeroFlag)
-        menu.Bind(wx.EVT_MENU, self.ClearSignFlag, miClearSignFlag)
-        menu.Bind(wx.EVT_MENU, self.SetSignFlag, miSetSignFlag)
-        menu.Bind(wx.EVT_MENU, self.FlipSignFlag, miFlipSignFlag)
-        menu.Bind(wx.EVT_MENU, self.ClearCarryFlag, miClearCarryFlag)
-        menu.Bind(wx.EVT_MENU, self.SetCarryFlag, miSetCarryFlag)
-        menu.Bind(wx.EVT_MENU, self.FlipCarryFlag, miFlipCarryFlag)
+        self.Bind(wx.EVT_MENU, self.OnDumpAddress, miDumpAddress)
+        self.Bind(wx.EVT_MENU, self.OnFollowAddress, miFollowAddress)
+        self.Bind(wx.EVT_MENU, self.ClearZeroFlag, miClearZeroFlag)
+        self.Bind(wx.EVT_MENU, self.SetZeroFlag, miSetZeroFlag)
+        self.Bind(wx.EVT_MENU, self.FlipZeroFlag, miFlipZeroFlag)
+        self.Bind(wx.EVT_MENU, self.ClearSignFlag, miClearSignFlag)
+        self.Bind(wx.EVT_MENU, self.SetSignFlag, miSetSignFlag)
+        self.Bind(wx.EVT_MENU, self.FlipSignFlag, miFlipSignFlag)
+        self.Bind(wx.EVT_MENU, self.ClearCarryFlag, miClearCarryFlag)
+        self.Bind(wx.EVT_MENU, self.SetCarryFlag, miSetCarryFlag)
+        self.Bind(wx.EVT_MENU, self.FlipCarryFlag, miFlipCarryFlag)
+        self.Bind(wx.EVT_MENU, self.OnCopy, miCopy)
 
         pos = event.GetPosition()
         pos = self.ScreenToClient(pos)
@@ -378,6 +421,18 @@ class RegsTextCtrl(wx.TextCtrl):
         addrStr = self.GetStringSelection().strip()
         if addrStr and IsValidHex(addrStr):
             self.parent.disassemblyConsole.GoToInstruction(addrStr)
+
+    def OnCopy(self, event):
+        text = self.GetStringSelection().strip()
+        clipboard = wx.TheClipboard
+        if clipboard.Open():
+            try:
+                clipboard.SetData(wx.TextDataObject(text))
+                clipboard.Flush()
+            except Exception as e:
+                wx.MessageBox(f"Failed to copy to clipboard: {e}", "Error", wx.OK | wx.ICON_ERROR)
+            finally:
+                clipboard.Close()
 
     def ClearZeroFlag(self, event):
         self.FlagCommand("ClearZeroFlag")
@@ -473,10 +528,12 @@ class StackListCtrl(wx.ListCtrl):
             return
 
         menu = wx.Menu()
+        miCopy = menu.Append(wx.ID_ANY, "Copy")
         miFollowAddr = menu.Append(wx.ID_ANY, "Dump Address")
         miFollowVal = menu.Append(wx.ID_ANY, "Dump Value")
 
-        menu.Bind(
+        self.Bind(wx.EVT_MENU, lambda e: self.OnCopy(index), miCopy)
+        self.Bind(
             wx.EVT_MENU,
             lambda e, r=index: (
                 self.parent.memAddressInput.SetValue(self.data[r][0]),
@@ -484,7 +541,7 @@ class StackListCtrl(wx.ListCtrl):
             ),
             miFollowAddr,
         )
-        menu.Bind(
+        self.Bind(
             wx.EVT_MENU,
             lambda e, r=index: (
                 self.parent.memAddressInput.SetValue(self.data[r][1]),
@@ -495,6 +552,18 @@ class StackListCtrl(wx.ListCtrl):
 
         self.PopupMenu(menu, pos)
         menu.Destroy()
+
+    def OnCopy(self, idx):
+        rowText = f"{self.GetItemText(idx, 0)}\t{self.GetItemText(idx, 1)}\t{self.GetItemText(idx, 2)}"
+        clipboard = wx.TheClipboard
+        if clipboard.Open():
+            try:
+                clipboard.SetData(wx.TextDataObject(rowText))
+                clipboard.Flush()
+            except Exception as e:
+                log.error("[DEBUG CONSOLE] Failed to copy to clipboard: %s", e)
+            finally:
+                clipboard.Close()
 
     def CenterRow(self, rowIdx):
         """Center the specified row in the view."""
@@ -569,16 +638,17 @@ class MemDumpListCtrl(wx.ListCtrl):
 
         menu = wx.Menu()
         miCopy = menu.Append(wx.ID_ANY, "Copy")
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnCopy(index), miCopy)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnCopy(index), miCopy)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
     def OnCopy(self, idx):
-        row_text = f"{self.GetItemText(idx, 0)}\t{self.GetItemText(idx, 1)}\t{self.GetItemText(idx, 2)}"
-        clipboard = wx.Clipboard()
+        rowText = f"{self.GetItemText(idx, 0)}\t{self.GetItemText(idx, 1)}\t{self.GetItemText(idx, 2)}"
+        clipboard = wx.TheClipboard
         if clipboard.Open():
             try:
-                clipboard.SetData(wx.TextDataObject(row_text))
+                clipboard.SetData(wx.TextDataObject(rowText))
+                clipboard.Flush()
             except Exception as e:
                 log.error("[DEBUG CONSOLE] Failed to copy to clipboard: %s", e)
             finally:
@@ -643,8 +713,8 @@ class BreakpointsListCtrl(wx.ListCtrl):
         menu.AppendSeparator()
         miFollowBreakpoint = menu.Append(wx.ID_ANY, "Follow Address")
 
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(index), miDeleteBreakpoint)
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnFollowBreakpoint(index), miFollowBreakpoint)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(index), miDeleteBreakpoint)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnFollowBreakpoint(index), miFollowBreakpoint)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
@@ -669,17 +739,17 @@ class ModulesListCtrl(wx.ListCtrl):
     def __init__(self, parent):
         super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
         self.parent = parent
-        self.data: List[Tuple[str, str]] = []
+        self.lastHoverRow = None
         self.InsertColumn(0, "Address", width=160)
         self.InsertColumn(1, "Size", width=80)
         self.InsertColumn(2, "Name", width=160)
         self.InsertColumn(3, "Path", width=160)
+        self.Bind(wx.EVT_MOTION, self.OnMouseHover)
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
 
-    def UpdateData(self, modules: List[Tuple[str, str]]):
+    def UpdateData(self, modules: List[Tuple[str, str, str, str]]):
         """Populate the list"""
         self.DeleteAllItems()
-        self.data = modules
         for i, (addr, size, name, path) in enumerate(modules):
             index = self.InsertItem(i, addr)
             self.SetItem(index, 1, size)
@@ -689,10 +759,77 @@ class ModulesListCtrl(wx.ListCtrl):
     def OnContextMenu(self, event):
         pos = event.GetPosition()
         pos = self.ScreenToClient(pos)
-        idx, flags = self.HitTest(pos)
-        if idx == wx.NOT_FOUND:
+        row, _ = self.HitTest(pos)
+        if row == wx.NOT_FOUND:
             return
 
         menu = wx.Menu()
+        mi = menu.Append(wx.ID_ANY, "Symbols")
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnShowSymbols(r), mi)
         self.PopupMenu(menu, pos)
         menu.Destroy()
+
+    def OnShowSymbols(self, row):
+        modName = self.GetItemText(row, 2)
+        matches = []
+        for addr, full in self.parent.symbols.items():
+            if full.startswith(modName + "!"):
+                _, sym = full.split("!", 1)
+                matches.append((sym, addr))
+
+        if not matches:
+            wx.MessageBox(f"No symbols for module {modName}", "Info", wx.OK|wx.ICON_INFORMATION)
+            return
+
+        dlg = SymbolsDialog(self, modName, matches)
+        dlg.ShowModal()
+        dlg.Destroy()
+
+    def OnMouseHover(self, event):
+        x, y = event.GetPosition()
+        row, flags = self.HitTest(wx.Point(x, y))
+        if row == wx.NOT_FOUND or row == self.lastHoverRow:
+            return event.Skip()
+
+        modName = self.GetItemText(row, 2)
+        matches = []
+        for addr, full in self.parent.symbols.items():
+            if full.startswith(modName + "!"):
+                _, symName = full.split("!", 1)
+                matches.append((symName, addr))
+
+        if not matches:
+            return event.Skip()
+
+        lines = []
+        lines.append("Address\tName")
+        lines.append("-------\t----")
+        for symName, addr in matches:
+            lines.append(f"{addr:#x}\t{symName}")
+
+        tip = "\n".join(lines)
+        self.SetToolTip(tip)
+
+        self.lastHoverRow = row
+        return event.Skip()
+
+
+class SymbolsDialog(wx.Dialog):
+    def __init__(self, parent, mod_name, symbols):
+        super().__init__(
+            parent, title=f"Symbols for {mod_name}", size=wx.Size(400, 300), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
+        )
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        listCtrl = wx.ListCtrl(self, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
+        listCtrl.InsertColumn(0, "Address", width=150)
+        listCtrl.InsertColumn(1, "Name", width=200)
+        for i, (symName, addr) in enumerate(symbols):
+            idx = listCtrl.InsertItem(i, f"{addr:#x}")
+            listCtrl.SetItem(idx, 1, symName)
+
+        sizer.Add(listCtrl, 1, wx.EXPAND | wx.ALL, 10)
+        btn = wx.Button(self, wx.ID_OK, "Close")
+        sizer.Add(btn, 0, wx.ALIGN_CENTER | wx.ALL, 10)
+        self.SetSizer(sizer)
+        self.Layout()
