@@ -2,20 +2,27 @@ import bisect
 import logging
 import re
 import threading
+import time
 import zlib
-from contextlib import suppress
 from typing import Dict, List, Tuple
 
 import pywintypes
 import win32event
 import win32file
-import winerror
 import wx
 from distorm3 import Decode, Decode32Bits, Decode64Bits
 
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
-from .debug_controls import (BreakpointsListCtrl, DecodedInstruction, DisassemblyListCtrl, MemDumpListCtrl, ModulesListCtrl,
-    RegsTextCtrl, StackListCtrl, ThreadListCtrl)
+from .debug_controls import (
+    BreakpointsListCtrl,
+    DecodedInstruction,
+    DisassemblyListCtrl,
+    MemDumpListCtrl,
+    ModulesListCtrl,
+    RegsTextCtrl,
+    StackListCtrl,
+    ThreadListCtrl,
+)
 from .debug_graph import CfgBuilder
 from .debug_pipe import CommandPipeHandler
 
@@ -64,6 +71,7 @@ class DebugConsole:
         self.commandPipe.start()
         log.info("[DEBUG CONSOLE] Console pipe server started.")
         self.OpenConsole()
+        wx.CallAfter(self.frame.panel.InitPipe)
         log.info("[DEBUG CONSOLE] Console launched.")
 
     def shutdown(self):
@@ -93,7 +101,8 @@ class ConsoleFrame(wx.Frame):
                 (wx.ACCEL_NORMAL, wx.WXK_F8, self.ID_STEP_OVER),
                 (wx.ACCEL_NORMAL, wx.WXK_F9, self.ID_STEP_OUT),
                 (wx.ACCEL_NORMAL, wx.WXK_F10, self.ID_CONTINUE),
-                (wx.ACCEL_CTRL, ord('Q'), self.ID_STOP), ]
+                (wx.ACCEL_CTRL, ord("Q"), self.ID_STOP),
+            ]
         )
         self.SetAcceleratorTable(accels)
         self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("S"), id=self.ID_STEP_INTO)
@@ -150,7 +159,6 @@ class ConsolePanel(wx.Panel):
         self.symbolPage = 0
         self.moduleRanges = []
         self.InitGUI()
-        wx.CallLater(100, self.InitPipe)
 
     def InitGUI(self):
         # Main Layout
@@ -341,6 +349,9 @@ class ConsolePanel(wx.Panel):
         self.statusBar.SetLabel(status)
 
     def InitPipe(self):
+        threading.Thread(target=self.PipeLoop, daemon=True).start()
+
+    def PipeLoop(self):
         try:
             self.pipeHandle = win32file.CreateFile(
                 self.pipe,
@@ -348,20 +359,36 @@ class ConsolePanel(wx.Panel):
                 0,
                 None,
                 win32file.OPEN_EXISTING,
-                0,
+                win32file.FILE_FLAG_OVERLAPPED,
                 None,
             )
             log.info("[DEBUG CONSOLE] Console connected to named pipe.")
-            self.SendInit()
         except Exception as e:
             log.error("[DEBUG CONSOLE] Console failed to connect to named pipe: %s", e)
 
-    def SendInit(self):
+        self.SendInit()
+        while True:
+            msg = self.ReadResponse()
+            if not self.pipeHandle:
+                break
+
+            if msg:
+                wx.CallAfter(self.ProcessServerOutput, msg)
+            else:
+                time.sleep(0.01)
+
         if self.pipeHandle:
-            log.info("[DEBUG CONSOLE] Sending init command...")
-            threading.Thread(target=self.SendCommand, args=("init",), daemon=True).start()
-        else:
-            wx.CallLater(100, self.SendInit)
+            win32file.CloseHandle(self.pipeHandle)
+
+        self.pipeHandle = None
+        log.info("[DEBUG CONSOLE] Reader thread exiting, pipe closed.")
+
+    def SendInit(self):
+        if not self.pipeHandle:
+            return
+
+        log.info("[DEBUG CONSOLE] Sending init command...")
+        self.SendCommand("init")
 
     def ReadResponse(self):
         """Reads a full response from the pipe in a thread-safe manner."""
@@ -370,7 +397,6 @@ class ConsolePanel(wx.Panel):
                 return ""
 
             try:
-                # Read up to BUFFER_SIZE bytes; adjust if needed.
                 result, data = win32file.ReadFile(self.pipeHandle, BUFFER_SIZE)
                 response = data.decode("utf-8").strip()
                 return response
@@ -378,34 +404,24 @@ class ConsolePanel(wx.Panel):
                 log.error("[DEBUG CONSOLE] Reading response: %s", e)
                 return ""
 
-    def WaitForResponse(self):
-        """Waits for a response and then updates the GUI (called in a background thread)."""
-        if not self.pipeHandle:
-            return
-
-        response = self.ReadResponse()
-        if response:
-            wx.CallAfter(self.ProcessServerOutput, response)
-        else:
-            wx.CallLater(100, self.WaitForResponse)
-
     def SendCommand(self, command, data=""):
         if command.lower() != "init" and (not self.connected or not self.pipeHandle):
             log.error("[DEBUG CONSOLE] Cannot send command: Not connected to pipe")
             return
 
         fullCommand = f"{DBGCMD}:{command.upper()}:{data}".encode("utf-8") + b"\n"
+        threading.Thread(target=self.BackgroundWrite, args=(fullCommand,), daemon=True).start()
+
+    def BackgroundWrite(self, buffer):
         overlapped = pywintypes.OVERLAPPED()
         overlapped.hEvent = win32event.CreateEvent(None, 0, 0, None)
         try:
-            win32file.WriteFile(self.pipeHandle, fullCommand, overlapped)
+            win32file.WriteFile(self.pipeHandle, buffer, overlapped)
         except pywintypes.error as e:
             log.error("[DEBUG CONSOLE] Pipe write error: %s", e)
         finally:
             if overlapped.hEvent:
                 win32file.CloseHandle(overlapped.hEvent)
-
-        threading.Thread(target=self.WaitForResponse, daemon=True).start()
 
     def OnEnter(self, event):
         """Handles user input and processes commands."""
@@ -665,7 +681,7 @@ class ConsolePanel(wx.Panel):
 
     def LoadNextModuleSymbols(self):
         if not self.symbolModules:
-            #log.info("[DEBUG CONSOLE] Finished loading all symbols.")
+            # log.info("[DEBUG CONSOLE] Finished loading all symbols.")
             return
 
         _, _, modName, _ = self.symbolModules.pop(0)
@@ -721,6 +737,7 @@ class ConsolePanel(wx.Panel):
         if newHash != oldHash:
             self.pageHashes[pageBase] = newHash
             return True
+
         return False
 
     def BuildModuleRanges(self, modules: List[Tuple[str, str, str, str]]):
@@ -728,6 +745,7 @@ class ConsolePanel(wx.Panel):
             start = int(modBase, 16)
             end = start + int(modSize, 16)
             self.moduleRanges.append((start, end, modName))
+
         self.moduleRanges.sort()
 
     def AddressInModules(self, cip: int) -> bool:
@@ -736,6 +754,7 @@ class ConsolePanel(wx.Panel):
             start, end, modName = self.moduleRanges[idx - 1]
             if start <= cip < end:
                 return True
+
         return False
 
     def HandleConnection(self, payload):
@@ -745,8 +764,8 @@ class ConsolePanel(wx.Panel):
         if not self.parent.IsShown():
             self.parent.Show()
             self.parent.Layout()
+
         self.AppendConsole(payload)
-        self.disassemblyConsole.LoadPageMap("")
         self.SendCommand(self.CMD_MODULE_LIST)
 
     def HandleSetBreakpoint(self, payload):
