@@ -753,7 +753,7 @@ class StartPanel(wx.Panel):
             sep = ","
         if self.idbg:
             userOptions += f"{sep}idbg=1"
-            timeout = 60 * 60  # 60 minutes
+            timeout = 60 * 60 * 4  # 4 hours
             sep = ","
 
         conf += f"\nenforce_timeout = {self.enforceTimeout}"

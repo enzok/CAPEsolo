@@ -3,6 +3,8 @@ from pathlib import Path
 import html
 import graphviz
 
+import wx
+import wx.svg
 from .web_server import LocalWebServer
 
 HAS_GRAPHVIZ = shutil.which("dot") is not None
@@ -62,6 +64,7 @@ NON_CONTROL_MNEMONICS = {
     "neg",
     "xchg",
     "mul",
+    "int3",
 }
 
 
@@ -169,7 +172,7 @@ class CfgBuilder:
         for block in self.blocks.values():
             label_lines = [f"{addr:08x}: {html.escape(text)}" for addr, _, text in block.instructions]
             label = r"\l".join(label_lines) + r"\l"
-            node_id = f"n_{block.startAddr:08x}"
+            node_id = f"{block.startAddr:08x}"
             dot.node(node_id, label=label)
 
         for block in self.blocks.values():
@@ -186,8 +189,8 @@ class CfgBuilder:
             fallThrough = self.instructions[row + 1][0] if row + 1 < len(self.instructions) else None
 
             for target in block.targets:
-                fromID = f"n_{block.startAddr:08x}"
-                toId = f"n_{target:08x}"
+                fromID = f"{block.startAddr:08x}"
+                toId = f"{target:08x}"
                 isLoop = target <= block.startAddr
                 if isLoop:
                     edgeAttrs = {"arrowhead": "normal", "constraint": "false", "color": "blue", "minlen": "3"}
@@ -210,11 +213,42 @@ class CfgBuilder:
         dot.render(str(outputPath), view=False)
         return
 
-    def ShowFlowGraph(self):
+    def ShowFlowGraph(self, target):
         self.RenderGraph()
         serverPath = Path(__file__).resolve().parent.parent / "graph"
         server = LocalWebServer(serverPath)
         if not server.IsRunning():
             server.Start()
 
-        server.OpenBrowser()
+        server.OpenBrowser(f"viewer.html?focus={target}")
+
+
+class SvgFrame(wx.Frame):
+    def __init__(self):
+        super().__init__(None, title="Disassembly Graph", size=(800,800))
+        panel = wx.Panel(self)
+
+        svgPath = Path(__file__).resolve().parent.parent / "graph" / "x64dbgCfgEmulation.svg"
+        svg = wx.svg.SVGimage.CreateFromFile(str(svgPath))
+
+        class SvgPanel(wx.Panel):
+            def __init__(self, parent, svg_image):
+                super().__init__(parent)
+                self.svg = svg_image
+                self.Bind(wx.EVT_PAINT, self.on_paint)
+
+            def on_paint(self, evt):
+                dc = wx.PaintDC(self)
+                gc = wx.GraphicsContext.Create(dc)
+
+                pw, ph = self.GetClientSize()
+                vw, vh = self.svg.GetSize()
+                scale = min(pw / vw, ph / vh)
+                gc.Scale(scale, scale)
+                self.svg.Render(gc)
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(SvgPanel(panel, svg), 1, wx.EXPAND)
+        panel.SetSizer(sizer)
+
+        self.Show()

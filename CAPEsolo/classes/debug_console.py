@@ -23,7 +23,7 @@ from .debug_controls import (
     StackListCtrl,
     ThreadListCtrl,
 )
-from .debug_graph import CfgBuilder
+from .debug_graph import CfgBuilder, SvgFrame
 from .debug_pipe import CommandPipeHandler
 
 log = logging.getLogger(__name__)
@@ -33,6 +33,32 @@ BUFFER_SIZE = 65 * 1024
 CHUNK_SIZE = BUFFER_SIZE // 2
 DBGCMD = "DBGCMD"
 DEBUG_PIPE = r"\\.\pipe\debugger_pipe"
+REGISTERS = {
+    "RAX",
+    "RBX",
+    "RCX",
+    "RDX",
+    "RSI",
+    "RDI",
+    "RSP",
+    "RBP",
+    "EAX",
+    "EBX",
+    "ECX",
+    "EDX",
+    "ESI",
+    "EDI",
+    "ESP",
+    "EBP",
+    "R8",
+    "R9",
+    "R10",
+    "R11",
+    "R12",
+    "R13",
+    "R14",
+    "R15",
+}
 
 
 class DebugConsole:
@@ -93,28 +119,49 @@ class ConsoleFrame(wx.Frame):
         self.ID_STEP_INTO = wx.NewIdRef()
         self.ID_STEP_OVER = wx.NewIdRef()
         self.ID_STEP_OUT = wx.NewIdRef()
+        self.ID_RUN_UNTIL = wx.NewIdRef()
         self.ID_CONTINUE = wx.NewIdRef()
+        self.ID_BACK = wx.NewIdRef()
 
         accels = wx.AcceleratorTable(
             [
+                (wx.ACCEL_NORMAL, wx.WXK_F4, self.ID_RUN_UNTIL),
                 (wx.ACCEL_NORMAL, wx.WXK_F7, self.ID_STEP_INTO),
                 (wx.ACCEL_NORMAL, wx.WXK_F8, self.ID_STEP_OVER),
                 (wx.ACCEL_NORMAL, wx.WXK_F9, self.ID_STEP_OUT),
                 (wx.ACCEL_NORMAL, wx.WXK_F10, self.ID_CONTINUE),
                 (wx.ACCEL_CTRL, ord("Q"), self.ID_STOP),
+                (wx.ACCEL_NORMAL, wx.WXK_ESCAPE, self.ID_BACK),
             ]
         )
         self.SetAcceleratorTable(accels)
+        self.Bind(wx.EVT_MENU, self.panel.OnRunUntilAccel, id=self.ID_RUN_UNTIL)
         self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("S"), id=self.ID_STEP_INTO)
         self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("O"), id=self.ID_STEP_OVER)
         self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("U"), id=self.ID_STEP_OUT)
         self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("C"), id=self.ID_CONTINUE)
         self.Bind(wx.EVT_MENU, lambda evt: self.panel.ShutdownConsole(), id=self.ID_STOP)
+        self.Bind(wx.EVT_MENU, self.OnBack, id=self.ID_BACK)
 
     def OnClose(self, event):
         """Handles window close event gracefully."""
         self.panel.ShutdownConsole()
         self.Destroy()
+
+    def OnBack(self, event):
+        focused = wx.Window.FindFocus()
+        if not focused:
+            return
+
+        ctrl = focused
+        while ctrl and not isinstance(ctrl, (DisassemblyListCtrl, MemDumpListCtrl)):
+            if hasattr(ctrl, "OnBack"):
+                ctrl = ctrl.OnBack(event)
+
+            return
+
+        ctrl = ctrl.GetParent()
+
 
 
 class ConsolePanel(wx.Panel):
@@ -262,10 +309,14 @@ class ConsolePanel(wx.Panel):
 
         # Debugging Controls
         debugButtons = wx.BoxSizer(wx.HORIZONTAL)
+        self.runUntilBtn = wx.Button(self, label="Run Until (F4)")
         self.stepIntoBtn = wx.Button(self, label="Step Into (F7)")
         self.stepOverBtn = wx.Button(self, label="Step Over (F8)")
         self.stepOutBtn = wx.Button(self, label="Step Out (F9)")
         self.continueBtn = wx.Button(self, label="Continue (F10)")
+        self.runUntilBtn.SetMinSize(wx.Size(MAX_BTN_W, -1))
+        self.runUntilBtn.Bind(wx.EVT_BUTTON, self.OnRunUntilAccel)
+        debugButtons.Add(self.runUntilBtn, 0, wx.LEFT | wx.BOTTOM, 5)
         for btn, cmd in (
             (self.stepIntoBtn, "S"),
             (self.stepOverBtn, "O"),
@@ -286,6 +337,17 @@ class ConsolePanel(wx.Panel):
         mainSizer.Add(inputSizer, 0, wx.EXPAND)
 
         self.SetSizer(mainSizer)
+
+    def OnRunUntilAccel(self, event):
+        row = self.disassemblyConsole.GetNextItem(-1, wx.LIST_NEXT_ALL, wx.LIST_STATE_SELECTED)
+        if row == -1:
+            row = self.disassemblyConsole.GetCipRow(self.cip)
+
+        if row == -1:
+            wx.MessageBox("No valid address to Run Until.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        self.disassemblyConsole.OnRunUntil(row)
 
     def OnKeyDown(self, event):
         if self.FindFocus() == self.inputBox:
@@ -397,7 +459,7 @@ class ConsolePanel(wx.Panel):
                 return ""
 
             try:
-                result, data = win32file.ReadFile(self.pipeHandle, BUFFER_SIZE)
+                _, data = win32file.ReadFile(self.pipeHandle, BUFFER_SIZE)
                 response = data.decode("utf-8").strip()
                 return response
             except Exception as e:
@@ -448,6 +510,14 @@ class ConsolePanel(wx.Panel):
         elif cmd == "b":
             try:
                 reg, addr = data.split(" ", 1)
+                if addr.upper() in REGISTERS:
+                    regName = addr.upper()
+                    regsText = self.regsDisplay.GetValue()
+                    m = re.search(rf"\b({regName}):\s*([0-9A-Fa-f]+)", regsText)
+                    if m:
+                        addr_val = m.group(2)
+                        addr = addr_val
+
                 data = "|".join([reg, addr])
                 self.SendCommand(cmd, data)
             except ValueError:
@@ -716,15 +786,17 @@ class ConsolePanel(wx.Panel):
 
         self.DispatchCommand(command, payload)
 
-    def ShowFlowGraph(self):
+    def ShowFlowGraph(self, row):
         insts = self.disassemblyConsole.decodeCache
         if not insts:
             wx.MessageBox("Nothing to graph!", "Info", wx.OK | wx.ICON_INFORMATION)
             return
-
+        target = self.disassemblyConsole.GetItemText(row, 0).strip().lstrip("0")
         cfg = CfgBuilder(insts)
         cfg.BuildBlocks()
-        wx.CallLater(1, cfg.ShowFlowGraph)
+        cfg.RenderGraph()
+        # wx.CallLater(1, cfg.ShowFlowGraph, target)
+        wx.CallLater(1, SvgFrame)
 
     def PageCrcChanged(self, pageBase: int) -> bool:
         """Return if the bytes at `pageBase` have changed since the last check."""
@@ -773,6 +845,7 @@ class ConsolePanel(wx.Panel):
         m = re.search(r"0x[0-9a-fA-F]+", payload)
         if m:
             addr = int(m.group(0), 16)
+            self.disassemblyConsole.SetBpBackground(addr)
             self.SendCommand(self.CMD_BREAKPOINT_LIST)
 
     def HandleDeleteBreakpoint(self, payload):
@@ -780,6 +853,7 @@ class ConsolePanel(wx.Panel):
         m = re.search(r"0x[0-9a-fA-F]+", payload)
         if m:
             addr = int(m.group(0), 16)
+            self.disassemblyConsole.ClearBpBackground(addr)
             self.SendCommand(self.CMD_BREAKPOINT_LIST)
 
     def HandleContinue(self, payload):
@@ -790,6 +864,7 @@ class ConsolePanel(wx.Panel):
     def HandleBreakpointsList(self, payload):
         bps: List[Tuple[str, str]] = []
         if "No" in payload:
+            self.UpdateBreakpoints("")
             return
 
         for bp in payload.split("|"):
