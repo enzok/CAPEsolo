@@ -143,11 +143,11 @@ class PipeDispatcher(threading.Thread):
             )
 
             if KERNEL32.GetLastError() == ERROR_MORE_DATA:
-                # ret += buf.raw[:bytes_read.value]
-                ret += buf.value
+                ret += buf.raw[:bytes_read.value]
+                #ret += buf.value
             elif success:
-                # return ret + buf.raw[:bytes_read.value]
-                return ret + buf.value
+                return ret + buf.raw[:bytes_read.value]
+                #return ret + buf.value
             else:
                 return
 

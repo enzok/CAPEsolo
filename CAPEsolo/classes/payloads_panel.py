@@ -13,7 +13,7 @@ from CAPEsolo.capelib.cape_utils import (
 )
 from CAPEsolo.capelib.objects import File
 from CAPEsolo.capelib.parse_pe import IsPEImage
-from CAPEsolo.capelib.utils import LoadFilesJson
+from CAPEsolo.capelib.utils import JsonPathExists, LoadFilesJson
 
 
 class PayloadsPanel(wx.Panel):
@@ -22,6 +22,7 @@ class PayloadsPanel(wx.Panel):
         self.parent = parent
         self.analysisDir = parent.analysisDir
         self.payloadsLoaded = False
+        self.jsonFileExists = False
         self.button_to_path = {}
         self.panel = scrolled.ScrolledPanel(
             self, -1, style=wx.TAB_TRAVERSAL | wx.SUNKEN_BORDER
@@ -52,9 +53,22 @@ class PayloadsPanel(wx.Panel):
         grid.SetCellValue(current_row, 0, value0)
         grid.SetCellValue(current_row, 1, value1)
 
+    def PayloadsReady(self):
+        if JsonPathExists(self.analysisDir):
+            self.jsonFileExists = True
+            self.LoadAndDisplayContent()
+
     def LoadAndDisplayContent(self):
-        if self.payloadsLoaded:
+        if self.payloadsLoaded or not self.jsonFileExists:
             return
+        popup = wx.ProgressDialog(
+            "Loading payloads",
+            "Please wait...",
+            maximum=100,
+            parent=self,
+            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE,
+        )
+        popup.Update(0)
         data = LoadFilesJson(self.analysisDir)
         if "error" in data:
             return
@@ -141,6 +155,8 @@ class PayloadsPanel(wx.Panel):
                 self.panelsizer.AddSpacer(5)
 
         self.panel.Layout()
+        popup.Update(100)
+        popup.Destroy()
         self.panel.Show()
         self.Layout()
         self.payloadsLoaded = True

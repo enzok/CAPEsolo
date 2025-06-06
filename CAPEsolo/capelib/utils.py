@@ -384,6 +384,12 @@ def default_converter(v):
     return v
 
 
+def JsonPathExists(analysisDir):
+    filePath = Path(analysisDir) / "files.json"
+    if filePath.exists():
+        return True
+
+
 def LoadFilesJson(analysisDir):
     filePath = Path(analysisDir) / "files.json"
     if filePath.exists():
