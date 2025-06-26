@@ -387,8 +387,14 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
     @staticmethod
     def SafeEval(expr: str) -> int:
-        ops = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.floordiv,
-            ast.FloorDiv: operator.floordiv, ast.USub: operator.neg, }
+        ops = {
+            ast.Add: operator.add,
+            ast.Sub: operator.sub,
+            ast.Mult: operator.mul,
+            ast.Div: operator.floordiv,
+            ast.FloorDiv: operator.floordiv,
+            ast.USub: operator.neg,
+        }
 
         def _eval(node):
             if isinstance(node, ast.Constant):
@@ -408,11 +414,11 @@ class DisassemblyListCtrl(wx.ListCtrl):
     @staticmethod
     def ParseRegisters(regsText):
         registers = {}
-        general = re.findall(r'\b([A-Z0-9]{2,3}):\s*([0-9A-Fa-f]{8,16})', regsText)
+        general = re.findall(r"\b([A-Z0-9]{2,3}):\s*([0-9A-Fa-f]{8,16})", regsText)
         for name, value in general:
             registers[name.upper()] = int(value, 16)
 
-        xmm = re.findall(r'\bXMM(\d{1,2})\s*\.(Low|High)\s*:\s*([0-9A-Fa-f]{8,16})', regsText)
+        xmm = re.findall(r"\bXMM(\d{1,2})\s*\.(Low|High)\s*:\s*([0-9A-Fa-f]{8,16})", regsText)
         for num, part, value in xmm:
             key = f"XMM{int(num):02}.{part}"
             registers[key.upper()] = int(value, 16)
@@ -1094,6 +1100,16 @@ class SymbolsDialog(wx.Dialog):
 
         self.listCtrl.Bind(wx.EVT_KEY_DOWN, self.OnKeyDown)
         self.listCtrl.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
+
+        self.ID_SEARCH = wx.NewIdRef()
+        accels = wx.AcceleratorTable(
+            [
+                (wx.ACCEL_CTRL, ord("F"), self.ID_SEARCH),
+            ]
+        )
+
+        self.SetAcceleratorTable(accels)
+        self.Bind(wx.EVT_MENU, self.OnSearch, id=self.ID_SEARCH)
 
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(self.listCtrl, 1, wx.EXPAND | wx.ALL, 10)

@@ -9,6 +9,8 @@ class SearchDialog(wx.Dialog):
             size=wx.Size(400, 100),
             style=wx.DEFAULT_DIALOG_STYLE | wx.STAY_ON_TOP,
         )
+        self.caseSensitive = False
+        self.fullWord = False
         if hasattr(parent, "grid"):
             self.grid = parent.grid
             self.Finder = self.FindCell
@@ -16,7 +18,9 @@ class SearchDialog(wx.Dialog):
             self.currentSearchPos = (0, 0)
         elif hasattr(parent, "listCtrl"):
             self.listCtrl = parent.listCtrl
-            self.Finder = self.SearchList
+            self.Finder = self.FindInList
+            self.FinderNext = self.FindInListNext
+            self.currentSearchPos = (0, 0)
         else:
             self.resultsWindow = parent.resultsWindow
             self.lastFoundPos = -1
@@ -39,8 +43,22 @@ class SearchDialog(wx.Dialog):
         hbox1.Add(findButton, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5)
         hbox1.Add(findNextButton, proportion=1, flag=wx.EXPAND)
 
+
+        self.chkCase = wx.CheckBox(self, label="Aa")
+        self.chkCase.SetValue(False)
+        self.chkCase.Bind(wx.EVT_CHECKBOX, self.OnCaseToggle)
+
+        self.chkFull = wx.CheckBox(self, label="\u00A6ab\u00A6")
+        self.chkFull.SetValue(False)
+        self.chkFull.Bind(wx.EVT_CHECKBOX, self.OnFullWordToggle)
+
+        hbox2 = wx.BoxSizer(wx.HORIZONTAL)
+        hbox2.Add(self.chkCase, flag=wx.RIGHT, border=10)
+        hbox2.Add(self.chkFull)
+
         sizer.Add(self.findWindow, proportion=0, flag=wx.EXPAND | wx.ALL, border=5)
         sizer.Add(hbox1, proportion=0, flag=wx.EXPAND | wx.ALL, border=5)
+        sizer.Add(hbox2, proportion=0, flag=wx.ALIGN_CENTER_HORIZONTAL | wx.ALL, border=5)
 
         self.SetSizer(sizer)
         self.Fit()
@@ -89,12 +107,22 @@ class SearchDialog(wx.Dialog):
 
     def SearchCells(self):
         searchText = self.findWindow.GetValue()
+        if not self.caseSensitive:
+            searchText = searchText.lower()
+
         rows = self.grid.GetNumberRows()
         cols = self.grid.GetNumberCols()
         startRow, startCol = self.currentSearchPos
         for row in range(startRow, rows):
             for col in range(startCol if row == startRow else 0, cols):
-                if self.grid.GetCellValue(row, col) == searchText:
+                cellText = self.grid.GetCellValue(row, col)
+                cmpText = cellText if self.caseSensitive else cellText.lower()
+                if self.fullWord:
+                    match = searchText == cmpText
+                else:
+                    match = searchText in cmpText
+
+                if match:
                     self.grid.SetGridCursor(row, col)
                     self.grid.MakeCellVisible(row, col)
                     self.grid.SelectBlock(row, col, row, col)
@@ -114,18 +142,46 @@ class SearchDialog(wx.Dialog):
     def FindNextCell(self, event):
         self.SearchCells()
 
-    def SearchList(self, query):
-        query = query.lower()
-        num_items = self.listCtrl.GetItemCount()
-        num_cols = self.listCtrl.GetColumnCount()
+    def SearchList(self):
+        searchText = self.findWindow.GetValue()
+        if not self.caseSensitive:
+            searchText = searchText.lower()
 
-        for i in range(num_items):
-            for col in range(num_cols):
-                text = self.listCtrl.GetItem(i, col).GetText().lower()
-                if query in text:
-                    self.listCtrl.Select(i)
-                    self.listCtrl.Focus(i)
-                    self.listCtrl.EnsureVisible(i)
+        rows = self.listCtrl.GetItemCount()
+        cols = self.listCtrl.GetColumnCount()
+        startRow = self.currentSearchRow
+
+        for row in range(startRow, rows):
+            for col in range(cols):
+                cellText = self.listCtrl.GetItem(row, col).GetText()
+                cmpText = cellText if self.caseSensitive else cellText.lower()
+                if self.fullWord:
+                    match = searchText == cmpText
+                else:
+                    match = searchText in cmpText
+
+                if match:
+                    self.listCtrl.Select(row)
+                    self.listCtrl.Focus(row)
+                    self.listCtrl.EnsureVisible(row)
+                    self.currentSearchRow = row + 1
+
+                    if self.currentSearchRow >= rows:
+                        self.currentSearchRow = 0
                     return
 
-        wx.MessageBox(f"No match found for: {query}", "Search", wx.OK | wx.ICON_INFORMATION)
+        wx.MessageBox(f"'{searchText}' not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
+        self.currentSearchRow = 0
+
+    def FindInList(self, event):
+        self.currentSearchRow = 0
+        self.SearchList()
+
+    def FindInListNext(self, event):
+        self.SearchList()
+
+    def OnCaseToggle(self, event):
+        self.caseSensitive = self.chkCase.GetValue()
+
+    def OnFullWordToggle(self, event):
+        self.fullWord = self.chkFull.GetValue()

@@ -100,7 +100,7 @@ class DebugConsole:
         self.commandPipe.start()
         log.info("[DEBUG CONSOLE] Console pipe server started.")
         self.OpenConsole()
-        wx.CallAfter(self.frame.panel.InitPipe)
+        wx.CallAfter(self.frame.consolePanel.InitPipe)
         log.info("[DEBUG CONSOLE] Console launched.")
 
     def shutdown(self):
@@ -115,7 +115,7 @@ class ConsoleFrame(wx.Frame):
         super().__init__(None, title=title, pos=window_position, size=window_size)
         self.parent = parent
         self.pipe = parent.pipe
-        self.panel = ConsolePanel(self)
+        self.consolePanel = ConsolePanel(self)
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
         self.ID_STOP = wx.NewIdRef()
@@ -136,22 +136,22 @@ class ConsoleFrame(wx.Frame):
                 (wx.ACCEL_NORMAL, wx.WXK_F10, self.ID_CONTINUE),
                 (wx.ACCEL_NORMAL, wx.WXK_ESCAPE, self.ID_BACK),
                 (wx.ACCEL_CTRL, ord("Q"), self.ID_STOP),
-                (wx.ACCEL_CTRL, ord("F"), self.ID_SEARCH),
+                (wx.ACCEL_CMD, ord("F"), self.ID_SEARCH),
             ]
         )
         self.SetAcceleratorTable(accels)
-        self.Bind(wx.EVT_MENU, self.panel.OnRunUntilAccel, id=self.ID_RUN_UNTIL)
-        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("S"), id=self.ID_STEP_INTO)
-        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("O"), id=self.ID_STEP_OVER)
-        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("U"), id=self.ID_STEP_OUT)
-        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("C"), id=self.ID_CONTINUE)
-        self.Bind(wx.EVT_MENU, lambda evt: self.panel.ShutdownConsole(), id=self.ID_STOP)
+        self.Bind(wx.EVT_MENU, self.consolePanel.OnRunUntilAccel, id=self.ID_RUN_UNTIL)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand("S"), id=self.ID_STEP_INTO)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand("O"), id=self.ID_STEP_OVER)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand("U"), id=self.ID_STEP_OUT)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand("C"), id=self.ID_CONTINUE)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.ShutdownConsole(), id=self.ID_STOP)
         self.Bind(wx.EVT_MENU, self.OnBack, id=self.ID_BACK)
-        self.Bind(wx.EVT_MENU, self.panel.OnDialogSearch(), id=self.ID_SEARCH)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.OnDialogSearch(), id=self.ID_SEARCH)
 
     def OnClose(self, event):
         """Handles window close event gracefully."""
-        self.panel.ShutdownConsole()
+        self.consolePanel.ShutdownConsole()
         self.Destroy()
 
     def OnBack(self, event):
@@ -837,7 +837,7 @@ class ConsolePanel(wx.Panel):
 
         return False
 
-    def OnDialogSearch(self, event):
+    def OnDialogSearch(self):
         dlg = getattr(self.modulesDisplay, "dlg", None)
         if dlg and dlg.IsShown():
             dlg.OnSearch()
