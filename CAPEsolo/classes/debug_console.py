@@ -1,6 +1,7 @@
 import bisect
 import logging
 import re
+import struct
 import threading
 import time
 import zlib
@@ -22,6 +23,7 @@ from .debug_controls import (
     RegsTextCtrl,
     StackListCtrl,
     ThreadListCtrl,
+    SymbolsDialog,
 )
 from .debug_graph import CfgBuilder, SvgFrame
 from .debug_pipe import CommandPipeHandler
@@ -59,6 +61,7 @@ REGISTERS = {
     "R14",
     "R15",
 }
+wx.Bell = lambda: None
 
 
 class DebugConsole:
@@ -122,6 +125,7 @@ class ConsoleFrame(wx.Frame):
         self.ID_RUN_UNTIL = wx.NewIdRef()
         self.ID_CONTINUE = wx.NewIdRef()
         self.ID_BACK = wx.NewIdRef()
+        self.ID_SEARCH = wx.NewIdRef()
 
         accels = wx.AcceleratorTable(
             [
@@ -130,8 +134,9 @@ class ConsoleFrame(wx.Frame):
                 (wx.ACCEL_NORMAL, wx.WXK_F8, self.ID_STEP_OVER),
                 (wx.ACCEL_NORMAL, wx.WXK_F9, self.ID_STEP_OUT),
                 (wx.ACCEL_NORMAL, wx.WXK_F10, self.ID_CONTINUE),
-                (wx.ACCEL_CTRL, ord("Q"), self.ID_STOP),
                 (wx.ACCEL_NORMAL, wx.WXK_ESCAPE, self.ID_BACK),
+                (wx.ACCEL_CTRL, ord("Q"), self.ID_STOP),
+                (wx.ACCEL_CTRL, ord("F"), self.ID_SEARCH),
             ]
         )
         self.SetAcceleratorTable(accels)
@@ -142,6 +147,7 @@ class ConsoleFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("C"), id=self.ID_CONTINUE)
         self.Bind(wx.EVT_MENU, lambda evt: self.panel.ShutdownConsole(), id=self.ID_STOP)
         self.Bind(wx.EVT_MENU, self.OnBack, id=self.ID_BACK)
+        self.Bind(wx.EVT_MENU, self.panel.OnDialogSearch(), id=self.ID_SEARCH)
 
     def OnClose(self, event):
         """Handles window close event gracefully."""
@@ -155,13 +161,10 @@ class ConsoleFrame(wx.Frame):
 
         ctrl = focused
         while ctrl and not isinstance(ctrl, (DisassemblyListCtrl, MemDumpListCtrl)):
-            if hasattr(ctrl, "OnBack"):
-                ctrl = ctrl.OnBack(event)
+            ctrl = ctrl.GetParent()
 
-            return
-
-        ctrl = ctrl.GetParent()
-
+        if hasattr(ctrl, "OnBack"):
+            ctrl.OnBack(event)
 
 
 class ConsolePanel(wx.Panel):
@@ -194,7 +197,7 @@ class ConsolePanel(wx.Panel):
         self.prevHighlight = None
         self.initMemDump = True
         self.cip = None
-        self.bits = 64
+        self.bits = None
         self.pageBuffers: Dict[int, bytes] = {}
         self.requestedPages = set()
         self.pageLock = threading.Lock()
@@ -202,6 +205,7 @@ class ConsolePanel(wx.Panel):
         self.idleDecodeQueue = []
         self.symbols: Dict[int, str] = {}
         self.symbolModules = []
+        self.symbol = None
         self.currentSymbolModule = None
         self.symbolPage = 0
         self.moduleRanges = []
@@ -228,8 +232,8 @@ class ConsolePanel(wx.Panel):
         regsSizer.Add(self.regsDisplay, 1, wx.EXPAND | wx.ALL, 5)
 
         topSizer = wx.BoxSizer(wx.HORIZONTAL)
-        topSizer.Add(consoleSizer, 7, wx.EXPAND)
-        topSizer.Add(regsSizer, 3, wx.EXPAND)
+        topSizer.Add(consoleSizer, 6, wx.EXPAND)
+        topSizer.Add(regsSizer, 4, wx.EXPAND)
         mainSizer.Add(topSizer, 1, wx.EXPAND)
 
         # Memory Dump
@@ -363,20 +367,23 @@ class ConsolePanel(wx.Panel):
         elif event.GetKeyCode() == wx.WXK_F8 and event.ControlDown():
             self.SendCommand("O")
         elif event.GetKeyCode() == wx.WXK_F10 and event.ControlDown():
-            self.SendCommand("C")
+            self.SendCommand(self.CMD_CONTINUE)
         else:
             event.Skip()
 
     def OnAddressEnter(self, event):
         self.memAddr = self.memAddressInput.GetValue().strip()
         if self.memAddr:
-            self.SendCommand("M", self.memAddr)
+            self.SendCommand(self.CMD_MEM_DUMP, self.memAddr)
 
         self.memAddressInput.Clear()
         event.Skip()
 
-    def AppendConsole(self, text):
+    def AppendConsole(self, text: str):
         """Appends text to the output console."""
+        if not isinstance(text, str):
+            return
+
         self.outputConsole.AppendText(text + "\n")
 
     def UpdateRegs(self, text):
@@ -386,6 +393,8 @@ class ConsolePanel(wx.Panel):
         regsText = self.regsDisplay.GetValue()
         m = re.search(r"\b([ER]IP):\s*([0-9A-Fa-f]+)", regsText)
         self.cip = int(m.group(2), 16) if m else None
+        if not self.bits:
+            self.bits = 64 if "RAX" in regsText else 32
 
     def UpdateStack(self, data):
         """Update stack display."""
@@ -717,7 +726,6 @@ class ConsolePanel(wx.Panel):
         m = re.search(r"0x[0-9a-fA-F]+", data)
         if m:
             cip = int(m.group(0), 16)
-            self.bits = 64 if cip > 0xFFFFFFFF else 32
             self.cip = cip
 
     def PatchDisasmText(self, disasmText: str) -> str:
@@ -727,18 +735,19 @@ class ConsolePanel(wx.Panel):
 
         for match in matches:
             raw = match.group()
-            stripped = raw.strip("[]")
+            addrStr = raw.strip("[]")
+
             try:
-                addrInt = int(stripped, 16)
+                addrInt = int(addrStr, 16)
             except ValueError:
                 continue
 
-            if addrInt in self.symbols:
-                replacement = self.symbols[addrInt]
-                if raw.startswith("[") and raw.endswith("]"):
-                    replacement = f"[{replacement}]"
+            replacement = None
+            symbol = self.symbols.get(addrInt)
+            if symbol:
+                replacement = symbol
 
-                log.debug("[DEBUG CONSOLE] Replaced %s with %s", raw, replacement)
+            if replacement:
                 start, end = match.start() + offset, match.end() + offset
                 patched = patched[:start] + replacement + patched[end:]
                 offset += len(replacement) - (end - start)
@@ -795,8 +804,7 @@ class ConsolePanel(wx.Panel):
         cfg = CfgBuilder(insts)
         cfg.BuildBlocks()
         cfg.RenderGraph()
-        # wx.CallLater(1, cfg.ShowFlowGraph, target)
-        wx.CallLater(1, SvgFrame)
+        wx.CallLater(1, SvgFrame, target)
 
     def PageCrcChanged(self, pageBase: int) -> bool:
         """Return if the bytes at `pageBase` have changed since the last check."""
@@ -829,6 +837,11 @@ class ConsolePanel(wx.Panel):
 
         return False
 
+    def OnDialogSearch(self, event):
+        dlg = getattr(self.modulesDisplay, "dlg", None)
+        if dlg and dlg.IsShown():
+            dlg.OnSearch()
+
     def HandleConnection(self, payload):
         """Handle initial connection logic."""
         self.connected = True
@@ -838,6 +851,7 @@ class ConsolePanel(wx.Panel):
             self.parent.Layout()
 
         self.AppendConsole(payload)
+        self.SendCommand(self.CMD_REG_UPDATE)
         self.SendCommand(self.CMD_MODULE_LIST)
 
     def HandleSetBreakpoint(self, payload):
@@ -862,6 +876,10 @@ class ConsolePanel(wx.Panel):
         self.JumpTo(self.cip)
 
     def HandleBreakpointsList(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Breakpoints: %s", payload)
+            return
+
         bps: List[Tuple[str, str]] = []
         if "No" in payload:
             self.UpdateBreakpoints("")
@@ -944,7 +962,7 @@ class ConsolePanel(wx.Panel):
 
                 try:
                     absAddr, symName = entry.split(",", 1)
-                    self.symbols[absAddr] = f"{modName}!{symName}"
+                    self.symbols[int(absAddr)] = f"{modName}!{symName}"
                 except ValueError:
                     continue
 
@@ -995,12 +1013,47 @@ class ConsolePanel(wx.Panel):
             wx.CallLater(1, self.ProcessNextIdlePage)
 
     def HandleRegUpdate(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Registers: %s", payload)
+            return
+
         self.UpdateRegs(payload)
 
+    def GetSymbol(self, payload):
+        try:
+            buffer = bytes.fromhex(payload)
+            if len(buffer) == 4:
+                unpackFmt = "<I"
+            elif len(buffer) == 8:
+                unpackFmt = "<Q"
+            else:
+                return
+
+            leaddr = struct.unpack(unpackFmt, buffer)[0]
+            return self.symbols.get(leaddr, "")
+        except ValueError:
+            return None
+
     def HandleMemDump(self, payload):
-        self.UpdateMemDump(payload)
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Memdump: %s", payload)
+            return
+
+        if len(payload) == 8 or len(payload) == 16:
+            symbol = self.GetSymbol(payload)
+        else:
+            self.UpdateMemDump(payload)
+            return
+
+        if symbol:
+            self.AppendConsole(symbol)
+            self.symbol = symbol
 
     def HandleStackUpdate(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Stack: %s", payload)
+            return
+
         self.UpdateStack(payload)
 
     def HandleConsoleOutput(self, payload):

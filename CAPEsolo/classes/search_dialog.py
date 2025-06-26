@@ -14,6 +14,9 @@ class SearchDialog(wx.Dialog):
             self.Finder = self.FindCell
             self.FinderNext = self.FindNextCell
             self.currentSearchPos = (0, 0)
+        elif hasattr(parent, "listCtrl"):
+            self.listCtrl = parent.listCtrl
+            self.Finder = self.SearchList
         else:
             self.resultsWindow = parent.resultsWindow
             self.lastFoundPos = -1
@@ -60,25 +63,13 @@ class SearchDialog(wx.Dialog):
             searchTextLength = len(searchText)
             textCtrl = self.resultsWindow
             backgroundColor = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW)
-            textCtrl.SetStyle(
-                self.lastFoundPos,
-                self.lastFoundPos + searchTextLength,
-                wx.TextAttr("red", backgroundColor),
-            )
+            textCtrl.SetStyle(self.lastFoundPos, self.lastFoundPos + searchTextLength, wx.TextAttr("red", backgroundColor))
             textCtrl.ShowPosition(self.lastFoundPos)
-            wx.CallLater(
-                5000,
-                self.ResetHighlight,
-                textCtrl,
-                self.lastFoundPos,
-                searchTextLength,
-            )
+            wx.CallLater(5000, self.ResetHighlight, textCtrl, self.lastFoundPos, searchTextLength)
             textCtrl.SetInsertionPoint(self.lastFoundPos)
             textCtrl.SetFocus()
         else:
-            wx.MessageBox(
-                "Text not found.", "Search Result", wx.OK | wx.ICON_INFORMATION
-            )
+            wx.MessageBox("Text not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
 
     def ResetHighlight(self, textCtrl, start, length):
         textColor = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT)
@@ -108,15 +99,12 @@ class SearchDialog(wx.Dialog):
                     self.grid.MakeCellVisible(row, col)
                     self.grid.SelectBlock(row, col, row, col)
                     self.currentSearchPos = (row, col + 1)
+
                     if self.currentSearchPos[1] >= cols:
                         self.currentSearchPos = (self.currentSearchPos[0] + 1, 0)
                     return
 
-        wx.MessageBox(
-            f"'{searchText}' not found.",
-            "Search Result",
-            wx.OK | wx.ICON_INFORMATION,
-        )
+        wx.MessageBox(f"'{searchText}' not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
         self.currentSearchPos = (0, 0)
 
     def FindCell(self, event):
@@ -125,3 +113,19 @@ class SearchDialog(wx.Dialog):
 
     def FindNextCell(self, event):
         self.SearchCells()
+
+    def SearchList(self, query):
+        query = query.lower()
+        num_items = self.listCtrl.GetItemCount()
+        num_cols = self.listCtrl.GetColumnCount()
+
+        for i in range(num_items):
+            for col in range(num_cols):
+                text = self.listCtrl.GetItem(i, col).GetText().lower()
+                if query in text:
+                    self.listCtrl.Select(i)
+                    self.listCtrl.Focus(i)
+                    self.listCtrl.EnsureVisible(i)
+                    return
+
+        wx.MessageBox(f"No match found for: {query}", "Search", wx.OK | wx.ICON_INFORMATION)
