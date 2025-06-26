@@ -219,8 +219,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
         miGoToCIP = menu.Append(wx.ID_ANY, "Go To EIP/RIP")
         menu.AppendSeparator()
         miDumpAddress = menu.Append(wx.ID_ANY, "Dump Address")
-        miResolveAddress = menu.Append(wx.ID_ANY, "Resolve Symbol Name From Address")
-        miResolveRef = menu.Append(wx.ID_ANY, "Resolve Symbol Name From Dereference")
+        miResolveAddress = menu.Append(wx.ID_ANY, "Resolve Export Name From Address")
+        miResolveRef = menu.Append(wx.ID_ANY, "Resolve Export Name From Dereference")
         menu.AppendSeparator()
         miStepInto = menu.Append(wx.ID_ANY, "Step Into")
         miStepOver = menu.Append(wx.ID_ANY, "Step Over")
@@ -513,8 +513,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
         except ValueError:
             return
 
-        symbol = self.parent.symbols.get(addrInt)
-        self.parent.AppendConsole(symbol)
+        export = self.parent.exports.get(addrInt)
+        self.parent.AppendConsole(export)
         return
 
     def OnResolveRef(self, event):
@@ -540,8 +540,8 @@ class RegsTextCtrl(wx.TextCtrl):
         miCopy = menu.Append(wx.ID_ANY, "Copy")
         miDumpAddress = menu.Append(wx.ID_ANY, "Dump Memory Address")
         miFollowAddress = menu.Append(wx.ID_ANY, "Follow Address")
-        miSymbolAddress = menu.Append(wx.ID_ANY, "Resolve Symbol Name From Address")
-        miSymbolDeref = menu.Append(wx.ID_ANY, "Resolve Symbol Name From Dereference")
+        miExportAddress = menu.Append(wx.ID_ANY, "Resolve Export Name From Address")
+        miExportDeref = menu.Append(wx.ID_ANY, "Resolve Export Name From Dereference")
         menu.AppendSeparator()
         miClearZeroFlag = menu.Append(wx.ID_ANY, "Clear Zero Flag")
         miSetZeroFlag = menu.Append(wx.ID_ANY, "Set Zero Flag")
@@ -557,8 +557,8 @@ class RegsTextCtrl(wx.TextCtrl):
 
         self.Bind(wx.EVT_MENU, self.OnDumpAddress, miDumpAddress)
         self.Bind(wx.EVT_MENU, self.OnFollowAddress, miFollowAddress)
-        self.Bind(wx.EVT_MENU, self.OnResolveAddress, miSymbolAddress)
-        self.Bind(wx.EVT_MENU, self.OnResolveRef, miSymbolDeref)
+        self.Bind(wx.EVT_MENU, self.OnResolveAddress, miExportAddress)
+        self.Bind(wx.EVT_MENU, self.OnResolveRef, miExportDeref)
         self.Bind(wx.EVT_MENU, self.ClearZeroFlag, miClearZeroFlag)
         self.Bind(wx.EVT_MENU, self.SetZeroFlag, miSetZeroFlag)
         self.Bind(wx.EVT_MENU, self.FlipZeroFlag, miFlipZeroFlag)
@@ -629,8 +629,8 @@ class RegsTextCtrl(wx.TextCtrl):
         except ValueError:
             return
 
-        symbol = self.parent.symbols.get(addrInt)
-        self.parent.AppendConsole(symbol)
+        export = self.parent.exports.get(addrInt)
+        self.parent.AppendConsole(export)
         return
 
     def OnResolveRef(self, event):
@@ -709,9 +709,9 @@ class StackListCtrl(wx.ListCtrl):
         miCopy = menu.Append(wx.ID_ANY, "Copy")
         miFollowAddr = menu.Append(wx.ID_ANY, "Dump Address")
         miFollowVal = menu.Append(wx.ID_ANY, "Dump Value")
-        miSymbolAddress = menu.Append(wx.ID_ANY, "Symbol Name From Address")
-        miSymbolValue = menu.Append(wx.ID_ANY, "Symbol Name From Value")
-        miSymbolValueRef = menu.Append(wx.ID_ANY, "Symbol Name From Value Dereference")
+        miExportAddress = menu.Append(wx.ID_ANY, "Export Name From Address")
+        miExportValue = menu.Append(wx.ID_ANY, "Export Name From Value")
+        miExportValueRef = menu.Append(wx.ID_ANY, "Export Name From Value Dereference")
 
         self.Bind(wx.EVT_MENU, self.OnCopy, miCopy)
         self.Bind(
@@ -730,9 +730,9 @@ class StackListCtrl(wx.ListCtrl):
             ),
             miFollowVal,
         )
-        self.Bind(wx.EVT_MENU, lambda e: self.OnResolveAddress(row), miSymbolAddress)
-        self.Bind(wx.EVT_MENU, lambda e: self.OnResolveValue(row), miSymbolValue)
-        self.Bind(wx.EVT_MENU, lambda e: self.OnResolveValueRef(row), miSymbolValueRef)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnResolveAddress(row), miExportAddress)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnResolveValue(row), miExportValue)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnResolveValueRef(row), miExportValueRef)
 
         self.PopupMenu(menu, pos)
         menu.Destroy()
@@ -792,8 +792,8 @@ class StackListCtrl(wx.ListCtrl):
         except ValueError:
             return
 
-        symbol = self.parent.symbols.get(addrInt)
-        self.parent.AppendConsole(symbol)
+        export = self.parent.exports.get(addrInt)
+        self.parent.AppendConsole(export)
         return
 
     def OnResolveValue(self, row):
@@ -803,8 +803,8 @@ class StackListCtrl(wx.ListCtrl):
         except ValueError:
             return
 
-        symbol = self.parent.symbols.get(addrInt)
-        self.parent.AppendConsole(symbol)
+        export = self.parent.exports.get(addrInt)
+        self.parent.AppendConsole(export)
         return
 
     def OnResolveValueRef(self, row):
@@ -1060,41 +1060,41 @@ class ModulesListCtrl(wx.ListCtrl):
             return
 
         menu = wx.Menu()
-        mi = menu.Append(wx.ID_ANY, "Symbols")
-        self.Bind(wx.EVT_MENU, lambda e: self.OnShowSymbols(row), mi)
+        mi = menu.Append(wx.ID_ANY, "Exports")
+        self.Bind(wx.EVT_MENU, lambda e: self.OnShowExports(row), mi)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
-    def OnShowSymbols(self, row):
+    def OnShowExports(self, row):
         modName = self.GetItemText(row, 2)
         matches = []
-        for addr, full in self.parent.symbols.items():
+        for addr, full in self.parent.exports.items():
             if full.startswith(modName + "!"):
                 _, sym = full.split("!", 1)
                 matches.append((sym, addr))
 
         if not matches:
-            wx.MessageBox(f"No symbols for module {modName}", "Info", wx.OK | wx.ICON_INFORMATION)
+            wx.MessageBox(f"No exports for module {modName}", "Info", wx.OK | wx.ICON_INFORMATION)
             return
 
-        self.dlg = SymbolsDialog(self, modName, matches)
+        self.dlg = ExportsDialog(self, modName, matches)
         self.dlg.ShowModal()
         self.dlg.Destroy()
         self.dlg = None
 
 
-class SymbolsDialog(wx.Dialog):
-    def __init__(self, parent, mod_name, symbols):
+class ExportsDialog(wx.Dialog):
+    def __init__(self, parent, mod_name, exports):
         super().__init__(
-            parent, title=f"Symbols for {mod_name}", size=wx.Size(500, 600), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
+            parent, title=f"Exports for {mod_name}", size=wx.Size(500, 600), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
         )
         self.parent = parent
-        self.symbols = symbols
+        self.exports = exports
         self.listCtrl = wx.ListCtrl(self, style=wx.LC_REPORT | wx.BORDER_SUNKEN | wx.LC_SINGLE_SEL)
         self.listCtrl.InsertColumn(0, "Address", width=120)
         self.listCtrl.InsertColumn(1, "Name", width=350)
-        self.symbols.sort(key=lambda x: x[1])
-        for i, (symName, addr) in enumerate(self.symbols):
+        self.exports.sort(key=lambda x: x[1])
+        for i, (symName, addr) in enumerate(self.exports):
             row = self.listCtrl.InsertItem(i, f"{int(addr):#x}")
             self.listCtrl.SetItem(row, 1, symName)
 

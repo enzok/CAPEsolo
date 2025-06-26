@@ -1,3 +1,5 @@
+import re
+
 import wx
 
 
@@ -72,7 +74,19 @@ class SearchDialog(wx.Dialog):
     def FindText(self, startPos=0):
         searchText = self.findWindow.GetValue()
         content = self.resultsWindow.GetValue()
-        self.lastFoundPos = content.find(searchText, startPos)
+        if not self.caseSensitive:
+            searchText = searchText.lower()
+            content = content.lower()
+
+        self.lastFoundPos = -1
+        if self.fullWord:
+            pattern = r'\b' + re.escape(searchText) + r'\b'
+            match = re.search(pattern, content[startPos:])
+            if match:
+                self.lastFoundPos = startPos + match.start()
+        else:
+            self.lastFoundPos = content.find(searchText, startPos)
+
         self.HighlightText()
 
     def HighlightText(self):
@@ -106,6 +120,7 @@ class SearchDialog(wx.Dialog):
         textCtrl.Refresh()
 
     def SearchCells(self):
+        match = False
         searchText = self.findWindow.GetValue()
         if not self.caseSensitive:
             searchText = searchText.lower()
@@ -132,7 +147,9 @@ class SearchDialog(wx.Dialog):
                         self.currentSearchPos = (self.currentSearchPos[0] + 1, 0)
                     return
 
-        wx.MessageBox(f"'{searchText}' not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
+        if not match:
+            wx.MessageBox(f"'{searchText}' not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
+
         self.currentSearchPos = (0, 0)
 
     def FindCell(self, event):
@@ -143,6 +160,7 @@ class SearchDialog(wx.Dialog):
         self.SearchCells()
 
     def SearchList(self):
+        match = False
         searchText = self.findWindow.GetValue()
         if not self.caseSensitive:
             searchText = searchText.lower()
@@ -170,7 +188,9 @@ class SearchDialog(wx.Dialog):
                         self.currentSearchRow = 0
                     return
 
-        wx.MessageBox(f"'{searchText}' not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
+        if not match:
+            wx.MessageBox(f"'{searchText}' not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
+
         self.currentSearchRow = 0
 
     def FindInList(self, event):

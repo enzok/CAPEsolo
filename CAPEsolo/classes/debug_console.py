@@ -23,7 +23,6 @@ from .debug_controls import (
     RegsTextCtrl,
     StackListCtrl,
     ThreadListCtrl,
-    SymbolsDialog,
 )
 from .debug_graph import CfgBuilder, SvgFrame
 from .debug_pipe import CommandPipeHandler
@@ -184,7 +183,7 @@ class ConsolePanel(wx.Panel):
     CMD_PAGE_MAP = "P"
     CMD_REG_UPDATE = "R"
     CMD_EXECUTION = ("O", "S", "T", "U")
-    CMD_SYMBOLS = "Y"
+    CMD_EXPORTS = "Y"
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -203,11 +202,11 @@ class ConsolePanel(wx.Panel):
         self.pageLock = threading.Lock()
         self.pageHashes = {}
         self.idleDecodeQueue = []
-        self.symbols: Dict[int, str] = {}
-        self.symbolModules = []
-        self.symbol = None
-        self.currentSymbolModule = None
-        self.symbolPage = 0
+        self.exports: Dict[int, str] = {}
+        self.exportModules = []
+        self.export = None
+        self.currentExportsModule = None
+        self.exportsPage = 0
         self.moduleRanges = []
         self.InitGUI()
 
@@ -583,7 +582,7 @@ class ConsolePanel(wx.Panel):
             self.CMD_BREAKPOINT_LIST: self.HandleBreakpointsList,
             self.CMD_THREADS: self.HandleThreads,
             self.CMD_MODULE_LIST: self.HandleModules,
-            self.CMD_SYMBOLS: self.HandleSymbols,
+            self.CMD_EXPORTS: self.HandleExports,
         }
 
         if command in self.CMD_CONSOLE:
@@ -743,9 +742,9 @@ class ConsolePanel(wx.Panel):
                 continue
 
             replacement = None
-            symbol = self.symbols.get(addrInt)
-            if symbol:
-                replacement = symbol
+            export = self.exports.get(addrInt)
+            if export:
+                replacement = export
 
             if replacement:
                 start, end = match.start() + offset, match.end() + offset
@@ -754,23 +753,23 @@ class ConsolePanel(wx.Panel):
 
         return patched
 
-    def GetAllSymbols(self, modules: List[Tuple[str, str, str, str]]):
-        self.symbolModules = list(modules)
-        self.LoadNextModuleSymbols()
+    def GetAllExports(self, modules: List[Tuple[str, str, str, str]]):
+        self.exportModules = list(modules)
+        self.LoadNextModuleExports()
 
-    def LoadNextModuleSymbols(self):
-        if not self.symbolModules:
-            # log.info("[DEBUG CONSOLE] Finished loading all symbols.")
+    def LoadNextModuleExports(self):
+        if not self.exportModules:
+            # log.info("[DEBUG CONSOLE] Finished loading all exports.")
             return
 
-        _, _, modName, _ = self.symbolModules.pop(0)
-        self.symbolPage = 0
-        self.currentSymbolModule = modName
-        self.RequestNextSymbolPage()
+        _, _, modName, _ = self.exportModules.pop(0)
+        self.exportsPage = 0
+        self.currentExportsModule = modName
+        self.RequestNextExportsPage()
 
-    def RequestNextSymbolPage(self):
-        data = f"{self.currentSymbolModule}|{self.symbolPage}"
-        self.SendCommand(self.CMD_SYMBOLS, data)
+    def RequestNextExportsPage(self):
+        data = f"{self.currentExportsModule}|{self.exportsPage}"
+        self.SendCommand(self.CMD_EXPORTS, data)
 
     def ProcessServerOutput(self, data):
         """Process server output by parsing command and payload, then dispatching."""
@@ -934,15 +933,15 @@ class ConsolePanel(wx.Panel):
 
         if modules:
             self.BuildModuleRanges(modules)
-            self.GetAllSymbols(modules)
+            self.GetAllExports(modules)
             self.UpdateModules(modules)
 
         if self.AddressInModules(self.cip):
             self.JumpTo(self.cip)
 
-    def HandleSymbols(self, payload):
+    def HandleExports(self, payload):
         if payload.startswith("Failed"):
-            log.warning("[DEBUG CONSOLE] Symbols: %s", payload)
+            log.warning("[DEBUG CONSOLE] Exports: %s", payload)
             return
 
         if "||" not in payload:
@@ -951,7 +950,7 @@ class ConsolePanel(wx.Panel):
         try:
             modName, *data, status = payload.split("||", 2)
         except ValueError:
-            wx.CallAfter(self.LoadNextModuleSymbols)
+            wx.CallAfter(self.LoadNextModuleExports)
             return
 
         if data[0] and modName:
@@ -962,15 +961,15 @@ class ConsolePanel(wx.Panel):
 
                 try:
                     absAddr, symName = entry.split(",", 1)
-                    self.symbols[int(absAddr)] = f"{modName}!{symName}"
+                    self.exports[int(absAddr)] = f"{modName}!{symName}"
                 except ValueError:
                     continue
 
         if status == "MORE":
-            self.symbolPage += 1
-            wx.CallAfter(self.RequestNextSymbolPage)
+            self.exportsPage += 1
+            wx.CallAfter(self.RequestNextExportsPage)
         else:
-            wx.CallAfter(self.LoadNextModuleSymbols)
+            wx.CallAfter(self.LoadNextModuleExports)
 
     def HandlePageMap(self, payload):
         self.disassemblyConsole.LoadPageMap(payload)
@@ -1019,7 +1018,7 @@ class ConsolePanel(wx.Panel):
 
         self.UpdateRegs(payload)
 
-    def GetSymbol(self, payload):
+    def GetExport(self, payload):
         try:
             buffer = bytes.fromhex(payload)
             if len(buffer) == 4:
@@ -1030,7 +1029,7 @@ class ConsolePanel(wx.Panel):
                 return
 
             leaddr = struct.unpack(unpackFmt, buffer)[0]
-            return self.symbols.get(leaddr, "")
+            return self.exports.get(leaddr, "")
         except ValueError:
             return None
 
@@ -1040,14 +1039,14 @@ class ConsolePanel(wx.Panel):
             return
 
         if len(payload) == 8 or len(payload) == 16:
-            symbol = self.GetSymbol(payload)
+            export = self.GetExport(payload)
         else:
             self.UpdateMemDump(payload)
             return
 
-        if symbol:
-            self.AppendConsole(symbol)
-            self.symbol = symbol
+        if export:
+            self.AppendConsole(export)
+            self.export = export
 
     def HandleStackUpdate(self, payload):
         if payload.startswith("Failed"):
