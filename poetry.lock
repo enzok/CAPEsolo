@@ -70,14 +70,14 @@ six = ">=1.9.0"
 
 [[package]]
 name = "cape-parsers"
-version = "0.1.36"
+version = "0.1.37"
 description = "CAPE: Malware Configuration Extraction"
 optional = false
 python-versions = "<4.0,>=3.10"
 groups = ["main"]
 files = [
-    {file = "cape_parsers-0.1.36-py3-none-any.whl", hash = "sha256:c0944f8183aaf53d4a6c8f370423ce1134bdc4a7f7b23e37f92f0e061423e229"},
-    {file = "cape_parsers-0.1.36.tar.gz", hash = "sha256:459db9a10a2c09a1dfb386dcec1b7968293d2c6eef417c4179022895e396ddc5"},
+    {file = "cape_parsers-0.1.37-py3-none-any.whl", hash = "sha256:4114a72c85cf3c27c5aeb2f1f8516b26c04926ab73b1bcee288685da1c8fd1de"},
+    {file = "cape_parsers-0.1.37.tar.gz", hash = "sha256:bd21f650fb2036dc7c54d4999dcbb60e535e84539ffb141628bc810a22accc4b"},
 ]
 
 [package.dependencies]
@@ -1414,4 +1414,4 @@ testing = ["coverage[toml]", "zope.event", "zope.testing"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.13"
-content-hash = "ff92019cd3f83420c756dfac72a3c60cde42df6804d436039f2893b6583e1501"
+content-hash = "d4773b58da20337239293ca45715f3e9d53edff0d8aea217d2ecd629f067f4a8"
