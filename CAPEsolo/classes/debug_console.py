@@ -13,6 +13,7 @@ import win32file
 import wx
 from distorm3 import Decode, Decode32Bits, Decode64Bits
 
+from CAPEsolo.capelib.cmdconsts import *
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
 from .debug_controls import (
     BreakpointsListCtrl,
@@ -140,10 +141,10 @@ class ConsoleFrame(wx.Frame):
         )
         self.SetAcceleratorTable(accels)
         self.Bind(wx.EVT_MENU, self.consolePanel.OnRunUntilAccel, id=self.ID_RUN_UNTIL)
-        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand("S"), id=self.ID_STEP_INTO)
-        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand("O"), id=self.ID_STEP_OVER)
-        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand("U"), id=self.ID_STEP_OUT)
-        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand("C"), id=self.ID_CONTINUE)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_STEP_INTO), id=self.ID_STEP_INTO)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_STEP_OVER), id=self.ID_STEP_OVER)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_STEP_OUT), id=self.ID_STEP_OUT)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_CONTINUE), id=self.ID_CONTINUE)
         self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.ShutdownConsole(), id=self.ID_STOP)
         self.Bind(wx.EVT_MENU, self.OnBack, id=self.ID_BACK)
         self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.OnDialogSearch(), id=self.ID_SEARCH)
@@ -169,22 +170,6 @@ class ConsoleFrame(wx.Frame):
 class ConsolePanel(wx.Panel):
     """A wxPython panel that supports multi-threaded debugging with labeled sections, hotkeys, and logging."""
 
-    # Command constants
-    CMD_CONSOLE = ""
-    CMD_MODULE_LIST = "A"
-    CMD_SET_BREAKPOINT = "B"
-    CMD_CONTINUE = "C"
-    CMD_DELETE_BREAKPOINT = "D"
-    CMD_THREADS = "H"
-    CMD_PAGE_LOAD = "I"
-    CMD_STACK_UPDATE = "K"
-    CMD_BREAKPOINT_LIST = "L"
-    CMD_MEM_DUMP = "M"
-    CMD_PAGE_MAP = "P"
-    CMD_REG_UPDATE = "R"
-    CMD_EXECUTION = ("O", "S", "T", "U")
-    CMD_EXPORTS = "Y"
-
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
@@ -208,6 +193,19 @@ class ConsolePanel(wx.Panel):
         self.currentExportsModule = None
         self.exportsPage = 0
         self.moduleRanges = []
+        self.CMD_PAGE_MAP = None
+        self.CMD_PAGE_LOAD = None
+        self.CMD_REG_UPDATE = None
+        self.CMD_MEM_DUMP = None
+        self.CMD_STACK_UPDATE = None
+        self.CMD_CONTINUE = None
+        self.CMD_SET_BREAKPOINT = None
+        self.CMD_DELETE_BREAKPOINT = None
+        self.CMD_BREAKPOINT_LIST = None
+        self.CMD_THREADS = None
+        self.CMD_MODULE_LIST = None
+        self.CMD_EXPORTS = None
+        self.CMD_MOD_FLAG = None
         self.InitGUI()
 
     def InitGUI(self):
@@ -321,10 +319,10 @@ class ConsolePanel(wx.Panel):
         self.runUntilBtn.Bind(wx.EVT_BUTTON, self.OnRunUntilAccel)
         debugButtons.Add(self.runUntilBtn, 0, wx.LEFT | wx.BOTTOM, 5)
         for btn, cmd in (
-            (self.stepIntoBtn, "S"),
-            (self.stepOverBtn, "O"),
-            (self.stepOutBtn, "U"),
-            (self.continueBtn, "C"),
+            (self.stepIntoBtn, CMD_STEP_INTO),
+            (self.stepOverBtn, CMD_STEP_OVER),
+            (self.stepOutBtn, CMD_RUN_UNTIL),
+            (self.continueBtn, CMD_CONTINUE),
         ):
             btn.SetMinSize(wx.Size(MAX_BTN_W, -1))
             btn.Bind(wx.EVT_BUTTON, lambda evt, c=cmd: self.SendCommand(c))
@@ -362,18 +360,18 @@ class ConsolePanel(wx.Panel):
             return
 
         if event.GetKeyCode() == wx.WXK_F7 and event.ControlDown():
-            self.SendCommand("S")
+            self.SendCommand(CMD_STEP_INTO)
         elif event.GetKeyCode() == wx.WXK_F8 and event.ControlDown():
-            self.SendCommand("O")
+            self.SendCommand(CMD_STEP_OVER)
         elif event.GetKeyCode() == wx.WXK_F10 and event.ControlDown():
-            self.SendCommand(self.CMD_CONTINUE)
+            self.SendCommand(CMD_CONTINUE)
         else:
             event.Skip()
 
     def OnAddressEnter(self, event):
         self.memAddr = self.memAddressInput.GetValue().strip()
         if self.memAddr:
-            self.SendCommand(self.CMD_MEM_DUMP, self.memAddr)
+            self.SendCommand(CMD_MEM_DUMP, self.memAddr)
 
         self.memAddressInput.Clear()
         event.Skip()
@@ -554,9 +552,9 @@ class ConsolePanel(wx.Panel):
                 log.info("[DEBUG CONSOLE] Pipe handle closed")
 
     def RefreshViewState(self):
-        self.SendCommand(self.CMD_REG_UPDATE)
+        self.SendCommand(CMD_REG_UPDATE)
         if self.initMemDump:
-            self.SendCommand(self.CMD_MEM_DUMP)
+            self.SendCommand(CMD_MEM_DUMP)
             self.initMemDump = False
         else:
             addr = self.memDumpDisplay.GetFirstHexAddress()
@@ -564,32 +562,32 @@ class ConsolePanel(wx.Panel):
                 self.memAddressInput.SetValue(addr)
                 self.OnAddressEnter(wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.memAddressInput.GetId()))
 
-        self.SendCommand(self.CMD_STACK_UPDATE)
-        self.SendCommand(self.CMD_THREADS)
-        self.SendCommand(self.CMD_BREAKPOINT_LIST)
+        self.SendCommand(CMD_STACK_UPDATE)
+        self.SendCommand(CMD_THREADS)
+        self.SendCommand(CMD_BREAKPOINT_LIST)
 
     def DispatchCommand(self, command, payload):
         """Dispatch commands to their respective handlers."""
         handlers = {
-            self.CMD_PAGE_MAP: self.HandlePageMap,
-            self.CMD_PAGE_LOAD: self.HandlePageLoad,
-            self.CMD_REG_UPDATE: self.HandleRegUpdate,
-            self.CMD_MEM_DUMP: self.HandleMemDump,
-            self.CMD_STACK_UPDATE: self.HandleStackUpdate,
-            self.CMD_CONTINUE: self.HandleContinue,
-            self.CMD_SET_BREAKPOINT: self.HandleSetBreakpoint,
-            self.CMD_DELETE_BREAKPOINT: self.HandleDeleteBreakpoint,
-            self.CMD_BREAKPOINT_LIST: self.HandleBreakpointsList,
-            self.CMD_THREADS: self.HandleThreads,
-            self.CMD_MODULE_LIST: self.HandleModules,
-            self.CMD_EXPORTS: self.HandleExports,
+            CMD_PAGE_MAP: self.HandlePageMap,
+            CMD_PAGE_LOAD: self.HandlePageLoad,
+            CMD_REG_UPDATE: self.HandleRegUpdate,
+            CMD_MEM_DUMP: self.HandleMemDump,
+            CMD_STACK_UPDATE: self.HandleStackUpdate,
+            CMD_CONTINUE: self.HandleContinue,
+            CMD_SET_BREAKPOINT: self.HandleSetBreakpoint,
+            CMD_DELETE_BREAKPOINT: self.HandleDeleteBreakpoint,
+            CMD_BREAKPOINT_LIST: self.HandleBreakpointsList,
+            CMD_THREADS: self.HandleThreads,
+            CMD_MODULE_LIST: self.HandleModules,
+            CMD_EXPORTS: self.HandleExports,
         }
 
-        if command in self.CMD_CONSOLE:
+        if command in CMD_CONSOLE:
             self.HandleConsoleOutput(payload)
             return
 
-        if command in self.CMD_EXECUTION:
+        if command in CMD_EXECUTION:
             self.HandleExecution(payload)
             return
 
@@ -600,18 +598,18 @@ class ConsolePanel(wx.Panel):
             log.warning("[DEBUG CONSOLE] Unknown command '%s' received", command)
 
     def RequestPage(self, pageBase: int):
-        self.SendCommand(self.CMD_PAGE_LOAD, hex(pageBase))
+        self.SendCommand(CMD_PAGE_LOAD, hex(pageBase))
 
     def JumpTo(self, address: int):
         """Use pageMap to find page."""
         self.cip = address
         if not self.AddressInModules(address):
-            self.SendCommand(self.CMD_MODULE_LIST)
+            self.SendCommand(CMD_MODULE_LIST)
             return
 
         region = self.disassemblyConsole.FindPage(address)
         if region is None:
-            self.SendCommand(self.CMD_PAGE_MAP)
+            self.SendCommand(CMD_PAGE_MAP)
             return
 
         desiredStart = self.cip
@@ -769,7 +767,7 @@ class ConsolePanel(wx.Panel):
 
     def RequestNextExportsPage(self):
         data = f"{self.currentExportsModule}|{self.exportsPage}"
-        self.SendCommand(self.CMD_EXPORTS, data)
+        self.SendCommand(CMD_EXPORTS, data)
 
     def ProcessServerOutput(self, data):
         """Process server output by parsing command and payload, then dispatching."""
@@ -850,8 +848,8 @@ class ConsolePanel(wx.Panel):
             self.parent.Layout()
 
         self.AppendConsole(payload)
-        self.SendCommand(self.CMD_REG_UPDATE)
-        self.SendCommand(self.CMD_MODULE_LIST)
+        self.SendCommand(CMD_REG_UPDATE)
+        self.SendCommand(CMD_MODULE_LIST)
 
     def HandleSetBreakpoint(self, payload):
         self.AppendConsole(payload)
@@ -859,7 +857,7 @@ class ConsolePanel(wx.Panel):
         if m:
             addr = int(m.group(0), 16)
             self.disassemblyConsole.SetBpBackground(addr)
-            self.SendCommand(self.CMD_BREAKPOINT_LIST)
+            self.SendCommand(CMD_BREAKPOINT_LIST)
 
     def HandleDeleteBreakpoint(self, payload):
         self.AppendConsole(payload)
@@ -867,7 +865,7 @@ class ConsolePanel(wx.Panel):
         if m:
             addr = int(m.group(0), 16)
             self.disassemblyConsole.ClearBpBackground(addr)
-            self.SendCommand(self.CMD_BREAKPOINT_LIST)
+            self.SendCommand(CMD_BREAKPOINT_LIST)
 
     def HandleContinue(self, payload):
         self.AppendConsole(payload)
@@ -876,7 +874,6 @@ class ConsolePanel(wx.Panel):
 
     def HandleBreakpointsList(self, payload):
         if payload.startswith("Failed"):
-            log.warning("[DEBUG CONSOLE] Breakpoints: %s", payload)
             return
 
         bps: List[Tuple[str, str]] = []
@@ -1014,6 +1011,13 @@ class ConsolePanel(wx.Panel):
     def HandleRegUpdate(self, payload):
         if payload.startswith("Failed"):
             log.warning("[DEBUG CONSOLE] Registers: %s", payload)
+            return
+
+        self.UpdateRegs(payload)
+
+    def HandleModFlag(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Flag: %s", payload)
             return
 
         self.UpdateRegs(payload)

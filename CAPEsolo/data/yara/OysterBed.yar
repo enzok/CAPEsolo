@@ -1,3 +1,4 @@
+rule OysterBedConfig
 {
     meta:
         author = "enzok"

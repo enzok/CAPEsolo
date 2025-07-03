@@ -22,5 +22,5 @@ rule Oyster
         $e_status_3 = "Can't start process" wide ascii
         $e_status_4 = "Can't create file." wide ascii
     condition:
-        4 of them or 5 of {$e_*}
+        4 of them or 5 of ($e_*)
 }

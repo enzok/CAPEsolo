@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple
 
 import wx
 
+from CAPEsolo.capelib.cmdconsts import *
 from .search_dialog import SearchDialog
 from .debug_graph import HAS_GRAPHVIZ
 
@@ -321,20 +322,20 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.HighlightCip(row)
 
     def OnStepInto(self, event):
-        self.parent.SendCommand("S")
+        self.parent.SendCommand(CMD_STEP_INTO)
 
     def OnStepOver(self, event):
-        self.parent.SendCommand("O")
+        self.parent.SendCommand(CMD_STEP_OVER)
 
     def OnStepOut(self, event):
-        self.parent.SendCommand("U")
+        self.parent.SendCommand(CMD_STEP_OUT)
 
     def OnRunUntil(self, row):
         addrStr = self.GetItemText(row, 0).strip()
         try:
             addr = int(addrStr, 16)
             payload = f"{addr:#X}"
-            self.parent.SendCommand("T", payload)
+            self.parent.SendCommand(CMD_RUN_UNTIL, payload)
         except ValueError as e:
             wx.MessageBox(f"Invalid address for Run Until: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
@@ -343,7 +344,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         try:
             addr = int(addrStr, 16)
             payload = f"{slot.lower()}|{addr:#X}"
-            self.parent.SendCommand("B", payload)
+            self.parent.SendCommand(CMD_SET_BREAKPOINT, payload)
         except ValueError as e:
             wx.MessageBox(f"Invalid address for Set Breakpoint Until: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
@@ -352,7 +353,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         try:
             addr = int(addrStr, 16)
             payload = f"{addr:#X}"
-            self.parent.SendCommand("D", payload)
+            self.parent.SendCommand(CMD_DELETE_BREAKPOINT, payload)
         except ValueError as e:
             wx.MessageBox(f"Invalid address forDelete Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
@@ -524,7 +525,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
             if self.parent.bits == 32:
                 size = 4
 
-            self.parent.SendCommand("M", f"{addrStr}|{size}")
+            self.parent.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{size}")
         return
 
 
@@ -619,8 +620,7 @@ class RegsTextCtrl(wx.TextCtrl):
         self.FlagCommand("FlipCarryFlag")
 
     def FlagCommand(self, cmd):
-        self.parent.SendCommand("E", cmd)
-        self.parent.SendCommand("K")
+        self.parent.SendCommand(CMD_MOD_FLAG, cmd)
 
     def OnResolveAddress(self, event):
         addrStr = self.GetStringSelection().strip()
@@ -640,7 +640,7 @@ class RegsTextCtrl(wx.TextCtrl):
             if self.parent.bits == 32:
                 size = 4
 
-            self.parent.SendCommand("M", f"{addrStr}|{size}")
+            self.parent.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{size}")
         return
 
 
@@ -814,7 +814,7 @@ class StackListCtrl(wx.ListCtrl):
             if self.parent.bits == 32:
                 size = 4
 
-            self.parent.SendCommand("M", f"{addrStr}|{size}")
+            self.parent.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{size}")
         return
 
 
@@ -1019,7 +1019,7 @@ class BreakpointsListCtrl(wx.ListCtrl):
         try:
             addr = int(addrStr, 16)
             payload = f"{addr:#X}"
-            self.parent.SendCommand("D", payload)
+            self.parent.SendCommand(CMD_DELETE_BREAKPOINT, payload)
         except ValueError as e:
             log.error("[DEBUG CONSOLE] Invalid address for Delete Breakpoint: %s (%s)", addrStr, e)
             wx.MessageBox(f"Invalid address forDelete Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
