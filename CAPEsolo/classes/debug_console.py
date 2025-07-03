@@ -206,6 +206,7 @@ class ConsolePanel(wx.Panel):
         self.CMD_MODULE_LIST = None
         self.CMD_EXPORTS = None
         self.CMD_MOD_FLAG = None
+        self.CMD_SET_CIP = None
         self.InitGUI()
 
     def InitGUI(self):
@@ -581,6 +582,8 @@ class ConsolePanel(wx.Panel):
             CMD_THREADS: self.HandleThreads,
             CMD_MODULE_LIST: self.HandleModules,
             CMD_EXPORTS: self.HandleExports,
+            CMD_SET_REGISTER: self.HandleSetRegister(),
+            CMD_MOD_FLAG: self.HandleModFlag,
         }
 
         if command in CMD_CONSOLE:
@@ -1018,6 +1021,13 @@ class ConsolePanel(wx.Panel):
     def HandleModFlag(self, payload):
         if payload.startswith("Failed"):
             log.warning("[DEBUG CONSOLE] Flag: %s", payload)
+            return
+
+        self.UpdateRegs(payload)
+
+    def HandleSetRegister(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Set CIP: %s", payload)
             return
 
         self.UpdateRegs(payload)

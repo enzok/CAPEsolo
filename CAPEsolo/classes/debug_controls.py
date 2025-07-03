@@ -218,6 +218,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         miCopy = menu.Append(wx.ID_ANY, "Copy")
         miGoTo = menu.Append(wx.ID_ANY, "Go To")
         miGoToCIP = menu.Append(wx.ID_ANY, "Go To EIP/RIP")
+        miSetCIP = menu.Append(wx.ID_ANY, "Set EIP/RIP")
         menu.AppendSeparator()
         miDumpAddress = menu.Append(wx.ID_ANY, "Dump Address")
         miResolveAddress = menu.Append(wx.ID_ANY, "Resolve Export Name From Address")
@@ -232,7 +233,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         for slot in ("Next", "0", "1", "2", "3"):
             bpId = wx.NewIdRef()
             bpMenu.Append(bpId, slot)
-            self.Bind(wx.EVT_MENU, lambda evt, s=slot: self.OnSetBreakpoint(evt, row, s), id=bpId)
+            self.Bind(wx.EVT_MENU, lambda e, s=slot: self.OnSetBreakpoint(row, s), id=bpId)
 
         menu.AppendSubMenu(bpMenu, "Set Breakpoint")
         miDeleteBreakpoint = menu.Append(wx.ID_ANY, "Delete Breakpoint")
@@ -245,7 +246,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         self.Bind(wx.EVT_MENU, self.OnCopy, miCopy)
         self.Bind(wx.EVT_MENU, self.OnGoTo, miGoTo)
-        self.Bind(wx.EVT_MENU, self.OnGoToCIP, miGoToCIP)
+        self.Bind(wx.EVT_MENU, self.OnGoToCip, miGoToCIP)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnSetCip(row), miSetCIP)
         self.Bind(wx.EVT_MENU, self.OnDumpAddress, miDumpAddress)
         self.Bind(wx.EVT_MENU, self.OnResolveAddress, miResolveAddress)
         self.Bind(wx.EVT_MENU, self.OnResolveRef, miResolveRef)
@@ -317,9 +319,22 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         dialog.Destroy()
 
-    def OnGoToCIP(self, event):
+    def OnGoToCip(self, event):
         row = self.GetCipRow(self.parent.cip)
         self.HighlightCip(row)
+
+    def OnSetCip(self, row):
+        addrStr = self.GetItemText(row, 0).strip()
+        try:
+            addr = int(addrStr, 16)
+            cip = "RIP"
+            if self.parent.bits == 32:
+                cip = "EIP"
+
+            payload = f"{cip}|{addr:#X}"
+            self.parent.SendCommand(CMD_SET_REGISTER, payload)
+        except ValueError as e:
+            wx.MessageBox(f"Invalid address for Set EIP/RIP: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnStepInto(self, event):
         self.parent.SendCommand(CMD_STEP_INTO)
@@ -339,14 +354,14 @@ class DisassemblyListCtrl(wx.ListCtrl):
         except ValueError as e:
             wx.MessageBox(f"Invalid address for Run Until: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
-    def OnSetBreakpoint(self, event, row, slot):
+    def OnSetBreakpoint(self, row, slot):
         addrStr = self.GetItemText(row, 0).strip()
         try:
             addr = int(addrStr, 16)
             payload = f"{slot.lower()}|{addr:#X}"
             self.parent.SendCommand(CMD_SET_BREAKPOINT, payload)
         except ValueError as e:
-            wx.MessageBox(f"Invalid address for Set Breakpoint Until: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
+            wx.MessageBox(f"Invalid address for Set Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnDeleteBreakpoint(self, row):
         addrStr = self.GetItemText(row, 0).strip()
@@ -355,7 +370,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
             payload = f"{addr:#X}"
             self.parent.SendCommand(CMD_DELETE_BREAKPOINT, payload)
         except ValueError as e:
-            wx.MessageBox(f"Invalid address forDelete Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
+            wx.MessageBox(f"Invalid address for Delete Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def ClearBpBackground(self, addr):
         row = self.GetInstructionRow(addr)
@@ -571,6 +586,20 @@ class RegsTextCtrl(wx.TextCtrl):
         self.Bind(wx.EVT_MENU, self.FlipCarryFlag, miFlipCarryFlag)
         self.Bind(wx.EVT_MENU, self.OnCopy, miCopy)
 
+        menu.AppendSeparator()
+        regMenu = wx.Menu()
+        regs = ["RAX", "RBX", "RCX", "RDX", "RSI", "RDI", "RSP", "RBP", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15"]
+        if self.parent.bits == 32:
+            regs = ["EAX", "EBX", "ECX", "EDX", "ESI", "EDI", "ESP", "EBP"]
+
+        for reg in regs:
+            miName = f"miSet{reg}"
+            mi = regMenu.Append(wx.ID_ANY, f"Set {reg}")
+            setattr(self, miName, mi)
+            self.Bind(wx.EVT_MENU, lambda e, r=reg: self.OnSetRegister(r), mi)
+
+        menu.AppendSubMenu(regMenu, "Set Register")
+
         pos = event.GetPosition()
         pos = self.ScreenToClient(pos)
         self.PopupMenu(menu, pos)
@@ -621,6 +650,21 @@ class RegsTextCtrl(wx.TextCtrl):
 
     def FlagCommand(self, cmd):
         self.parent.SendCommand(CMD_MOD_FLAG, cmd)
+
+    def OnSetRegister(self, reg):
+        prompt = f"Enter new value for {reg} (decimal or 0x-prefixed hex):"
+        valueStr = wx.GetTextFromUser(prompt, "Set Register", "", self)
+        if not valueStr:
+            return
+
+        try:
+            val = int(valueStr, 0)
+        except ValueError:
+            wx.MessageBox(f"'{valueStr}' is not a valid number.", "Error", wx.ICON_ERROR)
+            return
+
+        payload = f"{reg}|{val:#X}"
+        self.parent.SendCommand(CMD_SET_REGISTER, payload)
 
     def OnResolveAddress(self, event):
         addrStr = self.GetStringSelection().strip()
