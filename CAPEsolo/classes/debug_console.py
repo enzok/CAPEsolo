@@ -1029,7 +1029,7 @@ class ConsolePanel(wx.Panel):
 
     def HandleSetRegister(self, payload):
         if payload.startswith("Failed"):
-            log.warning("[DEBUG CONSOLE] Set CIP: %s", payload)
+            log.warning("[DEBUG CONSOLE] Set register: %s", payload)
             return
 
         self.UpdateRegs(payload)
@@ -1086,4 +1086,7 @@ class ConsolePanel(wx.Panel):
             log.error("[DEBUG CONSOLE] Failed to parse CIP from payload: %s", payload)
 
     def HandleNopInstruction(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] NopInstruction: %s", payload)
+
         self.JumpTo(self.cip)

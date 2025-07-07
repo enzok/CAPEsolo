@@ -263,7 +263,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.Bind(wx.EVT_MENU, lambda e: self.OnRunUntil(row), miRunUntil)
         self.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(row), miDeleteBreakpoint)
         self.Bind(wx.EVT_MENU, lambda e: self.parent.ShowFlowGraph(row), miGraph)
-        self.Bind(wx.EVT_MENU, lambda e: self.OnNopInstruction(row, col), miGraph)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnNopInstruction(row, col), miNopInstruction)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
