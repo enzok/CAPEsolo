@@ -214,11 +214,16 @@ class DisassemblyListCtrl(wx.ListCtrl):
         if row == wx.NOT_FOUND:
             return
 
+        col = self.GetColumnAtX(pos[0])
+
         menu = wx.Menu()
         miCopy = menu.Append(wx.ID_ANY, "Copy")
         miGoTo = menu.Append(wx.ID_ANY, "Go To")
         miGoToCIP = menu.Append(wx.ID_ANY, "Go To EIP/RIP")
         miSetCIP = menu.Append(wx.ID_ANY, "Set EIP/RIP")
+        if col == 0:
+            miNopInstruction = menu.Append(wx.ID_ANY, "NOP Instruction")
+
         menu.AppendSeparator()
         miDumpAddress = menu.Append(wx.ID_ANY, "Dump Address")
         miResolveAddress = menu.Append(wx.ID_ANY, "Resolve Export Name From Address")
@@ -241,6 +246,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         miGraphText = "Flow Graph"
         if not HAS_GRAPHVIZ:
             miGraphText += ": Install Graphviz"
+
         miGraph = menu.Append(wx.ID_ANY, miGraphText)
         miGraph.Enable(HAS_GRAPHVIZ)
 
@@ -257,6 +263,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.Bind(wx.EVT_MENU, lambda e: self.OnRunUntil(row), miRunUntil)
         self.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(row), miDeleteBreakpoint)
         self.Bind(wx.EVT_MENU, lambda e: self.parent.ShowFlowGraph(row), miGraph)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnNopInstruction(row, col), miGraph)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
@@ -518,9 +525,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
     def OnDumpAddress(self, event):
         sel = GetClipboardText().strip()
         if sel and IsValidHexAddress(sel):
-            self.parent.memAddressInput.SetValue(sel)
-            evt = wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.parent.memAddressInput.GetId())
-            self.parent.OnAddressEnter(evt)
+            self.parent.SendCommand(CMD_MEM_DUMP, sel)
 
     def OnResolveAddress(self, event):
         addrStr = GetClipboardText().strip()
@@ -531,7 +536,6 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         export = self.parent.exports.get(addrInt)
         self.parent.AppendConsole(export)
-        return
 
     def OnResolveRef(self, event):
         addrStr = GetClipboardText().strip()
@@ -541,7 +545,11 @@ class DisassemblyListCtrl(wx.ListCtrl):
                 size = 4
 
             self.parent.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{size}")
-        return
+
+    def OnNopInstruction(self, row, col):
+        addrStr = self.GetItemText(row, col)
+        if addrStr and IsValidHexAddress(addrStr):
+            self.parent.SendCommand(CMD_NOP_INSTRUCTION, addrStr)
 
 
 class RegsTextCtrl(wx.TextCtrl):

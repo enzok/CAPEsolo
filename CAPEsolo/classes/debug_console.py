@@ -207,6 +207,7 @@ class ConsolePanel(wx.Panel):
         self.CMD_EXPORTS = None
         self.CMD_MOD_FLAG = None
         self.CMD_SET_CIP = None
+        self.CMD_NOP_INSTRUCTION = None
         self.InitGUI()
 
     def InitGUI(self):
@@ -582,8 +583,9 @@ class ConsolePanel(wx.Panel):
             CMD_THREADS: self.HandleThreads,
             CMD_MODULE_LIST: self.HandleModules,
             CMD_EXPORTS: self.HandleExports,
-            CMD_SET_REGISTER: self.HandleSetRegister(),
+            CMD_SET_REGISTER: self.HandleSetRegister,
             CMD_MOD_FLAG: self.HandleModFlag,
+            CMD_NOP_INSTRUCTION: self.HandleNopInstruction,
         }
 
         if command in CMD_CONSOLE:
@@ -1082,3 +1084,6 @@ class ConsolePanel(wx.Panel):
             self.JumpTo(cip)
         else:
             log.error("[DEBUG CONSOLE] Failed to parse CIP from payload: %s", payload)
+
+    def HandleNopInstruction(self, payload):
+        self.JumpTo(self.cip)
