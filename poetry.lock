@@ -70,14 +70,14 @@ six = ">=1.9.0"
 
 [[package]]
 name = "cape-parsers"
-version = "0.1.37"
+version = "0.1.42"
 description = "CAPE: Malware Configuration Extraction"
 optional = false
 python-versions = "<4.0,>=3.10"
 groups = ["main"]
 files = [
-    {file = "cape_parsers-0.1.37-py3-none-any.whl", hash = "sha256:4114a72c85cf3c27c5aeb2f1f8516b26c04926ab73b1bcee288685da1c8fd1de"},
-    {file = "cape_parsers-0.1.37.tar.gz", hash = "sha256:bd21f650fb2036dc7c54d4999dcbb60e535e84539ffb141628bc810a22accc4b"},
+    {file = "cape_parsers-0.1.42-py3-none-any.whl", hash = "sha256:2260bc59a4c3949a41cbb9c0589511a0d5b958d03d8e12843f00323fec2ec6ad"},
+    {file = "cape_parsers-0.1.42.tar.gz", hash = "sha256:3ca10af64b04e0940126f3965729cd786380e771ac4d74aa751aa6a7297b1a3b"},
 ]
 
 [package.dependencies]
@@ -118,14 +118,14 @@ files = [
 
 [[package]]
 name = "certifi"
-version = "2025.6.15"
+version = "2025.7.9"
 description = "Python package for providing Mozilla's CA Bundle."
 optional = false
 python-versions = ">=3.7"
 groups = ["main"]
 files = [
-    {file = "certifi-2025.6.15-py3-none-any.whl", hash = "sha256:2e0c7ce7cb5d8f8634ca55d2ba7e6ec2689a2fd6537d8dec1296a477a4910057"},
-    {file = "certifi-2025.6.15.tar.gz", hash = "sha256:d747aa5a8b9bbbb1bb8c22bb13e22bd1f18e9796defa16bab421f7f7a317323b"},
+    {file = "certifi-2025.7.9-py3-none-any.whl", hash = "sha256:d842783a14f8fdd646895ac26f719a061408834473cfc10203f6a575beb15d39"},
+    {file = "certifi-2025.7.9.tar.gz", hash = "sha256:c1d2ec05395148ee10cf672ffc28cd37ea0ab0d99f9cc74c43e588cbd111b079"},
 ]
 
 [[package]]
@@ -673,6 +673,22 @@ files = [
 ]
 
 [[package]]
+name = "keystone-engine"
+version = "0.9.2"
+description = "Keystone assembler engine"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "keystone-engine-0.9.2.tar.gz", hash = "sha256:2f7af62dab0ce6c2732dbb4f31cfa2184a8a149e280b96b92ebc0db84c6e50f5"},
+    {file = "keystone_engine-0.9.2-py2.py3-none-macosx_10_14_x86_64.whl", hash = "sha256:dafcc3d9450c239cbc54148855b79c4b387777099c6d054005c835768cf955f2"},
+    {file = "keystone_engine-0.9.2-py2.py3-none-manylinux1_i686.whl", hash = "sha256:9e04dea5a2b50509b7b707abdb395de42772c40faa36131ea94482fba8dd5d9f"},
+    {file = "keystone_engine-0.9.2-py2.py3-none-manylinux1_x86_64.whl", hash = "sha256:5a5316a34323620b1bba31dcfe9e4b4ca6f0c030e82fc7a151da7c8fbe81a379"},
+    {file = "keystone_engine-0.9.2-py2.py3-none-win32.whl", hash = "sha256:9f81e480904a405ef008f1d9f0e4a05e37d2bd83c5218a27136e1a294b02c1f6"},
+    {file = "keystone_engine-0.9.2-py2.py3-none-win_amd64.whl", hash = "sha256:c91db1ff16d9d094e00d1827107d1b4afd5e63ce19b491a0140e660635000e8b"},
+]
+
+[[package]]
 name = "netstruct"
 version = "1.1.2"
 description = "Packed binary data for networking."
@@ -1069,27 +1085,28 @@ type = ["importlib_metadata (>=7.0.2)", "jaraco.develop (>=7.21)", "mypy (==1.14
 
 [[package]]
 name = "sflock2"
-version = "0.3.69"
+version = "0.3.75"
 description = "Sample staging and detonation utility"
 optional = false
-python-versions = "<4.0,>=3.8"
+python-versions = "<4.0,>=3.10"
 groups = ["main"]
 files = [
-    {file = "sflock2-0.3.69-py3-none-any.whl", hash = "sha256:3f140ad380a51eb9f3ff5e436fa17c50daf365d845a5a40339896522291ef935"},
-    {file = "sflock2-0.3.69.tar.gz", hash = "sha256:fb1ecbe635c776a15de92817c002a2fbc9c06d84168a0bde8e96f16fe5c81fb2"},
+    {file = "sflock2-0.3.75-py3-none-any.whl", hash = "sha256:4f0c6e8abc8ca63362bbb6a71c53806db7466d619a5b7824291854fc97052620"},
+    {file = "sflock2-0.3.75.tar.gz", hash = "sha256:5ad49dfedc12ee6cfbc9ebe0a573e8dea455850887714457273b80b65a58fda9"},
 ]
 
 [package.dependencies]
 click = "*"
-cryptography = ">=2.1"
+cryptography = ">=44.0.0"
 olefile = ">=0.43"
 pefile = "*"
 
 [package.extras]
-dev = ["mock (>=5.1.0)", "pytest (>=8.2.2)"]
+all = ["mock (>=5.1.0)", "pytest (>=8.3.4)", "unicorn (>=2.0.0)", "yara-python (>=4.1.0)"]
+dev = ["mock (>=5.1.0)", "pytest (>=8.3.4)"]
 linux = ["python-magic (>=0.4.13)"]
 shellcode = ["unicorn (>=2.0.0)", "yara-python (>=4.1.0)"]
-win32 = ["python-magic-bin (>=0.4.14)"]
+windows = ["python-magic-bin (>=0.4.14)"]
 
 [[package]]
 name = "six"
@@ -1414,4 +1431,4 @@ testing = ["coverage[toml]", "zope.event", "zope.testing"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.13"
-content-hash = "3174a8b91499befdf9d5ee2b467743e651ab80ac32248ff09a4b58ad2c3d903c"
+content-hash = "3e92f0a21debd688ad717dd242b76cfa28899dfb528bbc4e8a5758abd1187a2f"

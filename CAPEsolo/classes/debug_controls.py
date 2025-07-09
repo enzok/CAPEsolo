@@ -9,8 +9,9 @@ from typing import List, Optional, Tuple
 import wx
 
 from CAPEsolo.capelib.cmdconsts import *
-from .search_dialog import SearchDialog
 from .debug_graph import HAS_GRAPHVIZ
+from .patch_dialog import PatchDialog, PatchHistoryDialog
+from .search_dialog import SearchDialog
 
 log = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ COLOR_LIGHT_YELLOW = wx.Colour(255, 255, 150)
 COLOR_LIGHT_RED = wx.Colour(255, 102, 102)
 MAX_IDLE = 1
 
+fontItalic = wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL)
 DecodedInstruction = namedtuple("DecodedInstruction", ["address", "bytes", "text"])
 
 
@@ -121,6 +123,9 @@ class DisassemblyListCtrl(wx.ListCtrl):
                         self.SetItemTextColour(row, wx.BLUE)
                     elif mnemonic in ("jmp", "je", "jne", "jg", "jl"):
                         self.SetItemTextColour(row, wx.GREEN)
+
+                    if inst.address in self.parent.patchHistoryByAddr:
+                        self.SetItemFont(row, fontItalic)
         finally:
             self.Thaw()
 
@@ -214,16 +219,15 @@ class DisassemblyListCtrl(wx.ListCtrl):
         if row == wx.NOT_FOUND:
             return
 
-        col = self.GetColumnAtX(pos[0])
-
         menu = wx.Menu()
         miCopy = menu.Append(wx.ID_ANY, "Copy")
         miGoTo = menu.Append(wx.ID_ANY, "Go To")
         miGoToCIP = menu.Append(wx.ID_ANY, "Go To EIP/RIP")
         miSetCIP = menu.Append(wx.ID_ANY, "Set EIP/RIP")
-        if col == 0:
-            miNopInstruction = menu.Append(wx.ID_ANY, "NOP Instruction")
-
+        menu.AppendSeparator()
+        miNopInstruction = menu.Append(wx.ID_ANY, "NOP Instruction")
+        miPatchBytes = menu.Append(wx.ID_ANY, "Patch Bytes")
+        miPatchHistory = menu.Append(wx.ID_ANY, "Patch History")
         menu.AppendSeparator()
         miDumpAddress = menu.Append(wx.ID_ANY, "Dump Address")
         miResolveAddress = menu.Append(wx.ID_ANY, "Resolve Export Name From Address")
@@ -254,6 +258,9 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.Bind(wx.EVT_MENU, self.OnGoTo, miGoTo)
         self.Bind(wx.EVT_MENU, self.OnGoToCip, miGoToCIP)
         self.Bind(wx.EVT_MENU, lambda e: self.OnSetCip(row), miSetCIP)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnNopInstruction(row), miNopInstruction)
+        self.Bind(wx.EVT_MENU, lambda e: self.OnPatchBytes(row), miPatchBytes)
+        self.Bind(wx.EVT_MENU, self.OnPatchHistory, miPatchHistory)
         self.Bind(wx.EVT_MENU, self.OnDumpAddress, miDumpAddress)
         self.Bind(wx.EVT_MENU, self.OnResolveAddress, miResolveAddress)
         self.Bind(wx.EVT_MENU, self.OnResolveRef, miResolveRef)
@@ -263,7 +270,6 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.Bind(wx.EVT_MENU, lambda e: self.OnRunUntil(row), miRunUntil)
         self.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(row), miDeleteBreakpoint)
         self.Bind(wx.EVT_MENU, lambda e: self.parent.ShowFlowGraph(row), miGraph)
-        self.Bind(wx.EVT_MENU, lambda e: self.OnNopInstruction(row, col), miNopInstruction)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
@@ -546,10 +552,53 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
             self.parent.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{size}")
 
-    def OnNopInstruction(self, row, col):
-        addrStr = self.GetItemText(row, col)
+    def OnNopInstruction(self, row):
+        addrStr = self.GetItemText(row, 0)
         if addrStr and IsValidHexAddress(addrStr):
             self.parent.SendCommand(CMD_NOP_INSTRUCTION, addrStr)
+
+    def GetOriginalBytes(self, row: int, numBytes: int) -> str:
+        hexStr = ""
+        collectedBytes = 0
+        currentRow = row
+        totalRows = self.GetItemCount()
+        while collectedBytes < numBytes and currentRow < totalRows:
+            rowHex = self.GetItemText(currentRow, 1)
+            hexStr += rowHex
+            collectedBytes = len(hexStr) // 2
+            currentRow += 1
+
+        return hexStr[: numBytes * 2]
+
+    def PatchBytes(self, asmText: str, baseAddress: str, row: int) -> str:
+        addr = int(baseAddress, 16)
+        codeHex, newEntries = self.parent.assembler.assembleAt(asmText, addr)
+        for entry in newEntries:
+            numBytes = len(entry.patchedBytes) // 2
+            orig = self.GetOriginalBytes(row, numBytes)
+            entry.originalBytes = orig
+            self.parent.patchHistory.append(entry)
+            self.parent.patchHistoryByAddr[entry.address].append(entry)
+
+        return codeHex
+
+    def OnPatchBytes(self, row):
+        addrStr = self.GetItemText(row, 0)
+        if addrStr and IsValidHexAddress(addrStr):
+            dlg = PatchDialog(self)
+            if dlg.ShowModal() == wx.ID_OK:
+                asmText = dlg.GetAsmText()
+                dlg.Destroy()
+                hexString = self.PatchBytes(asmText, addrStr, row)
+                data = f"{addrStr:#x}|{hexString}"
+                self.parent.SendCommand(CMD_PATCH_BYTES, data)
+            else:
+                dlg.Destroy()
+
+    def OnPatchHistory(self, event):
+        dlg = PatchHistoryDialog(self, self.parent.patchHistory)
+        dlg.ShowModal()
+        dlg.Destroy()
 
 
 class RegsTextCtrl(wx.TextCtrl):

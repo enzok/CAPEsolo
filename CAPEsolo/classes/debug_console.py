@@ -5,6 +5,7 @@ import struct
 import threading
 import time
 import zlib
+from collections import defaultdict
 from typing import Dict, List, Tuple
 
 import pywintypes
@@ -15,6 +16,8 @@ from distorm3 import Decode, Decode32Bits, Decode64Bits
 
 from CAPEsolo.capelib.cmdconsts import *
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
+from .patch_models import PatchEntry
+from .patch_assembler import Assembler
 from .debug_controls import (
     BreakpointsListCtrl,
     DecodedInstruction,
@@ -24,6 +27,7 @@ from .debug_controls import (
     RegsTextCtrl,
     StackListCtrl,
     ThreadListCtrl,
+    PatchDialog,
 )
 from .debug_graph import CfgBuilder, SvgFrame
 from .debug_pipe import CommandPipeHandler
@@ -126,6 +130,7 @@ class ConsoleFrame(wx.Frame):
         self.ID_CONTINUE = wx.NewIdRef()
         self.ID_BACK = wx.NewIdRef()
         self.ID_SEARCH = wx.NewIdRef()
+        self.ID_PATCH = wx.NewIdRef()
 
         accels = wx.AcceleratorTable(
             [
@@ -135,12 +140,14 @@ class ConsoleFrame(wx.Frame):
                 (wx.ACCEL_NORMAL, wx.WXK_F9, self.ID_STEP_OUT),
                 (wx.ACCEL_NORMAL, wx.WXK_F10, self.ID_CONTINUE),
                 (wx.ACCEL_NORMAL, wx.WXK_ESCAPE, self.ID_BACK),
+                (wx.ACCEL_NORMAL, wx.WXK_SPACE, self.ID_PATCH),
                 (wx.ACCEL_CTRL, ord("Q"), self.ID_STOP),
                 (wx.ACCEL_CMD, ord("F"), self.ID_SEARCH),
             ]
         )
         self.SetAcceleratorTable(accels)
         self.Bind(wx.EVT_MENU, self.consolePanel.OnRunUntilAccel, id=self.ID_RUN_UNTIL)
+        self.Bind(wx.EVT_MENU, self.consolePanel.OnPatchAccel, id=self.ID_PATCH)
         self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_STEP_INTO), id=self.ID_STEP_INTO)
         self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_STEP_OVER), id=self.ID_STEP_OVER)
         self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_STEP_OUT), id=self.ID_STEP_OUT)
@@ -193,6 +200,9 @@ class ConsolePanel(wx.Panel):
         self.currentExportsModule = None
         self.exportsPage = 0
         self.moduleRanges = []
+        self.patchHistory: list[PatchEntry] = []
+        self.patchHistoryByAddr: dict[int, list[PatchEntry]] = defaultdict(list)
+        self.assembler = None
         self.CMD_PAGE_MAP = None
         self.CMD_PAGE_LOAD = None
         self.CMD_REG_UPDATE = None
@@ -208,6 +218,7 @@ class ConsolePanel(wx.Panel):
         self.CMD_MOD_FLAG = None
         self.CMD_SET_CIP = None
         self.CMD_NOP_INSTRUCTION = None
+        self.CMD_PATCH_BYTES = None
         self.InitGUI()
 
     def InitGUI(self):
@@ -352,6 +363,14 @@ class ConsolePanel(wx.Panel):
 
         self.disassemblyConsole.OnRunUntil(row)
 
+    def OnPatchAccel(self, event):
+        row = self.disassemblyConsole.GetNextItem(-1, wx.LIST_NEXT_ALL, wx.LIST_STATE_SELECTED)
+        if row == -1:
+            wx.MessageBox("No valid address to patch.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        self.disassemblyConsole.OnPatchBytes(row)
+
     def OnKeyDown(self, event):
         if self.FindFocus() == self.inputBox:
             event.Skip()
@@ -394,6 +413,7 @@ class ConsolePanel(wx.Panel):
         self.cip = int(m.group(2), 16) if m else None
         if not self.bits:
             self.bits = 64 if "RAX" in regsText else 32
+            self.assembler = Assembler(self.bits)
 
     def UpdateStack(self, data):
         """Update stack display."""
@@ -586,6 +606,7 @@ class ConsolePanel(wx.Panel):
             CMD_SET_REGISTER: self.HandleSetRegister,
             CMD_MOD_FLAG: self.HandleModFlag,
             CMD_NOP_INSTRUCTION: self.HandleNopInstruction,
+            CMD_PATCH_BYTES: self.HandlePatchBytes,
         }
 
         if command in CMD_CONSOLE:
@@ -1088,5 +1109,11 @@ class ConsolePanel(wx.Panel):
     def HandleNopInstruction(self, payload):
         if payload.startswith("Failed"):
             log.warning("[DEBUG CONSOLE] NopInstruction: %s", payload)
+
+        self.JumpTo(self.cip)
+
+    def HandlePatchBytes(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] PatchBytes: %s", payload)
 
         self.JumpTo(self.cip)
