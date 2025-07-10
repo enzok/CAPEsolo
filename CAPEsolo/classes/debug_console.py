@@ -1,9 +1,11 @@
 import bisect
 import logging
 import re
+import struct
 import threading
 import time
 import zlib
+from collections import defaultdict
 from typing import Dict, List, Tuple
 
 import pywintypes
@@ -12,19 +14,13 @@ import win32file
 import wx
 from distorm3 import Decode, Decode32Bits, Decode64Bits
 
+from CAPEsolo.capelib.cmdconsts import *
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
-from .debug_controls import (
-    BreakpointsListCtrl,
-    DecodedInstruction,
-    DisassemblyListCtrl,
-    MemDumpListCtrl,
-    ModulesListCtrl,
-    RegsTextCtrl,
-    StackListCtrl,
-    ThreadListCtrl,
-)
-from .debug_graph import CfgBuilder, SvgFrame
+from .debug_controls import (BreakpointsListCtrl, DecodedInstruction, DisassemblyListCtrl, MemDumpListCtrl, ModulesListCtrl,
+    RegsTextCtrl, StackListCtrl, ThreadListCtrl, )
 from .debug_pipe import CommandPipeHandler
+from .patch_assembler import Assembler
+from .patch_models import PatchEntry
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +55,7 @@ REGISTERS = {
     "R14",
     "R15",
 }
+wx.Bell = lambda: None
 
 
 class DebugConsole:
@@ -97,7 +94,7 @@ class DebugConsole:
         self.commandPipe.start()
         log.info("[DEBUG CONSOLE] Console pipe server started.")
         self.OpenConsole()
-        wx.CallAfter(self.frame.panel.InitPipe)
+        wx.CallAfter(self.frame.consolePanel.InitPipe)
         log.info("[DEBUG CONSOLE] Console launched.")
 
     def shutdown(self):
@@ -112,7 +109,7 @@ class ConsoleFrame(wx.Frame):
         super().__init__(None, title=title, pos=window_position, size=window_size)
         self.parent = parent
         self.pipe = parent.pipe
-        self.panel = ConsolePanel(self)
+        self.consolePanel = ConsolePanel(self)
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
         self.ID_STOP = wx.NewIdRef()
@@ -122,6 +119,8 @@ class ConsoleFrame(wx.Frame):
         self.ID_RUN_UNTIL = wx.NewIdRef()
         self.ID_CONTINUE = wx.NewIdRef()
         self.ID_BACK = wx.NewIdRef()
+        self.ID_SEARCH = wx.NewIdRef()
+        self.ID_PATCH = wx.NewIdRef()
 
         accels = wx.AcceleratorTable(
             [
@@ -130,22 +129,26 @@ class ConsoleFrame(wx.Frame):
                 (wx.ACCEL_NORMAL, wx.WXK_F8, self.ID_STEP_OVER),
                 (wx.ACCEL_NORMAL, wx.WXK_F9, self.ID_STEP_OUT),
                 (wx.ACCEL_NORMAL, wx.WXK_F10, self.ID_CONTINUE),
-                (wx.ACCEL_CTRL, ord("Q"), self.ID_STOP),
                 (wx.ACCEL_NORMAL, wx.WXK_ESCAPE, self.ID_BACK),
+                (wx.ACCEL_NORMAL, wx.WXK_SPACE, self.ID_PATCH),
+                (wx.ACCEL_CTRL, ord("Q"), self.ID_STOP),
+                (wx.ACCEL_CMD, ord("F"), self.ID_SEARCH),
             ]
         )
         self.SetAcceleratorTable(accels)
-        self.Bind(wx.EVT_MENU, self.panel.OnRunUntilAccel, id=self.ID_RUN_UNTIL)
-        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("S"), id=self.ID_STEP_INTO)
-        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("O"), id=self.ID_STEP_OVER)
-        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("U"), id=self.ID_STEP_OUT)
-        self.Bind(wx.EVT_MENU, lambda evt: self.panel.SendCommand("C"), id=self.ID_CONTINUE)
-        self.Bind(wx.EVT_MENU, lambda evt: self.panel.ShutdownConsole(), id=self.ID_STOP)
+        self.Bind(wx.EVT_MENU, self.consolePanel.OnRunUntilAccel, id=self.ID_RUN_UNTIL)
+        self.Bind(wx.EVT_MENU, self.consolePanel.OnPatchAccel, id=self.ID_PATCH)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_STEP_INTO), id=self.ID_STEP_INTO)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_STEP_OVER), id=self.ID_STEP_OVER)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_STEP_OUT), id=self.ID_STEP_OUT)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_CONTINUE), id=self.ID_CONTINUE)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.ShutdownConsole(), id=self.ID_STOP)
         self.Bind(wx.EVT_MENU, self.OnBack, id=self.ID_BACK)
+        self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.OnDialogSearch(), id=self.ID_SEARCH)
 
     def OnClose(self, event):
         """Handles window close event gracefully."""
-        self.panel.ShutdownConsole()
+        self.consolePanel.ShutdownConsole()
         self.Destroy()
 
     def OnBack(self, event):
@@ -155,33 +158,14 @@ class ConsoleFrame(wx.Frame):
 
         ctrl = focused
         while ctrl and not isinstance(ctrl, (DisassemblyListCtrl, MemDumpListCtrl)):
-            if hasattr(ctrl, "OnBack"):
-                ctrl = ctrl.OnBack(event)
+            ctrl = ctrl.GetParent()
 
-            return
-
-        ctrl = ctrl.GetParent()
-
+        if hasattr(ctrl, "OnBack"):
+            ctrl.OnBack(event)
 
 
 class ConsolePanel(wx.Panel):
     """A wxPython panel that supports multi-threaded debugging with labeled sections, hotkeys, and logging."""
-
-    # Command constants
-    CMD_CONSOLE = ""
-    CMD_MODULE_LIST = "A"
-    CMD_SET_BREAKPOINT = "B"
-    CMD_CONTINUE = "C"
-    CMD_DELETE_BREAKPOINT = "D"
-    CMD_THREADS = "H"
-    CMD_PAGE_LOAD = "I"
-    CMD_STACK_UPDATE = "K"
-    CMD_BREAKPOINT_LIST = "L"
-    CMD_MEM_DUMP = "M"
-    CMD_PAGE_MAP = "P"
-    CMD_REG_UPDATE = "R"
-    CMD_EXECUTION = ("O", "S", "T", "U")
-    CMD_SYMBOLS = "Y"
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -194,17 +178,37 @@ class ConsolePanel(wx.Panel):
         self.prevHighlight = None
         self.initMemDump = True
         self.cip = None
-        self.bits = 64
+        self.bits = None
         self.pageBuffers: Dict[int, bytes] = {}
         self.requestedPages = set()
         self.pageLock = threading.Lock()
         self.pageHashes = {}
         self.idleDecodeQueue = []
-        self.symbols: Dict[int, str] = {}
-        self.symbolModules = []
-        self.currentSymbolModule = None
-        self.symbolPage = 0
+        self.exports: Dict[int, str] = {}
+        self.exportModules = []
+        self.export = None
+        self.currentExportsModule = None
+        self.exportsPage = 0
         self.moduleRanges = []
+        self.patchHistory: list[PatchEntry] = []
+        self.patchHistoryByAddr: dict[int, list[PatchEntry]] = defaultdict(list)
+        self.assembler = None
+        self.CMD_PAGE_MAP = None
+        self.CMD_PAGE_LOAD = None
+        self.CMD_REG_UPDATE = None
+        self.CMD_MEM_DUMP = None
+        self.CMD_STACK_UPDATE = None
+        self.CMD_CONTINUE = None
+        self.CMD_SET_BREAKPOINT = None
+        self.CMD_DELETE_BREAKPOINT = None
+        self.CMD_BREAKPOINT_LIST = None
+        self.CMD_THREADS = None
+        self.CMD_MODULE_LIST = None
+        self.CMD_EXPORTS = None
+        self.CMD_MOD_FLAG = None
+        self.CMD_SET_CIP = None
+        self.CMD_NOP_INSTRUCTION = None
+        self.CMD_PATCH_BYTES = None
         self.InitGUI()
 
     def InitGUI(self):
@@ -228,8 +232,8 @@ class ConsolePanel(wx.Panel):
         regsSizer.Add(self.regsDisplay, 1, wx.EXPAND | wx.ALL, 5)
 
         topSizer = wx.BoxSizer(wx.HORIZONTAL)
-        topSizer.Add(consoleSizer, 7, wx.EXPAND)
-        topSizer.Add(regsSizer, 3, wx.EXPAND)
+        topSizer.Add(consoleSizer, 6, wx.EXPAND)
+        topSizer.Add(regsSizer, 4, wx.EXPAND)
         mainSizer.Add(topSizer, 1, wx.EXPAND)
 
         # Memory Dump
@@ -318,10 +322,10 @@ class ConsolePanel(wx.Panel):
         self.runUntilBtn.Bind(wx.EVT_BUTTON, self.OnRunUntilAccel)
         debugButtons.Add(self.runUntilBtn, 0, wx.LEFT | wx.BOTTOM, 5)
         for btn, cmd in (
-            (self.stepIntoBtn, "S"),
-            (self.stepOverBtn, "O"),
-            (self.stepOutBtn, "U"),
-            (self.continueBtn, "C"),
+            (self.stepIntoBtn, CMD_STEP_INTO),
+            (self.stepOverBtn, CMD_STEP_OVER),
+            (self.stepOutBtn, CMD_RUN_UNTIL),
+            (self.continueBtn, CMD_CONTINUE),
         ):
             btn.SetMinSize(wx.Size(MAX_BTN_W, -1))
             btn.Bind(wx.EVT_BUTTON, lambda evt, c=cmd: self.SendCommand(c))
@@ -349,6 +353,14 @@ class ConsolePanel(wx.Panel):
 
         self.disassemblyConsole.OnRunUntil(row)
 
+    def OnPatchAccel(self, event):
+        row = self.disassemblyConsole.GetNextItem(-1, wx.LIST_NEXT_ALL, wx.LIST_STATE_SELECTED)
+        if row == -1:
+            wx.MessageBox("No valid address to patch.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        self.disassemblyConsole.OnPatchBytes(row)
+
     def OnKeyDown(self, event):
         if self.FindFocus() == self.inputBox:
             event.Skip()
@@ -359,24 +371,27 @@ class ConsolePanel(wx.Panel):
             return
 
         if event.GetKeyCode() == wx.WXK_F7 and event.ControlDown():
-            self.SendCommand("S")
+            self.SendCommand(CMD_STEP_INTO)
         elif event.GetKeyCode() == wx.WXK_F8 and event.ControlDown():
-            self.SendCommand("O")
+            self.SendCommand(CMD_STEP_OVER)
         elif event.GetKeyCode() == wx.WXK_F10 and event.ControlDown():
-            self.SendCommand("C")
+            self.SendCommand(CMD_CONTINUE)
         else:
             event.Skip()
 
     def OnAddressEnter(self, event):
         self.memAddr = self.memAddressInput.GetValue().strip()
         if self.memAddr:
-            self.SendCommand("M", self.memAddr)
+            self.SendCommand(CMD_MEM_DUMP, self.memAddr)
 
         self.memAddressInput.Clear()
         event.Skip()
 
-    def AppendConsole(self, text):
+    def AppendConsole(self, text: str):
         """Appends text to the output console."""
+        if not isinstance(text, str):
+            return
+
         self.outputConsole.AppendText(text + "\n")
 
     def UpdateRegs(self, text):
@@ -386,6 +401,9 @@ class ConsolePanel(wx.Panel):
         regsText = self.regsDisplay.GetValue()
         m = re.search(r"\b([ER]IP):\s*([0-9A-Fa-f]+)", regsText)
         self.cip = int(m.group(2), 16) if m else None
+        if not self.bits:
+            self.bits = 64 if "RAX" in regsText else 32
+            self.assembler = Assembler(self.bits)
 
     def UpdateStack(self, data):
         """Update stack display."""
@@ -546,9 +564,9 @@ class ConsolePanel(wx.Panel):
                 log.info("[DEBUG CONSOLE] Pipe handle closed")
 
     def RefreshViewState(self):
-        self.SendCommand(self.CMD_REG_UPDATE)
+        self.SendCommand(CMD_REG_UPDATE)
         if self.initMemDump:
-            self.SendCommand(self.CMD_MEM_DUMP)
+            self.SendCommand(CMD_MEM_DUMP)
             self.initMemDump = False
         else:
             addr = self.memDumpDisplay.GetFirstHexAddress()
@@ -556,32 +574,36 @@ class ConsolePanel(wx.Panel):
                 self.memAddressInput.SetValue(addr)
                 self.OnAddressEnter(wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.memAddressInput.GetId()))
 
-        self.SendCommand(self.CMD_STACK_UPDATE)
-        self.SendCommand(self.CMD_THREADS)
-        self.SendCommand(self.CMD_BREAKPOINT_LIST)
+        self.SendCommand(CMD_STACK_UPDATE)
+        self.SendCommand(CMD_THREADS)
+        self.SendCommand(CMD_BREAKPOINT_LIST)
 
     def DispatchCommand(self, command, payload):
         """Dispatch commands to their respective handlers."""
         handlers = {
-            self.CMD_PAGE_MAP: self.HandlePageMap,
-            self.CMD_PAGE_LOAD: self.HandlePageLoad,
-            self.CMD_REG_UPDATE: self.HandleRegUpdate,
-            self.CMD_MEM_DUMP: self.HandleMemDump,
-            self.CMD_STACK_UPDATE: self.HandleStackUpdate,
-            self.CMD_CONTINUE: self.HandleContinue,
-            self.CMD_SET_BREAKPOINT: self.HandleSetBreakpoint,
-            self.CMD_DELETE_BREAKPOINT: self.HandleDeleteBreakpoint,
-            self.CMD_BREAKPOINT_LIST: self.HandleBreakpointsList,
-            self.CMD_THREADS: self.HandleThreads,
-            self.CMD_MODULE_LIST: self.HandleModules,
-            self.CMD_SYMBOLS: self.HandleSymbols,
+            CMD_PAGE_MAP: self.HandlePageMap,
+            CMD_PAGE_LOAD: self.HandlePageLoad,
+            CMD_REG_UPDATE: self.HandleRegUpdate,
+            CMD_MEM_DUMP: self.HandleMemDump,
+            CMD_STACK_UPDATE: self.HandleStackUpdate,
+            CMD_CONTINUE: self.HandleContinue,
+            CMD_SET_BREAKPOINT: self.HandleSetBreakpoint,
+            CMD_DELETE_BREAKPOINT: self.HandleDeleteBreakpoint,
+            CMD_BREAKPOINT_LIST: self.HandleBreakpointsList,
+            CMD_THREADS: self.HandleThreads,
+            CMD_MODULE_LIST: self.HandleModules,
+            CMD_EXPORTS: self.HandleExports,
+            CMD_SET_REGISTER: self.HandleSetRegister,
+            CMD_MOD_FLAG: self.HandleModFlag,
+            CMD_NOP_INSTRUCTION: self.HandleNopInstruction,
+            CMD_PATCH_BYTES: self.HandlePatchBytes,
         }
 
-        if command in self.CMD_CONSOLE:
+        if command in CMD_CONSOLE:
             self.HandleConsoleOutput(payload)
             return
 
-        if command in self.CMD_EXECUTION:
+        if command in CMD_EXECUTION:
             self.HandleExecution(payload)
             return
 
@@ -592,18 +614,18 @@ class ConsolePanel(wx.Panel):
             log.warning("[DEBUG CONSOLE] Unknown command '%s' received", command)
 
     def RequestPage(self, pageBase: int):
-        self.SendCommand(self.CMD_PAGE_LOAD, hex(pageBase))
+        self.SendCommand(CMD_PAGE_LOAD, hex(pageBase))
 
     def JumpTo(self, address: int):
         """Use pageMap to find page."""
         self.cip = address
         if not self.AddressInModules(address):
-            self.SendCommand(self.CMD_MODULE_LIST)
+            self.SendCommand(CMD_MODULE_LIST)
             return
 
         region = self.disassemblyConsole.FindPage(address)
         if region is None:
-            self.SendCommand(self.CMD_PAGE_MAP)
+            self.SendCommand(CMD_PAGE_MAP)
             return
 
         desiredStart = self.cip
@@ -717,7 +739,6 @@ class ConsolePanel(wx.Panel):
         m = re.search(r"0x[0-9a-fA-F]+", data)
         if m:
             cip = int(m.group(0), 16)
-            self.bits = 64 if cip > 0xFFFFFFFF else 32
             self.cip = cip
 
     def PatchDisasmText(self, disasmText: str) -> str:
@@ -727,41 +748,42 @@ class ConsolePanel(wx.Panel):
 
         for match in matches:
             raw = match.group()
-            stripped = raw.strip("[]")
+            addrStr = raw.strip("[]")
+
             try:
-                addrInt = int(stripped, 16)
+                addrInt = int(addrStr, 16)
             except ValueError:
                 continue
 
-            if addrInt in self.symbols:
-                replacement = self.symbols[addrInt]
-                if raw.startswith("[") and raw.endswith("]"):
-                    replacement = f"[{replacement}]"
+            replacement = None
+            export = self.exports.get(addrInt)
+            if export:
+                replacement = export
 
-                log.debug("[DEBUG CONSOLE] Replaced %s with %s", raw, replacement)
+            if replacement:
                 start, end = match.start() + offset, match.end() + offset
                 patched = patched[:start] + replacement + patched[end:]
                 offset += len(replacement) - (end - start)
 
         return patched
 
-    def GetAllSymbols(self, modules: List[Tuple[str, str, str, str]]):
-        self.symbolModules = list(modules)
-        self.LoadNextModuleSymbols()
+    def GetAllExports(self, modules: List[Tuple[str, str, str, str]]):
+        self.exportModules = list(modules)
+        self.LoadNextModuleExports()
 
-    def LoadNextModuleSymbols(self):
-        if not self.symbolModules:
-            # log.info("[DEBUG CONSOLE] Finished loading all symbols.")
+    def LoadNextModuleExports(self):
+        if not self.exportModules:
+            # log.info("[DEBUG CONSOLE] Finished loading all exports.")
             return
 
-        _, _, modName, _ = self.symbolModules.pop(0)
-        self.symbolPage = 0
-        self.currentSymbolModule = modName
-        self.RequestNextSymbolPage()
+        _, _, modName, _ = self.exportModules.pop(0)
+        self.exportsPage = 0
+        self.currentExportsModule = modName
+        self.RequestNextExportsPage()
 
-    def RequestNextSymbolPage(self):
-        data = f"{self.currentSymbolModule}|{self.symbolPage}"
-        self.SendCommand(self.CMD_SYMBOLS, data)
+    def RequestNextExportsPage(self):
+        data = f"{self.currentExportsModule}|{self.exportsPage}"
+        self.SendCommand(CMD_EXPORTS, data)
 
     def ProcessServerOutput(self, data):
         """Process server output by parsing command and payload, then dispatching."""
@@ -785,18 +807,6 @@ class ConsolePanel(wx.Panel):
             return
 
         self.DispatchCommand(command, payload)
-
-    def ShowFlowGraph(self, row):
-        insts = self.disassemblyConsole.decodeCache
-        if not insts:
-            wx.MessageBox("Nothing to graph!", "Info", wx.OK | wx.ICON_INFORMATION)
-            return
-        target = self.disassemblyConsole.GetItemText(row, 0).strip().lstrip("0")
-        cfg = CfgBuilder(insts)
-        cfg.BuildBlocks()
-        cfg.RenderGraph()
-        # wx.CallLater(1, cfg.ShowFlowGraph, target)
-        wx.CallLater(1, SvgFrame)
 
     def PageCrcChanged(self, pageBase: int) -> bool:
         """Return if the bytes at `pageBase` have changed since the last check."""
@@ -829,6 +839,11 @@ class ConsolePanel(wx.Panel):
 
         return False
 
+    def OnDialogSearch(self):
+        dlg = getattr(self.modulesDisplay, "dlg", None)
+        if dlg and dlg.IsShown():
+            dlg.OnSearch()
+
     def HandleConnection(self, payload):
         """Handle initial connection logic."""
         self.connected = True
@@ -838,7 +853,8 @@ class ConsolePanel(wx.Panel):
             self.parent.Layout()
 
         self.AppendConsole(payload)
-        self.SendCommand(self.CMD_MODULE_LIST)
+        self.SendCommand(CMD_REG_UPDATE)
+        self.SendCommand(CMD_MODULE_LIST)
 
     def HandleSetBreakpoint(self, payload):
         self.AppendConsole(payload)
@@ -846,7 +862,7 @@ class ConsolePanel(wx.Panel):
         if m:
             addr = int(m.group(0), 16)
             self.disassemblyConsole.SetBpBackground(addr)
-            self.SendCommand(self.CMD_BREAKPOINT_LIST)
+            self.SendCommand(CMD_BREAKPOINT_LIST)
 
     def HandleDeleteBreakpoint(self, payload):
         self.AppendConsole(payload)
@@ -854,7 +870,7 @@ class ConsolePanel(wx.Panel):
         if m:
             addr = int(m.group(0), 16)
             self.disassemblyConsole.ClearBpBackground(addr)
-            self.SendCommand(self.CMD_BREAKPOINT_LIST)
+            self.SendCommand(CMD_BREAKPOINT_LIST)
 
     def HandleContinue(self, payload):
         self.AppendConsole(payload)
@@ -862,6 +878,9 @@ class ConsolePanel(wx.Panel):
         self.JumpTo(self.cip)
 
     def HandleBreakpointsList(self, payload):
+        if payload.startswith("Failed"):
+            return
+
         bps: List[Tuple[str, str]] = []
         if "No" in payload:
             self.UpdateBreakpoints("")
@@ -916,15 +935,15 @@ class ConsolePanel(wx.Panel):
 
         if modules:
             self.BuildModuleRanges(modules)
-            self.GetAllSymbols(modules)
+            self.GetAllExports(modules)
             self.UpdateModules(modules)
 
         if self.AddressInModules(self.cip):
             self.JumpTo(self.cip)
 
-    def HandleSymbols(self, payload):
+    def HandleExports(self, payload):
         if payload.startswith("Failed"):
-            log.warning("[DEBUG CONSOLE] Symbols: %s", payload)
+            log.warning("[DEBUG CONSOLE] Exports: %s", payload)
             return
 
         if "||" not in payload:
@@ -933,7 +952,7 @@ class ConsolePanel(wx.Panel):
         try:
             modName, *data, status = payload.split("||", 2)
         except ValueError:
-            wx.CallAfter(self.LoadNextModuleSymbols)
+            wx.CallAfter(self.LoadNextModuleExports)
             return
 
         if data[0] and modName:
@@ -944,15 +963,15 @@ class ConsolePanel(wx.Panel):
 
                 try:
                     absAddr, symName = entry.split(",", 1)
-                    self.symbols[absAddr] = f"{modName}!{symName}"
+                    self.exports[int(absAddr)] = f"{modName}!{symName}"
                 except ValueError:
                     continue
 
         if status == "MORE":
-            self.symbolPage += 1
-            wx.CallAfter(self.RequestNextSymbolPage)
+            self.exportsPage += 1
+            wx.CallAfter(self.RequestNextExportsPage)
         else:
-            wx.CallAfter(self.LoadNextModuleSymbols)
+            wx.CallAfter(self.LoadNextModuleExports)
 
     def HandlePageMap(self, payload):
         self.disassemblyConsole.LoadPageMap(payload)
@@ -995,12 +1014,61 @@ class ConsolePanel(wx.Panel):
             wx.CallLater(1, self.ProcessNextIdlePage)
 
     def HandleRegUpdate(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Registers: %s", payload)
+            return
+
         self.UpdateRegs(payload)
 
+    def HandleModFlag(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Flag: %s", payload)
+            return
+
+        self.UpdateRegs(payload)
+
+    def HandleSetRegister(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Set register: %s", payload)
+            return
+
+        self.UpdateRegs(payload)
+
+    def GetExport(self, payload):
+        try:
+            buffer = bytes.fromhex(payload)
+            if len(buffer) == 4:
+                unpackFmt = "<I"
+            elif len(buffer) == 8:
+                unpackFmt = "<Q"
+            else:
+                return
+
+            leaddr = struct.unpack(unpackFmt, buffer)[0]
+            return self.exports.get(leaddr, "")
+        except ValueError:
+            return None
+
     def HandleMemDump(self, payload):
-        self.UpdateMemDump(payload)
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Memdump: %s", payload)
+            return
+
+        if len(payload) == 8 or len(payload) == 16:
+            export = self.GetExport(payload)
+        else:
+            self.UpdateMemDump(payload)
+            return
+
+        if export:
+            self.AppendConsole(export)
+            self.export = export
 
     def HandleStackUpdate(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Stack: %s", payload)
+            return
+
         self.UpdateStack(payload)
 
     def HandleConsoleOutput(self, payload):
@@ -1016,3 +1084,15 @@ class ConsolePanel(wx.Panel):
             self.JumpTo(cip)
         else:
             log.error("[DEBUG CONSOLE] Failed to parse CIP from payload: %s", payload)
+
+    def HandleNopInstruction(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] NopInstruction: %s", payload)
+
+        self.JumpTo(self.cip)
+
+    def HandlePatchBytes(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] PatchBytes: %s", payload)
+
+        self.JumpTo(self.cip)

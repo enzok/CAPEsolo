@@ -1,11 +1,10 @@
 import os
-import re
 from pathlib import Path
 
 import wx
 
+from CAPEsolo.capelib.utils import LoadFilesJson, extract_strings
 from .key_event import KeyEventHandlerMixin
-from CAPEsolo.capelib.utils import LoadFilesJson
 
 
 class StringsPanel(wx.Panel, KeyEventHandlerMixin):
@@ -28,14 +27,8 @@ class StringsPanel(wx.Panel, KeyEventHandlerMixin):
         hbox.Add(viewButton, flag=wx.EXPAND)
         vbox.Add(hbox, flag=wx.EXPAND | wx.ALL, border=10)
 
-        self.resultsWindow = wx.TextCtrl(
-            self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2
-        )
-        self.resultsWindow.SetFont(
-            wx.Font(
-                10, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL
-            )
-        )
+        self.resultsWindow = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2)
+        self.resultsWindow.SetFont(wx.Font(10, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
         vbox.Add(self.resultsWindow, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
 
         self.SetSizer(vbox)
@@ -65,33 +58,15 @@ class StringsPanel(wx.Panel, KeyEventHandlerMixin):
         if not path.exists():
             self.resultsWindow.SetValue("Selected file does not exist.")
             return
+
         stringsData = self.GetStrings(path)
         if not stringsData:
             stringsData = "No strings."
+
         self.resultsWindow.SetValue(stringsData)
 
     def GetStrings(self, filePath, minLength=4):
-        encodings = ["utf-8", "utf-16"]
-        text = ""
-        for encoding in encodings:
-            try:
-                text = filePath.read_text(encoding=encoding)
-                break
-            except Exception:
-                continue
+        extracted = extract_strings(filePath, dedup=True, minchars=minLength)
+        stringList = sorted(list(set(extracted)), key=lambda x: (len(x), x))
 
-        if not text:
-            try:
-                text = filePath.read_bytes().decode("ascii")
-            except Exception:
-                text = filePath.read_bytes().decode("latin-1")
-
-        wordRegex = re.compile(r"\b\w{" + str(minLength) + r",}\b", re.UNICODE)
-        words = wordRegex.findall(text)
-        regex = re.compile(
-            r"^[a-zA-Z0-9 \-\'àáâäãåçèéêëìíîïðñòóôöõùúûüýÿĀāĂăĄąÇćČčĎďĐđĒēĖėĘęĚěĞğĜĝĠġĢģĤĥĦħİıĴĵĶķĹĺĻļĽľŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŞşŠšŢţŤťŦŧŨũŪūŮůŰűŲųŴŵŶŷŸźżŽž]+$"
-        )
-        filteredWords = [word for word in words if regex.match(word)]
-        filteredWords = sorted(list(set(filteredWords)), key=lambda x: (x, len(x)))
-
-        return "\n".join(filteredWords)
+        return "\n".join(stringList)
