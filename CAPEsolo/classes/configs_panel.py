@@ -24,7 +24,7 @@ class ConfigsPanel(wx.Panel):
         self.configsButton.Disable()
         vbox.Add(self.configsButton, proportion=0, border=5)
         self.resultsWindow = wx.TextCtrl(
-            self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.EXPAND, size=(-1, 100)
+            self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.EXPAND, size=wx.Size(-1, 100)
         )
         fontCourier = wx.Font(
             10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL

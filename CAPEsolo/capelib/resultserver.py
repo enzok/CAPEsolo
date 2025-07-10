@@ -179,6 +179,10 @@ class HandlerContext:
         while _ := self.read():
             pass
 
+    def __del__(self):
+        if self.sock:
+            self.sock.close()
+
 
 class WriteLimiter:
     def __init__(self, fd, remain):
@@ -206,6 +210,9 @@ class WriteLimiter:
     def flush(self):
         self.fd.flush()
 
+    def __del__(self):
+        if self.fd:
+            self.fd.close()
 
 class FileUpload(ProtocolHandler):
     def init(self):
@@ -213,6 +220,10 @@ class FileUpload(ProtocolHandler):
         self.storagepath = self.handler.storagepath
         self.fd = None
         self.filelog = os.path.join(self.handler.storagepath, "files.json")
+
+    def __del__(self):
+        if self.fd:
+            self.fd.close()
 
     def handle(self):
         # Read until newline for file path, e.g.,
@@ -326,7 +337,7 @@ class LogHandler(ProtocolHandler):
         try:
             self.fd = open_inclusive(self.logpath)
         except OSError as e:
-            log.error("Faile to open live log analysis.log: %s", e)
+            log.error("Failed to open live log analysis.log: %s", e)
             return
 
         log.debug("Live log analysis.log initialized")
@@ -335,6 +346,9 @@ class LogHandler(ProtocolHandler):
         if self.fd:
             return self.handler.copy_to_fd(self.fd)
 
+    def __del__(self):
+        if self.fd:
+            self.fd.close()
 
 TYPECONVERTERS = {
     "h": lambda v: f"0x{default_converter(v):08x}",
@@ -455,6 +469,10 @@ class BsonStore(ProtocolHandler):
         if self.fd:
             self.handler.sock.settimeout(None)
             return self.handler.copy_to_fd(self.fd)
+
+    def __del__(self):
+        if self.fd:
+            self.fd.close()
 
 
 class GeventResultServerWorker(gevent.server.StreamServer):

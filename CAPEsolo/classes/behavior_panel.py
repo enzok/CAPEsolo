@@ -98,7 +98,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
 
         panehBox1 = wx.BoxSizer(wx.HORIZONTAL)
 
-        self.tid = wx.TextCtrl(pane, size=(100, -1), style=wx.TE_PROCESS_ENTER)
+        self.tid = wx.TextCtrl(pane, size=wx.Size(100, -1), style=wx.TE_PROCESS_ENTER)
         self.tidButton = wx.Button(pane, label="Filter Thread ID")
         self.tidButton.Bind(wx.EVT_BUTTON, self.OnTidFilterButtonClick)
 
@@ -182,7 +182,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.pagination_sizer.Add(self.page_label, 0, wx.ALL | wx.CENTER, 5)
 
         self.page_input = wx.TextCtrl(
-            self, value="1", size=(50, -1), style=wx.TE_PROCESS_ENTER
+            self, value="1", size=wx.Size(50, -1), style=wx.TE_PROCESS_ENTER
         )
         self.page_input.Bind(wx.EVT_TEXT_ENTER, self.OnGoToPage)
         self.pagination_sizer.Add(self.page_input, 0, wx.ALL, 5)

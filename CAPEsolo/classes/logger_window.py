@@ -17,14 +17,14 @@ class WxTextCtrlHandler(logging.Handler):
 
 class LoggerWindow(wx.Frame, KeyEventHandlerMixin):
     def __init__(
-        self, parent, title, main_window_position, main_window_size, *args, **kwargs
+        self, parent, title, mainWindowPosition, mainWindowSize, *args, **kwargs
     ):
         super(LoggerWindow, self).__init__(parent, title=title, *args, **kwargs)
         self.analysisDir = parent.analysisDir
         self.analysisLogPath = parent.analysisLogPath
         self.BindKeyEvents()
-        self.main_window_position = main_window_position
-        self.main_window_size = main_window_size
+        self.mainWindowPosition = mainWindowPosition
+        self.mainWindowSize = mainWindowSize
         self.InitUI()
 
     def InitUI(self):
@@ -52,18 +52,18 @@ class LoggerWindow(wx.Frame, KeyEventHandlerMixin):
             format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         )
 
-        self.main_window_position.x += self.main_window_size.x
+        self.mainWindowPosition.x += self.mainWindowSize.x
         screenWidth, _ = wx.DisplaySize()
         self.SetSize(
-            int(screenWidth * 0.98 - self.main_window_size.x), self.main_window_size.y
+            int(screenWidth * 0.98 - self.mainWindowSize.x), self.mainWindowSize.y
         )
-        self.SetPosition(self.main_window_position)
+        self.SetPosition(self.mainWindowPosition)
 
     def OnCopyPath(self, event):
         if wx.TheClipboard.Open():
-            file_data = wx.FileDataObject()
-            file_data.AddFile(self.analysisLogPath)
-            wx.TheClipboard.SetData(file_data)
+            fileData = wx.FileDataObject()
+            fileData.AddFile(self.analysisLogPath)
+            wx.TheClipboard.SetData(fileData)
             wx.TheClipboard.Close()
             wx.MessageBox(
                 f"Analysis log copied: {self.analysisLogPath}",
