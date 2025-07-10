@@ -16,21 +16,11 @@ from distorm3 import Decode, Decode32Bits, Decode64Bits
 
 from CAPEsolo.capelib.cmdconsts import *
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
-from .patch_models import PatchEntry
-from .patch_assembler import Assembler
-from .debug_controls import (
-    BreakpointsListCtrl,
-    DecodedInstruction,
-    DisassemblyListCtrl,
-    MemDumpListCtrl,
-    ModulesListCtrl,
-    RegsTextCtrl,
-    StackListCtrl,
-    ThreadListCtrl,
-    PatchDialog,
-)
-from .debug_graph import CfgBuilder, SvgFrame
+from .debug_controls import (BreakpointsListCtrl, DecodedInstruction, DisassemblyListCtrl, MemDumpListCtrl, ModulesListCtrl,
+    RegsTextCtrl, StackListCtrl, ThreadListCtrl, )
 from .debug_pipe import CommandPipeHandler
+from .patch_assembler import Assembler
+from .patch_models import PatchEntry
 
 log = logging.getLogger(__name__)
 
@@ -817,17 +807,6 @@ class ConsolePanel(wx.Panel):
             return
 
         self.DispatchCommand(command, payload)
-
-    def ShowFlowGraph(self, row):
-        insts = self.disassemblyConsole.decodeCache
-        if not insts:
-            wx.MessageBox("Nothing to graph!", "Info", wx.OK | wx.ICON_INFORMATION)
-            return
-        target = self.disassemblyConsole.GetItemText(row, 0).strip().lstrip("0")
-        cfg = CfgBuilder(insts)
-        cfg.BuildBlocks()
-        cfg.RenderGraph()
-        wx.CallLater(1, SvgFrame, target)
 
     def PageCrcChanged(self, pageBase: int) -> bool:
         """Return if the bytes at `pageBase` have changed since the last check."""

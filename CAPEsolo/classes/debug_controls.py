@@ -9,8 +9,8 @@ from typing import List, Optional, Tuple
 import wx
 
 from CAPEsolo.capelib.cmdconsts import *
-from .debug_graph import HAS_GRAPHVIZ
-from .patch_dialog import PatchDialog, PatchHistoryDialog
+from .patch_models import PatchEntry
+from .patch_dialog import ConfirmPatchDialog, PatchDialog, PatchHistoryDialog
 from .search_dialog import SearchDialog
 
 log = logging.getLogger(__name__)
@@ -19,7 +19,6 @@ COLOR_LIGHT_YELLOW = wx.Colour(255, 255, 150)
 COLOR_LIGHT_RED = wx.Colour(255, 102, 102)
 MAX_IDLE = 1
 
-fontItalic = wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL)
 DecodedInstruction = namedtuple("DecodedInstruction", ["address", "bytes", "text"])
 
 
@@ -104,6 +103,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         return None
 
     def SetInstructions(self, insts: List[DecodedInstruction], append: bool = False):
+        fontItalic = wx.Font(10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL)
         self.Freeze()
         try:
             with self.cacheLock:
@@ -246,13 +246,6 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         menu.AppendSubMenu(bpMenu, "Set Breakpoint")
         miDeleteBreakpoint = menu.Append(wx.ID_ANY, "Delete Breakpoint")
-        menu.AppendSeparator()
-        miGraphText = "Flow Graph"
-        if not HAS_GRAPHVIZ:
-            miGraphText += ": Install Graphviz"
-
-        miGraph = menu.Append(wx.ID_ANY, miGraphText)
-        miGraph.Enable(HAS_GRAPHVIZ)
 
         self.Bind(wx.EVT_MENU, self.OnCopy, miCopy)
         self.Bind(wx.EVT_MENU, self.OnGoTo, miGoTo)
@@ -269,7 +262,6 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.Bind(wx.EVT_MENU, self.OnStepOut, miStepOut)
         self.Bind(wx.EVT_MENU, lambda e: self.OnRunUntil(row), miRunUntil)
         self.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(row), miDeleteBreakpoint)
-        self.Bind(wx.EVT_MENU, lambda e: self.parent.ShowFlowGraph(row), miGraph)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
@@ -570,9 +562,11 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         return hexStr[: numBytes * 2]
 
-    def PatchBytes(self, asmText: str, baseAddress: str, row: int) -> str:
+    def AssemblePatch(self, asmText: str, baseAddress: str) -> tuple[str, list[PatchEntry]]:
         addr = int(baseAddress, 16)
-        codeHex, newEntries = self.parent.assembler.assembleAt(asmText, addr)
+        return self.parent.assembler.AssembleAt(asmText, addr)
+
+    def UpdatePatchHistory(self, newEntries: list[PatchEntry], row: int):
         for entry in newEntries:
             numBytes = len(entry.patchedBytes) // 2
             orig = self.GetOriginalBytes(row, numBytes)
@@ -580,18 +574,25 @@ class DisassemblyListCtrl(wx.ListCtrl):
             self.parent.patchHistory.append(entry)
             self.parent.patchHistoryByAddr[entry.address].append(entry)
 
-        return codeHex
-
     def OnPatchBytes(self, row):
         addrStr = self.GetItemText(row, 0)
+        instrStr = self.GetItemText(row, 2)
         if addrStr and IsValidHexAddress(addrStr):
-            dlg = PatchDialog(self)
+            dlg = PatchDialog(self, instrStr)
             if dlg.ShowModal() == wx.ID_OK:
                 asmText = dlg.GetAsmText()
                 dlg.Destroy()
-                hexString = self.PatchBytes(asmText, addrStr, row)
-                data = f"{addrStr:#x}|{hexString}"
-                self.parent.SendCommand(CMD_PATCH_BYTES, data)
+                codeHex, newEntries = self.AssemblePatch(asmText, addrStr)
+                if codeHex and not "error" in codeHex:
+                    previewTxt = f"{codeHex}    {asmText}"
+                    confirmDlg = ConfirmPatchDialog(self, previewTxt)
+                    if confirmDlg.ShowModal() == wx.ID_OK:
+                        confirmDlg.Destroy()
+                        data = f"{int(addrStr, 16):#x}|{codeHex}"
+                        self.UpdatePatchHistory(newEntries, row)
+                        self.parent.SendCommand(CMD_PATCH_BYTES, data)
+                else:
+                    wx.MessageBox(f"Instructions were not assembled: {codeHex}", "Info", wx.OK | wx.ICON_INFORMATION)
             else:
                 dlg.Destroy()
 

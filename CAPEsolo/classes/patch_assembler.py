@@ -2,7 +2,7 @@ import logging
 
 import keystone as ks
 
-from patch_models import PatchEntry
+from .patch_models import PatchEntry
 
 log = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ class Assembler:
         engineMode = ks.KS_MODE_64 if bitMode == 64 else ks.KS_MODE_32
         self.ksEngine = ks.Ks(ks.KS_ARCH_X86, engineMode)
 
-    def assembleAt(self, asmText: str, baseAddress: int = 0) -> tuple[str, list[PatchEntry]]:
+    def AssembleAt(self, asmText: str, baseAddress: int = 0) -> tuple[str, list[PatchEntry]]:
         hexString = ""
         currentAddr = baseAddress
         entries: list[PatchEntry] = []
@@ -25,10 +25,11 @@ class Assembler:
             try:
                 encoding, _ = self.ksEngine.asm(line, currentAddr)
             except ks.KsError as e:
-                log.error("Assembly error on line %d: %s - %s", lineNumber, line, e)
-                return [], []
+                errorMsg = f"Assembly error on line {lineNumber}: {line} - {e}"
+                log.error(errorMsg)
+                return errorMsg, []
 
-            instrHex = bytes(encoding).hex()
+            instrHex = bytes(encoding).hex().upper()
             entry = PatchEntry(address=currentAddr, originalBytes="", patchedBytes=instrHex, instruction=line)
             entries.append(entry)
 
