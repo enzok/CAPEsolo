@@ -28,12 +28,15 @@ def download_and_update_yara_files(yara_path, yara_url, yara_raw_url):
             else:
                 dataform = str(resp.content).strip("'<>() ").replace("'", '"')
                 page_content = json.loads(dataform).get("payload", {}).get("tree", {}).get("items", [])
+
             for line in page_content:
                 if not line:
                     continue
+
                 match = re.search(YARA_REGEX, line["name"])
                 if match:
                     yara_file_names.add(match.group(0))
+
         except Exception as e:
             print(e)
 
@@ -42,38 +45,48 @@ def download_and_update_yara_files(yara_path, yara_url, yara_raw_url):
         f.unlink()
 
     # Download and write new YARA rules
+    num = 0
     for file_name in sorted(yara_file_names):
         file_content = requests.get(yara_raw_url.format(file_name)).text
         yara_file_path = yara_path / file_name
         with open(yara_file_path, "w") as f:
             f.write(file_content)
-        print(f"Successfully downloaded and wrote {yara_file_path}!")
+
+        num += 1
+        #print(f"Successfully downloaded and wrote {yara_file_path}!")
+
+    return num
 
 
-def update_yara(root_path):
-    yara_paths = [
+def UpdateYara(RootPath):
+    results = {}
+    YaraPaths = [
         {
-            "yara_path": root_path / "yara/CAPE",
+            "yara_path": RootPath / "yara/CAPE",
             "yara_url": "https://github.com/kevoreilly/CAPEv2/tree/master/data/yara/CAPE",
             "yara_raw_url": "https://raw.githubusercontent.com/kevoreilly/CAPEv2/master/data/yara/CAPE/{0}",
         },
         {
-            "yara_path": root_path / "yara/CAPE_community",
+            "yara_path": RootPath / "yara/CAPE_community",
             "yara_url": "https://github.com/CAPESandbox/community/tree/master/data/yara/CAPE",
             "yara_raw_url": "https://raw.githubusercontent.com/CAPESandbox/community/master/data/yara/CAPE/{0}",
         },
         {
-            "yara_path": root_path / "data/yara",
+            "yara_path": RootPath / "data/yara",
             "yara_url": "https://github.com/kevoreilly/CAPEv2/tree/master/analyzer/windows/data/yara",
             "yara_raw_url": "https://raw.githubusercontent.com/kevoreilly/CAPEv2/master/analyzer/windows/data/yara/{0}",
         }
     ]
 
-    for config in yara_paths:
-        download_and_update_yara_files(**config)
+    for config in YaraPaths:
+        num = download_and_update_yara_files(**config)
+        name = "/".join(config["yara_path"].parts[-2:])
+        results[name] = num
+
+    return results
 
 
 if __name__ == "__main__":
     import CAPEsolo
 
-    update_yara(Path(CAPEsolo.__file__).parent)
+    UpdateYara(Path(CAPEsolo.__file__).parent)

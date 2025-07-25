@@ -30,7 +30,7 @@ os.chdir(CAPESOLO_ROOT)
 from classes.main_frame import MainFrame
 from classes.splash_screen import SplashScreen
 from lib.common.defines import KERNEL32
-from utils.update_yara import update_yara
+from utils.update_yara import UpdateYara
 
 log = logging.getLogger(__name__)
 for handler in log.handlers[:]:
@@ -52,6 +52,7 @@ class CapesoloApp(wx.App):
         frameHeight = int(screenHeight * 0.75)
         if frameWidth < 710:
             frameWidth = 710
+
         frame = MainFrame(
             rootDir=CAPESOLO_ROOT, parent=None, size=wx.Size(frameWidth, frameHeight)
         )
@@ -74,10 +75,11 @@ def main():
     args = parser.parse_args()
 
     if args.update_yara:
-        update_yara(Path(CAPESOLO_ROOT))
+        _ = UpdateYara(Path(CAPESOLO_ROOT))
     else:
         app = CapesoloApp()
         app.MainLoop()
+
     release_lock(mutex)
 
 def acquire_lock():
@@ -87,6 +89,7 @@ def acquire_lock():
         print("Another instance is already running.")
         KERNEL32.CloseHandle(mutex)
         sys.exit(1)
+
     return mutex
 
 def release_lock(mutex):

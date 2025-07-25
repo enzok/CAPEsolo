@@ -13,6 +13,7 @@ from sflock.ident import identify as sflock_identify
 from CAPEsolo.capelib.resultserver import ResultServer
 from CAPEsolo.capelib.utils import sanitize_filename
 from CAPEsolo.lib.common.hashing import hash_file
+from CAPEsolo.utils.update_yara import UpdateYara
 from .debug_console import DebugConsole
 from .key_event import EVT_ANALYZER_COMPLETE, EVT_ANALYZER_COMPLETE_ID
 from .logger_window import LoggerWindow
@@ -146,22 +147,14 @@ class StartPanel(wx.Panel):
         self.packageDropdown = wx.ComboBox(self, style=wx.CB_READONLY)
         self.PackageDropdown()
         self.packageDropdown.SetValue("Auto-detect")
-        self.runFromCurrentDirCheckbox = wx.CheckBox(
-            self, label="Run sample from current directory"
-        )
-        self.runFromCurrentDirCheckbox.Bind(
-            wx.EVT_CHECKBOX, self.OnCurrentDirCheckboxClick
-        )
+        self.runFromCurrentDirCheckbox = wx.CheckBox(self, label="Run sample from current directory")
+        self.runFromCurrentDirCheckbox.Bind(wx.EVT_CHECKBOX, self.OnCurrentDirCheckboxClick)
         self.runFromCurrentDirCheckbox.SetValue(True)
         self.manualExecutionCheckbox = wx.CheckBox(self, label="Manual Execution")
-        self.manualExecutionCheckbox.Bind(
-            wx.EVT_CHECKBOX, self.OnManualExecCheckboxClick
-        )
+        self.manualExecutionCheckbox.Bind(wx.EVT_CHECKBOX, self.OnManualExecCheckboxClick)
         self.manualExecutionCheckbox.SetValue(False)
         hbox2.Add(packageLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10)
-        hbox2.Add(
-            self.packageDropdown, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=10
-        )
+        hbox2.Add(self.packageDropdown, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=10)
         hbox2.Add(self.runFromCurrentDirCheckbox, flag=wx.ALIGN_CENTER_VERTICAL)
         hbox2.Add(self.manualExecutionCheckbox, flag=wx.ALIGN_CENTER_VERTICAL)
 
@@ -183,9 +176,7 @@ class StartPanel(wx.Panel):
         # Enforce Timeout heckbox, Timeout, and Minimum and No Hook checkboxes
         hboxTimeout = wx.BoxSizer(wx.HORIZONTAL)
         self.enforceTimeoutCheckbox = wx.CheckBox(self, label="Enforce timeout")
-        self.enforceTimeoutCheckbox.Bind(
-            wx.EVT_CHECKBOX, self.OnEnforceTimeoutCheckboxClick
-        )
+        self.enforceTimeoutCheckbox.Bind(wx.EVT_CHECKBOX, self.OnEnforceTimeoutCheckboxClick)
         self.enforceTimeoutCheckbox.SetValue(False)
         msLabel = wx.StaticText(self, label=" seconds")
         self.timeoutInput = wx.TextCtrl(self, size=wx.Size(50, -1), value="200")
@@ -202,41 +193,27 @@ class StartPanel(wx.Panel):
         self.free.Bind(wx.EVT_CHECKBOX, self.OnZerohookChecked)
         self.logExceptions = wx.CheckBox(self, label="log-exceptions")
         hboxTimeout.AddSpacer(30)
-        hboxTimeout.Add(
-            self.minhook, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5
-        )
+        hboxTimeout.Add(self.minhook, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxTimeout.Add(self.free, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
-        hboxTimeout.Add(
-            self.logExceptions, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5
-        )
+        hboxTimeout.Add(self.logExceptions, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
 
         # analysis.conf editor
         analysisConfSizer = wx.BoxSizer(wx.VERTICAL)
         self.analysisConfExpander = wx.CollapsiblePane(self, label="analysis.conf")
-        self.analysisConfExpander.Bind(
-            wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged
-        )
+        self.analysisConfExpander.Bind(wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged)
         self.analysisConfExpander.GetPane().SetMinSize(self.GetSize())
         analysisConfPane = self.analysisConfExpander.GetPane()
-        self.analysisEditor = wx.TextCtrl(
-            analysisConfPane, style=wx.TE_MULTILINE, size=self.GetSize()
-        )
-        analysisConfSizer.Add(
-            self.analysisConfExpander, proportion=1, flag=wx.EXPAND | wx.ALL, border=0
-        )
+        self.analysisEditor = wx.TextCtrl(analysisConfPane, style=wx.TE_MULTILINE, size=self.GetSize())
+        analysisConfSizer.Add(self.analysisConfExpander, proportion=1, flag=wx.EXPAND | wx.ALL, border=0)
         analysisConfPaneSizer = wx.BoxSizer(wx.VERTICAL)
-        analysisConfPaneSizer.Add(
-            self.analysisEditor, proportion=1, flag=wx.EXPAND | wx.ALL, border=0
-        )
+        analysisConfPaneSizer.Add(self.analysisEditor, proportion=1, flag=wx.EXPAND | wx.ALL, border=0)
         analysisConfPane.SetSizer(analysisConfPaneSizer)
         self.analysisConfExpander.Collapse(True)
         self.OnCollapsiblePaneChanged(None)
 
         # Debugger Collapsible Pane
         self.debuggerCollapsePane = wx.CollapsiblePane(self, label="Debugger options")
-        self.debuggerCollapsePane.Bind(
-            wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged
-        )
+        self.debuggerCollapsePane.Bind(wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged)
         self.debuggerPane = self.debuggerCollapsePane.GetPane()
 
         self.flexDebuggerSizer = wx.FlexGridSizer(rows=8, cols=3, hgap=10, vgap=10)
@@ -248,17 +225,13 @@ class StartPanel(wx.Panel):
         hboxBaseApi = wx.BoxSizer(wx.HORIZONTAL)
         baseApiLabel = wx.StaticText(self.debuggerPane, label="base-on-api:")
         self.baseApi = wx.TextCtrl(self.debuggerPane, size=wx.Size(98, -1))
-        hboxBaseApi.Add(
-            baseApiLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5
-        )
+        hboxBaseApi.Add(baseApiLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxBaseApi.Add(self.baseApi, flag=wx.ALIGN_CENTER_VERTICAL)
 
         hboxBreakRet = wx.BoxSizer(wx.HORIZONTAL)
         breakRetLabel = wx.StaticText(self.debuggerPane, label="break-on-return:")
         self.apiList = wx.TextCtrl(self.debuggerPane, size=wx.Size(158, -1))
-        hboxBreakRet.Add(
-            breakRetLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5
-        )
+        hboxBreakRet.Add(breakRetLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         hboxBreakRet.Add(self.apiList, flag=wx.ALIGN_CENTER_VERTICAL)
 
         hboxCount = wx.BoxSizer(wx.HORIZONTAL)
@@ -276,9 +249,7 @@ class StartPanel(wx.Panel):
         self.idbgCheckbox = wx.CheckBox(self.debuggerPane, label="Interactive Debugger")
         self.idbgCheckbox.Bind(wx.EVT_CHECKBOX, self.OnIdbgChecked)
 
-        self.yarascanDisable = wx.CheckBox(
-            self.debuggerPane, label="Disable Monitor Yarascan"
-        )
+        self.yarascanDisable = wx.CheckBox(self.debuggerPane, label="Disable Monitor Yarascan")
 
         self.flexDebuggerSizer.Add(
             hboxBaseApi,
@@ -293,31 +264,18 @@ class StartPanel(wx.Panel):
             border=5,
         )
         self.flexDebuggerSizer.Add(self.yarascanDisable, proportion=0, flag=wx.EXPAND)
-        self.flexDebuggerSizer.Add(
-            hboxCount, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
-        )
+        self.flexDebuggerSizer.Add(hboxCount, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
         self.flexDebuggerSizer.Add(hboxDepth, proportion=0, flag=wx.EXPAND)
-        self.flexDebuggerSizer.Add(
-            self.idbgCheckbox,
-            proportion=0,
-            flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
-            border=5
-        )
+        self.flexDebuggerSizer.Add(self.idbgCheckbox, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
 
         debuggerVert = wx.BoxSizer(wx.VERTICAL)
         debuggerVert.Add(self.flexDebuggerSizer, proportion=0, border=1)
 
-        yaraCollapsiblePane = wx.CollapsiblePane(
-            self.debuggerPane, label="Monitor Yara", style=wx.CP_DEFAULT_STYLE
-        )
-        yaraCollapsiblePane.Bind(
-            wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged
-        )
+        yaraCollapsiblePane = wx.CollapsiblePane(self.debuggerPane, label="Monitor Yara", style=wx.CP_DEFAULT_STYLE)
+        yaraCollapsiblePane.Bind(wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged)
         yaraPane = yaraCollapsiblePane.GetPane()
 
-        self.yaraRule = wx.TextCtrl(
-            yaraPane, style=wx.TE_MULTILINE | wx.HSCROLL | wx.VSCROLL, size=wx.Size(-1, 200)
-        )
+        self.yaraRule = wx.TextCtrl(yaraPane, style=wx.TE_MULTILINE | wx.HSCROLL | wx.VSCROLL, size=wx.Size(-1, 200))
         self.yaraRule.SetValue(YARARULE)
         yaraSaveBtn = wx.Button(yaraPane, label="Save Rule")
         yaraSaveBtn.Bind(wx.EVT_BUTTON, self.OnYaraSave)
@@ -336,7 +294,7 @@ class StartPanel(wx.Panel):
         debuggerVert.Add(yaraCollapsiblePane, flag=wx.EXPAND | wx.ALL, border=10)
         self.debuggerPane.SetSizer(debuggerVert)
 
-        # Launch and kill
+        # Bottom section
         hbox5 = wx.BoxSizer(wx.HORIZONTAL)
         self.launchAnalyzerBtn = wx.Button(self, label="Launch")
         self.launchAnalyzerBtn.Disable()
@@ -345,20 +303,20 @@ class StartPanel(wx.Panel):
         self.staticAnalysis = wx.CheckBox(self, label="Static analysis")
         self.staticAnalysis.SetToolTip("Check this box to enable static code analysis.")
 
+        updateYaraBtn = wx.Button(self, label="Update Yara")
+        updateYaraBtn.Bind(wx.EVT_BUTTON, self.OnUpdateYara)
+
         openDirBtn = wx.Button(self, label="View Analysis Directory")
         openDirBtn.Bind(wx.EVT_BUTTON, self.OnOpenDirectory)
         self.terminateAnalyzerBtn = wx.Button(self, label="Kill")
         self.terminateAnalyzerBtn.Disable()
         self.terminateAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnTerminateAnalyzer)
-        hbox5.Add(
-            self.launchAnalyzerBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5
-        )
+        hbox5.Add(self.launchAnalyzerBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
         hbox5.AddSpacer(10)
-        hbox5.Add(
-            self.staticAnalysis, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5
-        )
+        hbox5.Add(self.staticAnalysis, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
 
         hbox5.AddStretchSpacer(1)
+        hbox5.Add(updateYaraBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
         hbox5.Add(openDirBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
         hbox5.Add(self.terminateAnalyzerBtn, proportion=0, flag=wx.EXPAND)
         self.terminateAnalyzerBtn.Disable()
@@ -368,9 +326,7 @@ class StartPanel(wx.Panel):
         vbox.Add(hbox2, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(hbox3, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(hboxHelp, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
-        vbox.Add(
-            hboxTimeout, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10
-        )
+        vbox.Add(hboxTimeout, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(
             self.debuggerCollapsePane,
             flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
@@ -438,48 +394,34 @@ class StartPanel(wx.Panel):
         hbox = wx.BoxSizer(wx.HORIZONTAL)
         helpList = wx.ComboBox(self, style=wx.CB_READONLY)
         helpOptions = sorted(help, key=lambda x: x[0])
-        formattedHelp = [
-            f"{name} - {comment}" if comment else name for name, comment in helpOptions
-        ]
+        formattedHelp = [f"{name} - {comment}" if comment else name for name, comment in helpOptions]
         helpList.Append("Options Help")
         helpList.AppendItems(formattedHelp)
         helpList.SetSelection(0)
-        hbox.Add(
-            helpList, proportion=1, flag=wx.LEFT | wx.ALIGN_CENTER_VERTICAL, border=5
-        )
+        hbox.Add(helpList, proportion=1, flag=wx.LEFT | wx.ALIGN_CENTER_VERTICAL, border=5)
 
         return hbox
 
     def AddDebuggerControls(self, index):
         hboxBp = wx.BoxSizer(wx.HORIZONTAL)
         bpTypes = [f"bp{index}", f"br{index}"]
-        bpType = wx.ComboBox(
-            self.debuggerPane, style=wx.CB_READONLY, choices=bpTypes, value=bpTypes[0]
-        )
-        addrTypeDropdown = wx.ComboBox(
-            self.debuggerPane, style=wx.CB_READONLY, choices=["RVA", "VA", "ep"], value="RVA"
-        )
+        bpType = wx.ComboBox(self.debuggerPane, style=wx.CB_READONLY, choices=bpTypes, value=bpTypes[0])
+        addrTypeDropdown = wx.ComboBox(self.debuggerPane, style=wx.CB_READONLY, choices=["RVA", "VA", "ep"], value="RVA")
         hexLabel = wx.StaticText(self.debuggerPane, label=": 0x")
         addrTextCtrl = wx.TextCtrl(self.debuggerPane, size=wx.Size(75, -1))
-        hboxBp.Add(
-            bpType, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5
-        )
+        hboxBp.Add(bpType, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
         hboxBp.Add(
             addrTypeDropdown,
             proportion=0,
             flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
             border=0,
         )
-        hboxBp.Add(
-            hexLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0
-        )
+        hboxBp.Add(hexLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0)
         hboxBp.Add(addrTextCtrl, proportion=0, flag=wx.EXPAND)
 
         hboxAction = wx.BoxSizer(wx.HORIZONTAL)
         actionLabel = wx.StaticText(self.debuggerPane, label=f"action{index}:")
-        actionDropdown = wx.ComboBox(
-            self.debuggerPane, style=wx.CB_READONLY, choices=[""]
-        )
+        actionDropdown = wx.ComboBox(self.debuggerPane, style=wx.CB_READONLY, choices=[""])
         actionDropdown.AppendItems(DEBUGACTIONS)
         colon = wx.StaticText(self.debuggerPane, label=":")
         valueTextCtrl = wx.TextCtrl(self.debuggerPane, size=wx.Size(100, -1))
@@ -496,16 +438,12 @@ class StartPanel(wx.Panel):
         hboxCount = wx.BoxSizer(wx.HORIZONTAL)
         countLabel = wx.StaticText(self.debuggerPane, label=f"count{index}: ")
         countTextCtrl = wx.TextCtrl(self.debuggerPane, size=wx.Size(75, -1))
-        hboxCount.Add(
-            countLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0
-        )
+        hboxCount.Add(countLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0)
         hboxCount.Add(countTextCtrl, proportion=0, flag=wx.EXPAND)
         hboxCount.AddSpacer(20)
         hcLabel = wx.StaticText(self.debuggerPane, label=f"hc{index}: ")
         hcTextCtrl = wx.TextCtrl(self.debuggerPane, size=wx.Size(35, -1))
-        hboxCount.Add(
-            hcLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0
-        )
+        hboxCount.Add(hcLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0)
         hboxCount.Add(hcTextCtrl, proportion=0, flag=wx.EXPAND)
 
         self.flexDebuggerSizer.Add(hboxBp, 0, wx.EXPAND)
@@ -662,11 +600,7 @@ class StartPanel(wx.Panel):
             )
 
     def OnBrowse(self, event):
-        initialDir = (
-            Path(self.targetPath.GetValue()).parent
-            if self.targetPath.GetValue()
-            else "."
-        )
+        initialDir = Path(self.targetPath.GetValue()).parent if self.targetPath.GetValue() else "."
         with wx.FileDialog(
             self,
             "Choose a file",
@@ -685,9 +619,7 @@ class StartPanel(wx.Panel):
                 wx.LogError(f"Cannot open file '{pathname}'.")
 
     def CopyTarget(self):
-        self.targetFile = (
-            Path(self.analysisDir) / f"s_{hash_file(hashlib.sha256, self.target)}"
-        )
+        self.targetFile = Path(self.analysisDir) / f"s_{hash_file(hashlib.sha256, self.target)}"
         shutil.copy(self.target, self.targetFile)
 
     def StartAnalysis(self):
@@ -815,9 +747,7 @@ class StartPanel(wx.Panel):
             Path(completeFolder).mkdir(exist_ok=True)
             self.terminateAnalyzerBtn.Disable()
         except Exception as e:
-            wx.MessageBox(
-                f"Could not terminate analyzer: {e}", "Error", wx.OK | wx.ICON_ERROR
-            )
+            wx.MessageBox(f"Could not terminate analyzer: {e}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnLaunchAnalyzer(self, event):
         originalPath = Path(self.targetPath.GetValue())
@@ -830,9 +760,7 @@ class StartPanel(wx.Panel):
         self.parent.targetFile = self.targetFile
 
         if self.staticAnalysis.GetValue():
-            wx.MessageBox(
-                "Static analysis: Check info, yara, and config tabs.", "Status", wx.OK | wx.ICON_INFORMATION
-            )
+            wx.MessageBox("Static analysis: Check info, yara, and config tabs.", "Status", wx.OK | wx.ICON_INFORMATION)
             return
 
         try:
@@ -859,9 +787,7 @@ class StartPanel(wx.Panel):
             self.StartAnalysis()
 
         except Exception as e:
-            wx.MessageBox(
-                f"Failed to execute the command: {e}", "Error", wx.OK | wx.ICON_ERROR
-            )
+            wx.MessageBox(f"Failed to execute the command: {e}", "Error", wx.OK | wx.ICON_ERROR)
 
     def SaveAnalysisFile(self, event, ack=True):
         content = self.analysisEditor.GetValue()
@@ -899,9 +825,7 @@ class StartPanel(wx.Panel):
     def StartAnalyzerThread(self, analyzer):
         def OnComplete(result):
             if result:
-                evt = AnalyzerCompleteEvent(
-                    EVT_ANALYZER_COMPLETE_ID, -1, "Analyzer completed"
-                )
+                evt = AnalyzerCompleteEvent(EVT_ANALYZER_COMPLETE_ID, -1, "Analyzer completed")
                 wx.PostEvent(self, evt)
 
         Thread(target=self.RunAnalyzer, args=(analyzer, OnComplete)).start()
@@ -923,6 +847,31 @@ class StartPanel(wx.Panel):
 
     def OnIdbgChecked(self, event):
         self.idbg = self.idbgCheckbox.GetValue()
+
+    def OnUpdateYara(self, event):
+        confirm = wx.MessageBox(
+            "Download and overwrite any existing YARA rules, and could take a few minutes.\n\nDo you want to continue?",
+            "Confirm YARA Update",
+            wx.YES_NO | wx.ICON_QUESTION | wx.CENTER,
+        )
+
+        if confirm != wx.YES:
+            return
+
+        try:
+            busy = wx.BusyInfo("Please wait... Updating YARA rules.", parent=self)
+            wx.Yield()
+            updated = UpdateYara(Path(self.capesoloRoot))
+            del busy
+            if updated:
+                details = "\n".join(f"{path}: {count} rules updated" for path, count in updated.items())
+                wx.MessageBox(f"YARA rules updated successfully:\n\n{details}", "Update Complete", wx.OK | wx.ICON_INFORMATION)
+            else:
+                wx.MessageBox("No YARA rules were updated.", "Update Complete", wx.OK | wx.ICON_INFORMATION)
+
+        except Exception as e:
+            del busy
+            wx.MessageBox(f"Failed to update YARA rules:\n{str(e)}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnYaraSave(self, event):
         yaraText = self.yaraRule.GetValue()
