@@ -61,8 +61,10 @@ class YaraProcessor(object):
         "49": "ERROR_REGULAR_EXPRESSION_TOO_COMPLEX",
     }
 
-    def __init__(self, yara_root="yara"):
+    def __init__(self, yara_root="yara", yara_custom="custom"):
         self.yara_root = yara_root
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        self.yara_custom = os.path.join(desktop, yara_custom)
         self.yara_rules = {}
         self.init_yara()
 
@@ -70,6 +72,7 @@ class YaraProcessor(object):
         # Beware, spaghetti code ahead.
         if not isinstance(yara_string, bytes):
             return yara_string
+
         try:
             new = yara_string.decode()
         except UnicodeDecodeError:
@@ -81,6 +84,26 @@ class YaraProcessor(object):
             new = f"{{ {yara_string.decode()} }}"
 
         return new
+
+    def add_rules(self, directory, category):
+        """
+        Scan a single `directory` for .yar/.yara files and return:
+        - rules: dict mapping 'rule_{category}_{n}' to file paths
+        - indexed: list of filenames loaded (for logging)
+        """
+        rules = {}
+        indexed = []
+        if os.path.isdir(directory):
+            for filename in os.listdir(directory):
+                if not filename.endswith((".yar", ".yara")):
+                    continue
+
+                filepath = os.path.join(directory, filename)
+                key = f"rule_{category}_{len(rules)}"
+                rules[key] = filepath
+                indexed.append(filename)
+
+        return rules, indexed
 
     def init_yara(self):
         log.debug("Initializing Yara...")
@@ -95,16 +118,18 @@ class YaraProcessor(object):
             rules, indexed = {}, []
             # Check if there is a directory for the given category.
             category_root = os.path.join(self.yara_root, category)
-            if not path_exists(category_root):
+            if not path_exists(category_root, windows=True):
                 log.warning("Missing Yara directory: %s?", category_root)
                 continue
 
-            for filename in os.listdir(category_root):
-                if not filename.endswith((".yar", ".yara")):
-                    continue
-                filepath = os.path.join(category_root, filename)
-                rules[f"rule_{category}_{len(rules)}"] = filepath
-                indexed.append(filename)
+            std_rules, std_indexed = self.add_rules(category_root, category)
+            rules.update(std_rules)
+            indexed.extend(std_indexed)
+
+            if category == "CAPE" and path_exists(self.yara_custom, windows=True):
+                custom_rules, custom_indexed = self.add_rules(self.yara_custom, category)
+                rules.update(custom_rules)
+                indexed.extend(custom_indexed)
 
             # Need to define each external variable that will be used in the
             # future. Otherwise, Yara will complain.
