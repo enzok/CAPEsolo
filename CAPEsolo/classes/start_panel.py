@@ -15,6 +15,7 @@ from CAPEsolo.capelib.utils import sanitize_filename
 from CAPEsolo.lib.common.hashing import hash_file
 from CAPEsolo.utils.update_yara import UpdateYara
 from .debug_console import DebugConsole
+from .json_report import GetResults
 from .key_event import EVT_ANALYZER_COMPLETE, EVT_ANALYZER_COMPLETE_ID
 from .logger_window import LoggerWindow
 from .timer_window import CountdownTimer
@@ -303,6 +304,10 @@ class StartPanel(wx.Panel):
         self.staticAnalysis = wx.CheckBox(self, label="Static analysis")
         self.staticAnalysis.SetToolTip("Check this box to enable static code analysis.")
 
+        self.jsonReportBtn = wx.Button(self, label="JSON Report")
+        self.jsonReportBtn.Disable()
+        self.jsonReportBtn.Bind(wx.EVT_BUTTON, self.JsonReport)
+
         updateYaraBtn = wx.Button(self, label="Update Yara")
         updateYaraBtn.Bind(wx.EVT_BUTTON, self.OnUpdateYara)
 
@@ -316,6 +321,7 @@ class StartPanel(wx.Panel):
         hbox5.Add(self.staticAnalysis, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
 
         hbox5.AddStretchSpacer(1)
+        hbox5.Add(self.jsonReportBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
         hbox5.Add(updateYaraBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
         hbox5.Add(openDirBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
         hbox5.Add(self.terminateAnalyzerBtn, proportion=0, flag=wx.EXPAND)
@@ -509,6 +515,7 @@ class StartPanel(wx.Panel):
 
             self.log("Run completed")
             self.resultserver.shutdown_server()
+            self.jsonReportBtn.Enable()
         except Exception:
             self.log(traceback.format_exc())
         return True
@@ -895,3 +902,29 @@ class StartPanel(wx.Panel):
             "Delete Successful",
             wx.OK | wx.ICON_INFORMATION,
         )
+
+    def JsonReport(self, event):
+        confirm = wx.MessageBox(
+            "Generate JSON report.\n\nDo you want to continue?",
+            "Confirm",
+            wx.YES_NO | wx.ICON_QUESTION | wx.CENTER,
+        )
+
+        if confirm != wx.YES:
+            return
+
+        try:
+            busy = wx.BusyInfo("Please wait... Creating JSON report.", parent=self)
+            wx.Yield()
+            self.jsonReportBtn.Disable()
+            completed, msg = GetResults(self.targetFile, self.analysisDir)
+            del busy
+            if completed:
+                wx.MessageBox(f"JSON report completed successfully.", "JSON Report", wx.OK | wx.ICON_INFORMATION)
+            else:
+                wx.MessageBox(f"JSON report was unsuccessful: {msg}", "JSON Report", wx.OK | wx.ICON_INFORMATION)
+
+        except Exception as e:
+            del busy
+            wx.MessageBox(f"Failed to create JSON report:\n{str(e)}", "Error", wx.OK | wx.ICON_ERROR)
+

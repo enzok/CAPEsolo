@@ -61,6 +61,7 @@ class PayloadsPanel(wx.Panel):
     def LoadAndDisplayContent(self):
         if self.payloadsLoaded or not self.jsonFileExists:
             return
+
         popup = wx.ProgressDialog(
             "Loading payloads",
             "Please wait...",
@@ -74,12 +75,14 @@ class PayloadsPanel(wx.Panel):
             return
         else:
             data = dict(sorted(data.items(), key=lambda x: x[1]["size"], reverse=True))
+
         for key, value in data.items():
             if not key.startswith("aux_"):
                 cape_info = {}
                 metadata = data[key].get("metadata", "")
                 if metadata:
                     cape_info = metadata_processing(metadata)
+
                 path = Path(self.analysisDir) / key
                 fileinfo = File(str(path)).get_all()[0]
                 filepath = key[0].upper() + key[1:]
@@ -170,18 +173,21 @@ class PayloadsPanel(wx.Panel):
                 attr = gridlib.GridCellAttr()
                 attr.SetBackgroundColour(lightGrey)
                 grid.SetRowAttr(row, attr)
+
         grid.ForceRefresh()
 
     def GetMainFrame(self):
         parent = self.GetParent()
         while parent and not isinstance(parent, wx.Frame):
             parent = parent.GetParent()
+
         return parent
 
     def IsWindowOpen(self, title):
         for child in self.GetChildren():
             if isinstance(child, wx.Frame) and child.GetTitle() == title:
                 return True
+
         return False
 
     def OnShowPe(self, event):
@@ -194,6 +200,7 @@ class PayloadsPanel(wx.Panel):
             if path and not self.IsWindowOpen(str(path)):
                 viewer_window = PeWindow(self, str(path), path, position, size)
                 viewer_window.Show()
+
         except Exception as e:
             wx.MessageBox(
                 f"Failed to execute the command: {e}", "Error", wx.OK | wx.ICON_ERROR
@@ -209,6 +216,7 @@ class PayloadsPanel(wx.Panel):
             if path and not self.IsWindowOpen(str(path)):
                 viewer_window = HexViewWindow(self, str(path), path, position, size)
                 viewer_window.Show()
+
         except Exception as e:
             wx.MessageBox(
                 f"Failed to execute the command: {e}", "Error", wx.OK | wx.ICON_ERROR

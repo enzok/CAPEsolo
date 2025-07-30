@@ -4,13 +4,14 @@ import operator
 import re
 import threading
 from collections import namedtuple
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 import wx
 
 from CAPEsolo.capelib.cmdconsts import *
-from .patch_models import PatchEntry
 from .patch_dialog import ConfirmPatchDialog, PatchDialog, PatchHistoryDialog
+from .patch_models import PatchEntry
 from .search_dialog import SearchDialog
 
 log = logging.getLogger(__name__)
@@ -971,7 +972,9 @@ class MemDumpListCtrl(wx.ListCtrl):
         pos = self.ScreenToClient(pos)
         menu = wx.Menu()
         miCopy = menu.Append(wx.ID_ANY, "Copy")
+        miSaveToFile = menu.Append(wx.ID_ANY, "Save Memory To File...")
         self.Bind(wx.EVT_MENU, self.OnCopy, miCopy)
+        self.Bind(wx.EVT_MENU, self.OnSaveMemoryToFile, miSaveToFile)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
@@ -1016,6 +1019,110 @@ class MemDumpListCtrl(wx.ListCtrl):
             self.addr = self.backHistory.pop()
 
         self.OnDumpAddress(event)
+
+    def DumpFormatDialog(self):
+        dlg = wx.SingleChoiceDialog(
+            None,
+            "Select the format to save:",
+            "Save Format",
+            ["Full View (Address + Hex + ASCII)", "Hex Dump Only", "ASCII Only", "Raw Bytes", "C Style", "Intel Hex"],
+        )
+        if dlg.ShowModal() == wx.ID_OK:
+            return dlg.GetStringSelection()
+
+        return None
+
+    def OnSaveMemoryToFile(self, event):
+        selection = self.DumpFormatDialog()
+        if not selection:
+            return
+
+        dlg = wx.FileDialog(self, "Save Memory Dump", wildcard="All files (*.*)|*.*", style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT)
+        if dlg.ShowModal() != wx.ID_OK:
+            return
+
+        path = dlg.GetPath()
+
+        format_to_ext = {
+            "Full View (Address + Hex + ASCII)": ".txt",
+            "Hex Dump Only": ".txt",
+            "ASCII Only": ".txt",
+            "Raw Bytes": ".bin",
+            "C Style": ".c",
+            "Intel Hex": ".hex",
+        }
+        default_ext = format_to_ext.get(selection, ".txt")
+        if not Path(path).suffix:
+            path += default_ext
+
+        ext = Path(path).suffix.lower()
+        is_binary = ext == ".bin"
+
+        try:
+            with open(path, "wb" if is_binary else "w", encoding=None if is_binary else "utf-8") as f:
+                if selection == "Full View (Address + Hex + ASCII)":
+                    for row in range(self.GetItemCount()):
+                        addr = self.GetItemText(row, 0)
+                        hexpart = self.GetItemText(row, 1)
+                        asciipart = self.GetItemText(row, 2)
+                        f.write(f"{addr}  {hexpart:<48}  {asciipart}\n")
+
+                elif selection == "Hex Dump Only":
+                    for row in range(self.GetItemCount()):
+                        hexpart = self.GetItemText(row, 1)
+                        f.write(f"{hexpart}\n")
+
+                elif selection == "ASCII Only":
+                    for row in range(self.GetItemCount()):
+                        asciipart = self.GetItemText(row, 2)
+                        f.write(f"{asciipart}\n")
+
+                elif selection == "Raw Bytes":
+                    for row in range(self.GetItemCount()):
+                        hexpart = self.GetItemText(row, 1).strip()
+                        hexbytes = bytes.fromhex(hexpart)
+                        f.write(hexbytes)
+
+                elif selection == "C Style":
+                    all_bytes = bytearray()
+                    for row in range(self.GetItemCount()):
+                        hexpart = self.GetItemText(row, 1).strip()
+                        all_bytes.extend(bytes.fromhex(hexpart))
+
+                    f.write("unsigned char dump[] = {\n")
+                    for i in range(0, len(all_bytes), 12):
+                        line = ", ".join(f"0x{b:02X}" for b in all_bytes[i : i + 12])
+                        f.write(f"    {line},\n")
+
+                    f.write("};\n")
+
+                elif selection == "Intel Hex":
+                    all_bytes = bytearray()
+                    for row in range(self.GetItemCount()):
+                        hexpart = self.GetItemText(row, 1).strip()
+                        all_bytes.extend(bytes.fromhex(hexpart))
+
+                    addr = 0
+                    for i in range(0, len(all_bytes), 16):
+                        chunk = all_bytes[i : i + 16]
+                        record = bytearray()
+                        record.append(len(chunk))
+                        record.append((addr >> 8) & 0xFF)
+                        record.append(addr & 0xFF)
+                        record.append(0x00)
+                        record.extend(chunk)
+                        checksum = (-sum(record)) & 0xFF
+                        hexline = ":" + "".join(f"{b:02X}" for b in record) + f"{checksum:02X}\n"
+                        f.write(hexline)
+                        addr += len(chunk)
+
+                    f.write(":00000001FF\n")
+
+                else:
+                    wx.MessageBox("Unknown format selected.", "Error", wx.ICON_ERROR)
+
+        except Exception as e:
+            wx.MessageBox(f"Failed to save file:\n{e}", "Error", wx.ICON_ERROR)
 
 
 class ThreadListCtrl(wx.ListCtrl):

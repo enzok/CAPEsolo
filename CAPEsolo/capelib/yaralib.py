@@ -118,7 +118,7 @@ class YaraProcessor(object):
             rules, indexed = {}, []
             # Check if there is a directory for the given category.
             category_root = os.path.join(self.yara_root, category)
-            if not path_exists(category_root, windows=True):
+            if not path_exists(category_root):
                 log.warning("Missing Yara directory: %s?", category_root)
                 continue
 
@@ -126,7 +126,7 @@ class YaraProcessor(object):
             rules.update(std_rules)
             indexed.extend(std_indexed)
 
-            if category == "CAPE" and path_exists(self.yara_custom, windows=True):
+            if category == "CAPE" and path_exists(self.yara_custom):
                 custom_rules, custom_indexed = self.add_rules(self.yara_custom, category)
                 rules.update(custom_rules)
                 indexed.extend(custom_indexed)

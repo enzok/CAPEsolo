@@ -69,7 +69,7 @@ class YaraPanel(wx.Panel):
             self.yara.Scan(str(self.targetFile))
         except FileNotFoundError:
             print("Target not found. This may be normal.")
-        content = ""
+
         self.yara.ScanPayloads()
         content = self.PrintResults()
         self.resultsWindow.SetValue(content)

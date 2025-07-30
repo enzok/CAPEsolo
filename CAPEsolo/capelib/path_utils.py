@@ -35,10 +35,8 @@ def path_safe(path: str) -> bool:
         return False
 
 
-def path_exists(path: str, windows: bool = False) -> bool:
-    if not windows:
-        return Path(path_to_ascii(path)).exists()
-    return PureWindowsPath(path_to_ascii(path)).exists()
+def path_exists(path: str) -> bool:
+    return Path(path_to_ascii(path)).exists()
 
 
 def path_get_size(path: str):
