@@ -29,21 +29,6 @@ from ctypes.wintypes import BOOL, DWORD, HANDLE
 from pathlib import Path
 from shutil import copy
 
-from lib.common.constants import (
-    CAPEMON32_NAME,
-    CAPEMON64_NAME,
-    LOADER32_NAME,
-    LOADER64_NAME,
-    LOGSERVER_PREFIX,
-    PATHS,
-    PIPE,
-    SHUTDOWN_MUTEX,
-    SIDELOADER32_NAME,
-    SIDELOADER64_NAME,
-    TERMINATE_EVENT,
-    TTD32_NAME,
-    TTD64_NAME,
-)
 from lib.common.defines import (
     CREATE_NEW_CONSOLE,
     CREATE_SUSPENDED,
@@ -61,10 +46,29 @@ from lib.common.defines import (
     PROCESSENTRY32,
     PSAPI,
     STARTUPINFO,
+    STILL_ACTIVE,
     SYSTEM_INFO,
     TH32CS_SNAPPROCESS,
     THREAD_ALL_ACCESS,
 )
+
+from lib.common.constants import (
+    CAPEMON32_NAME,
+    CAPEMON64_NAME,
+    LOADER32_NAME,
+    LOADER64_NAME,
+    LOGSERVER_PREFIX,
+    PATHS,
+    PIPE,
+    SHUTDOWN_MUTEX,
+    SIDELOADER32_NAME,
+    SIDELOADER64_NAME,
+    TERMINATE_EVENT,
+    TTD32_NAME,
+    TTD64_NAME,
+)
+
+from lib.common.constants import OPT_CURDIR, OPT_EXECUTIONDIR
 from lib.common.errors import get_error_string
 from lib.common.rand import random_string
 from lib.common.results import upload_to_host
@@ -79,7 +83,7 @@ CSIDL_WINDOWS = 0x0024
 CSIDL_SYSTEM = 0x0025
 CSIDL_SYSTEMX86 = 0x0029
 CSIDL_PROGRAM_FILES = 0x0026
-CSIDL_PROGRAM_FILESX86 = 0x002a
+CSIDL_PROGRAM_FILESX86 = 0x002A
 
 IOCTL_PID = 0x222008
 IOCTL_CUCKOO_PATH = 0x22200C
@@ -112,9 +116,7 @@ def get_referrer_url(interest):
 
     escapedurl = urllib.parse.quote(interest, "")
     itemidx = random.randint(1, 30)
-    vedstr = b"0CCEQfj" + base64.urlsafe_b64encode(
-        random_string(random.randint(5, 8) * 3).encode()
-    )
+    vedstr = b"0CCEQfj" + base64.urlsafe_b64encode(random_string(random.randint(5, 8) * 3).encode())
     eistr = base64.urlsafe_b64encode(random_string(12).encode())
     usgstr = b"AFQj" + base64.urlsafe_b64encode(random_string(12).encode())
     return f"http://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd={itemidx}&ved={vedstr}&url={escapedurl}&ei={eistr}&usg={usgstr}"
@@ -178,10 +180,7 @@ class Process:
 
     def __del__(self):
         """Close open handles."""
-        if (
-            hasattr(self, "h_process")
-            and self.h_process != KERNEL32.GetCurrentProcess()
-        ):
+        if hasattr(self, "h_process") and self.h_process != KERNEL32.GetCurrentProcess():
             KERNEL32.CloseHandle(self.h_process)
         if hasattr(self, "h_thread") and self.h_thread != 0:
             KERNEL32.CloseHandle(self.h_thread)
@@ -199,19 +198,13 @@ class Process:
             if self.pid == os.getpid():
                 self.h_process = KERNEL32.GetCurrentProcess()
             else:
-                self.h_process = KERNEL32.OpenProcess(
-                    PROCESS_ALL_ACCESS, False, self.pid
-                )
+                self.h_process = KERNEL32.OpenProcess(PROCESS_ALL_ACCESS, False, self.pid)
                 if not self.h_process:
-                    self.h_process = KERNEL32.OpenProcess(
-                        PROCESS_QUERY_LIMITED_INFORMATION, False, self.pid
-                    )
+                    self.h_process = KERNEL32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, self.pid)
             ret = True
 
         if self.thread_id and not self.h_thread:
-            self.h_thread = KERNEL32.OpenThread(
-                THREAD_ALL_ACCESS, False, self.thread_id
-            )
+            self.h_thread = KERNEL32.OpenThread(THREAD_ALL_ACCESS, False, self.thread_id)
             ret = True
         return ret
 
@@ -256,9 +249,7 @@ class Process:
         # Set return value to signed 32bit integer.
         NTDLL.NtQueryInformationProcess.restype = c_int
 
-        ret = NTDLL.NtQueryInformationProcess(
-            self.h_process, 27, byref(pbi), sizeof(pbi), byref(size)
-        )
+        ret = NTDLL.NtQueryInformationProcess(self.h_process, 27, byref(pbi), sizeof(pbi), byref(size))
 
         if NT_SUCCESS(ret) and size.value > 16:
             try:
@@ -273,7 +264,7 @@ class Process:
         """Use SHGetFolderPathW to get the system folder path for a given CSIDL."""
         buf = create_string_buffer(MAX_PATH)
         windll.shell32.SHGetFolderPathA(None, csidl, None, 0, buf)
-        return buf.value.decode('utf-8', errors='ignore')
+        return buf.value.decode("utf-8", errors="ignore")
 
     def get_image_name(self):
         """Get the image name; returns an empty string on error."""
@@ -292,9 +283,7 @@ class Process:
         """Process is alive?
         @return: process status.
         """
-        # ToDo: Fix this, it's broken
-        # return self.exit_code() == STILL_ACTIVE
-        return True
+        return self.exit_code() == STILL_ACTIVE
 
     def is_critical(self):
         """Determines if process is 'critical' or not, so we can prevent terminating it"""
@@ -303,9 +292,7 @@ class Process:
 
         val = c_ulong(0)
         retlen = c_ulong(0)
-        ret = NTDLL.NtQueryInformationProcess(
-            self.h_process, 29, byref(val), sizeof(val), byref(retlen)
-        )
+        ret = NTDLL.NtQueryInformationProcess(self.h_process, 29, byref(val), sizeof(val), byref(retlen))
         if NT_SUCCESS(ret) and val.value:
             return True
         return False
@@ -328,9 +315,7 @@ class Process:
             POINTER(c_ulong),
         ]
 
-        ret = NTDLL.NtQueryInformationProcess(
-            self.h_process, 0, byref(pbi), sizeof(pbi), byref(size)
-        )
+        ret = NTDLL.NtQueryInformationProcess(self.h_process, 0, byref(pbi), sizeof(pbi), byref(size))
 
         if NT_SUCCESS(ret) and size.value == sizeof(pbi):
             return pbi.InheritedFromUniqueProcessId
@@ -344,7 +329,7 @@ class Process:
             if not directory.is_dir():
                 return False
 
-            if (directory/"capemon.dll").exists():
+            if (directory / "capemon.dll").exists():
                 return False
 
             # Early exit if directory is a known system location
@@ -354,7 +339,7 @@ class Process:
                     Path(self.get_folder_path(CSIDL_SYSTEM)).resolve(),
                     Path(self.get_folder_path(CSIDL_SYSTEMX86)).resolve(),
                     Path(self.get_folder_path(CSIDL_PROGRAM_FILES)).resolve(),
-                    Path(self.get_folder_path(CSIDL_PROGRAM_FILESX86)).resolve()
+                    Path(self.get_folder_path(CSIDL_PROGRAM_FILESX86)).resolve(),
                 }
                 if directory.resolve() in system_dirs:
                     return False
@@ -476,9 +461,7 @@ class Process:
             wow64 = c_ulong(0)
             KERNEL32.Wow64DisableWow64FsRedirection(byref(wow64))
 
-        os.system(
-            f'cmd /c "rundll32 setupapi.dll, InstallHinfSection DefaultInstall 132 {new_inf}"'
-        )
+        os.system(f'cmd /c "rundll32 setupapi.dll, InstallHinfSection DefaultInstall 132 {new_inf}"')
         os.system(f"net start {service_name}")
 
         si = STARTUPINFO()
@@ -545,9 +528,7 @@ class Process:
                 flag = KERNEL32.Process32Next(snapshot, byref(proc_info))
             bytes_returned = c_ulong(0)
             msg = f"{self.pid}_{ppid}_{os.getpid()}_{pi.dwProcessId}_{pid_vboxservice}_{pid_vboxtray}\0"
-            KERNEL32.DeviceIoControl(
-                hFile, IOCTL_PID, msg, len(msg), None, 0, byref(bytes_returned), None
-            )
+            KERNEL32.DeviceIoControl(hFile, IOCTL_PID, msg, len(msg), None, 0, byref(bytes_returned), None)
             msg = f"{Path.cwd()}\0"
             KERNEL32.DeviceIoControl(
                 hFile,
@@ -596,10 +577,10 @@ class Process:
 
         # Use the custom execution directory if provided, otherwise launch in the same location
         # where the sample resides (default %TEMP%)
-        if "executiondir" in self.options.keys():
-            execution_directory = self.options["executiondir"]
-        elif "curdir" in self.options.keys():
-            execution_directory = self.options["curdir"]
+        if OPT_EXECUTIONDIR in self.options.keys():
+            execution_directory = self.options[OPT_EXECUTIONDIR]
+        elif OPT_CURDIR in self.options.keys():
+            execution_directory = self.options[OPT_CURDIR]
         else:
             execution_directory = os.getenv("TEMP")
 
@@ -647,9 +628,7 @@ class Process:
         @return: operation status.
         """
         if not self.suspended:
-            log.warning(
-                "The process with pid %d was not suspended at creation", self.pid
-            )
+            log.warning("The process with pid %d was not suspended at creation", self.pid)
             return False
 
         if not self.h_thread:
@@ -719,9 +698,7 @@ class Process:
             self.open()
 
         event_name = TERMINATE_EVENT + str(self.pid)
-        self.terminate_event_handle = KERNEL32.OpenEventW(
-            EVENT_MODIFY_STATE, False, event_name
-        )
+        self.terminate_event_handle = KERNEL32.OpenEventW(EVENT_MODIFY_STATE, False, event_name)
         if self.terminate_event_handle:
             # make sure process is aware of the termination
             KERNEL32.SetEvent(self.terminate_event_handle)
@@ -782,9 +759,7 @@ class Process:
         # start the logserver for this monitored process
         logserver_path = f"{LOGSERVER_PREFIX}{self.pid}"
         if logserver_path not in LOGSERVER_POOL:
-            LOGSERVER_POOL[logserver_path] = LogServer(
-                self.config.ip, self.config.port, logserver_path
-            )
+            LOGSERVER_POOL[logserver_path] = LogServer(self.config.ip, self.config.port, logserver_path)
 
         if "tlsdump" not in self.options:
             Process.process_num += 1
@@ -805,10 +780,7 @@ class Process:
             config.write(f"terminate-event={TERMINATE_EVENT}{self.pid}\n")
 
             if nosleepskip or (
-                "force-sleepskip" not in self.options
-                and len(interest) > 2
-                and interest[:2] != "\\:"
-                and Process.process_num <= 2
+                "force-sleepskip" not in self.options and len(interest) > 2 and interest[:2] != "\\:" and Process.process_num <= 2
             ):
                 config.write("force-sleepskip=0\n")
 
@@ -836,9 +808,7 @@ class Process:
             for optname, option in self.options.items():
                 if optname not in server_options:
                     config.write(f"{optname}={option}\n")
-                    log.info(
-                        "Option '%s' with value '%s' sent to monitor", optname, option
-                    )
+                    log.info("Option '%s' with value '%s' sent to monitor", optname, option)
 
     def inject(self, interest=None, nosleepskip=False):
         """Cuckoo DLL injection.
@@ -852,9 +822,7 @@ class Process:
 
         thread_id = self.thread_id or 0
         if not self.is_alive():
-            log.warning(
-                "The process with pid %d is not alive, injection aborted", self.pid
-            )
+            log.warning("The process with pid %d is not alive, injection aborted", self.pid)
             return False
 
         if self.is_64bit():
@@ -914,15 +882,18 @@ class Process:
             except OSError as e:
                 log.error("Failed to copy DLL: %s", e)
                 return False
-            log.info("%s DLL to sideload is %s, sideloader %s", bit_str, os.path.join(path, "capemon.dll"), os.path.join(path, "version.dll"))
+            log.info(
+                "%s DLL to sideload is %s, sideloader %s",
+                bit_str,
+                os.path.join(path, "capemon.dll"),
+                os.path.join(path, "version.dll"),
+            )
             return True
-        
+
         log.info("%s DLL to inject is %s, loader %s", bit_str, dll, bin_name)
 
         try:
-            ret = subprocess.run(
-                [bin_name, "inject", str(self.pid), str(thread_id), dll]
-            )
+            ret = subprocess.run([bin_name, "inject", str(self.pid), str(thread_id), dll])
 
             if ret.returncode == 1:
                 log.info("Injected into %s %s", bit_str, self)
@@ -980,9 +951,7 @@ class Process:
 
         file_path = os.path.join(PATHS["memory"], f"{self.pid}.dmp")
         try:
-            upload_to_host(
-                file_path, os.path.join("memory", f"{self.pid}.dmp"), category="memory"
-            )
+            upload_to_host(file_path, os.path.join("memory", f"{self.pid}.dmp"), category="memory")
         except Exception as e:
             log.error(e, exc_info=True)
             log.error(os.path.join("memory", f"{self.pid}.dmp"))
@@ -999,11 +968,7 @@ class Process:
     def has_msimg32(self, directory_path: str) -> bool:
         """Check if msimg32.dll exists in directory"""
         try:
-            return any(
-                f.name.lower() == "msimg32.dll"
-                for f in Path(directory_path).glob("*")
-                if f.is_file()
-            )
+            return any(f.name.lower() == "msimg32.dll" for f in Path(directory_path).glob("*") if f.is_file())
         except (OSError, PermissionError):
             return False
 
@@ -1031,5 +996,10 @@ class Process:
         except OSError as e:
             log.error("Failed to copy DLL: %s", e)
             return
-        log.info("%s DLL to sideload is %s, sideloader %s", bit_str, os.path.join(directory_path, "capemon.dll"), os.path.join(directory_path, "version.dll"))
+        log.info(
+            "%s DLL to sideload is %s, sideloader %s",
+            bit_str,
+            os.path.join(directory_path, "capemon.dll"),
+            os.path.join(directory_path, "version.dll"),
+        )
         return

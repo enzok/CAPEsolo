@@ -754,7 +754,7 @@ class Analyzer:
                                     try:
                                         Process(pid=pid).upload_memdump()
                                     except Exception as e:
-                                        log.error(e, exc_info=True)
+                                        log.exception(e)
                                 log.info(
                                     "Process with pid %s appears to have terminated",
                                     pid,
@@ -1024,7 +1024,7 @@ class Files:
         except (IOError, socket.error) as e:
             log.error('Unable to upload dropped file at path "%s": %s', filepath, e)
         except Exception as e:
-            log.error(e, exc_info=True)
+            log.exception(e)
 
     def delete_file(self, filepath, pid=None):
         """A file is about to be removed and thus should be dumped right away."""
@@ -1686,11 +1686,11 @@ class CommandPipeHandler:
                 try:
                     response = fn(arguments)
                 except Exception as e:
-                    log.error(e, exc_info=True)
                     log.exception(
-                        "Pipe command handler exception occurred (command %s args %s)",
+                        "Pipe command handler exception occurred (command %s args %s): %s",
                         command,
                         arguments,
+                        str(e)
                     )
 
         return response
@@ -1718,7 +1718,7 @@ if __name__ == "__main__":
 
     # When user set wrong package, Example: Emotet package when submit doc, package only is for EXE!
     except CuckooError:
-        log.info("You probably submitted the job with wrong package", exc_info=True)
+        log.info("You probably submitted the job with wrong package")
         data["status"] = "exception"
         data["description"] = "You probably submitted the job with wrong package"
         try:

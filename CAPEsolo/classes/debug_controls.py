@@ -246,7 +246,6 @@ class DisassemblyListCtrl(wx.ListCtrl):
             self.Bind(wx.EVT_MENU, lambda e, s=slot: self.OnSetBreakpoint(row, s), id=bpId)
 
         menu.AppendSubMenu(bpMenu, "Set Breakpoint")
-        miDeleteBreakpoint = menu.Append(wx.ID_ANY, "Delete Breakpoint")
 
         self.Bind(wx.EVT_MENU, self.OnCopy, miCopy)
         self.Bind(wx.EVT_MENU, self.OnGoTo, miGoTo)
@@ -262,7 +261,6 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.Bind(wx.EVT_MENU, self.OnStepOver, miStepOver)
         self.Bind(wx.EVT_MENU, self.OnStepOut, miStepOut)
         self.Bind(wx.EVT_MENU, lambda e: self.OnRunUntil(row), miRunUntil)
-        self.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(row), miDeleteBreakpoint)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
@@ -369,15 +367,6 @@ class DisassemblyListCtrl(wx.ListCtrl):
         except ValueError as e:
             wx.MessageBox(f"Invalid address for Set Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
-    def OnDeleteBreakpoint(self, row):
-        addrStr = self.GetItemText(row, 0).strip()
-        try:
-            addr = int(addrStr, 16)
-            payload = f"{addr:#X}"
-            self.parent.SendCommand(CMD_DELETE_BREAKPOINT, payload)
-        except ValueError as e:
-            wx.MessageBox(f"Invalid address for Delete Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
-
     def ClearBpBackground(self, addr):
         row = self.GetInstructionRow(addr)
         self.SetItemBackgroundColour(row, wx.Colour(wx.WHITE))
@@ -391,6 +380,9 @@ class DisassemblyListCtrl(wx.ListCtrl):
     def GoToInstruction(self, addr):
         addr = int(addr, 16)
         row = self.GetInstructionRow(addr)
+        if row == wx.NOT_FOUND:
+            return row
+
         self.CenterRow(row)
         self.Select(row)
         self.Focus(row)
@@ -1224,14 +1216,8 @@ class BreakpointsListCtrl(wx.ListCtrl):
         menu.Destroy()
 
     def OnDeleteBreakpoint(self, row):
-        addrStr = self.GetItemText(row, 1).strip()
-        try:
-            addr = int(addrStr, 16)
-            payload = f"{addr:#X}"
-            self.parent.SendCommand(CMD_DELETE_BREAKPOINT, payload)
-        except ValueError as e:
-            log.error("[DEBUG CONSOLE] Invalid address for Delete Breakpoint: %s (%s)", addrStr, e)
-            wx.MessageBox(f"Invalid address forDelete Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
+        payload = f"{row}"
+        self.parent.SendCommand(CMD_DELETE_BREAKPOINT, payload)
 
     def OnFollowBreakpoint(self, row):
         addrStr = self.GetItemText(row, 1).strip()

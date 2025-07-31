@@ -6,6 +6,7 @@ import threading
 import time
 import zlib
 from collections import defaultdict
+from contextlib import suppress
 from typing import Dict, List, Tuple
 
 import pywintypes
@@ -621,7 +622,6 @@ class ConsolePanel(wx.Panel):
         self.cip = address
         if not self.AddressInModules(address):
             self.SendCommand(CMD_MODULE_LIST)
-            return
 
         region = self.disassemblyConsole.FindPage(address)
         if region is None:
@@ -858,6 +858,9 @@ class ConsolePanel(wx.Panel):
 
     def HandleSetBreakpoint(self, payload):
         self.AppendConsole(payload)
+        if "Failed" in payload:
+            return
+
         m = re.search(r"0x[0-9a-fA-F]+", payload)
         if m:
             addr = int(m.group(0), 16)
@@ -866,6 +869,9 @@ class ConsolePanel(wx.Panel):
 
     def HandleDeleteBreakpoint(self, payload):
         self.AppendConsole(payload)
+        if "Failed" in payload:
+            return
+
         m = re.search(r"0x[0-9a-fA-F]+", payload)
         if m:
             addr = int(m.group(0), 16)
@@ -979,31 +985,32 @@ class ConsolePanel(wx.Panel):
 
     def HandlePageLoad(self, payload):
         """Process page load response."""
+        if "Failed" in payload:
+            return
+
         try:
             requestAddr, pageData = payload.split("|", 1)
             pageBase = int(requestAddr, 16)
         except ValueError as e:
-            log.error("[DEBUG CONSOLE] Invalid page load payload format: %s (%s)", payload, str(e))
+            log.error("[DEBUG CONSOLE] Page load payload invalid: %s (%s)", payload, str(e))
             return
+        validPages = False
+        if pageData and pageData not in ("UNREADABLE", "NODATA"):
+            with suppress(ValueError):
+                pageData = bytes.fromhex(pageData)
+                validPages = True
 
-        try:
-            pageData = bytes.fromhex(pageData)
-        except ValueError as e:
-            log.error("[DEBUG CONSOLE] Invalid hex string in instruction_page: %s", str(e))
-            return
+        if validPages:
+            region = self.disassemblyConsole.FindPage(pageBase)
+            if region:
+                expected = min(PAGE_SIZE, region[1] - (pageBase - region[0]))
+                if len(pageData) > expected:
+                    pageData = pageData[:expected]
 
-        if len(pageData) == 0:
-            log.error("[DEBUG CONSOLE] Empty page data for page %#x", pageBase)
-            return
-
-        region = self.disassemblyConsole.FindPage(pageBase)
-        if region:
-            expected = min(PAGE_SIZE, region[1] - (pageBase - region[0]))
-            if len(pageData) > expected:
-                pageData = pageData[:expected]
+            with self.pageLock:
+                self.pageBuffers[pageBase] = pageData
 
         with self.pageLock:
-            self.pageBuffers[pageBase] = pageData
             self.requestedPages.discard(pageBase)
             complete = not self.requestedPages
 
