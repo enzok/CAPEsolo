@@ -3,7 +3,6 @@ import logging
 import re
 import struct
 import threading
-import time
 import zlib
 from collections import defaultdict
 from contextlib import suppress
@@ -17,8 +16,8 @@ from distorm3 import Decode, Decode32Bits, Decode64Bits
 
 from CAPEsolo.capelib.cmdconsts import *
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
-from .debug_controls import (BreakpointsListCtrl, DecodedInstruction, DisassemblyListCtrl, MemDumpListCtrl, ModulesListCtrl,
-    RegsTextCtrl, StackListCtrl, ThreadListCtrl, )
+from .debug_controls import (BreakpointsListCtrl, DecodedInstruction, DisassemblyListCtrl, IsValidHexAddress, MemDumpListCtrl,
+    ModulesListCtrl, RegsTextCtrl, StackListCtrl, ThreadListCtrl)
 from .debug_pipe import CommandPipeHandler
 from .patch_assembler import Assembler
 from .patch_models import PatchEntry
@@ -325,7 +324,7 @@ class ConsolePanel(wx.Panel):
         for btn, cmd in (
             (self.stepIntoBtn, CMD_STEP_INTO),
             (self.stepOverBtn, CMD_STEP_OVER),
-            (self.stepOutBtn, CMD_RUN_UNTIL),
+            (self.stepOutBtn, CMD_STEP_OUT),
             (self.continueBtn, CMD_CONTINUE),
         ):
             btn.SetMinSize(wx.Size(MAX_BTN_W, -1))
@@ -355,6 +354,10 @@ class ConsolePanel(wx.Panel):
         self.disassemblyConsole.OnRunUntil(row)
 
     def OnPatchAccel(self, event):
+        if self.inputBox.HasFocus():
+            self.inputBox.WriteText(" ")
+            return
+
         row = self.disassemblyConsole.GetNextItem(-1, wx.LIST_NEXT_ALL, wx.LIST_STATE_SELECTED)
         if row == -1:
             wx.MessageBox("No valid address to patch.", "Error", wx.OK | wx.ICON_ERROR)
@@ -450,17 +453,15 @@ class ConsolePanel(wx.Panel):
         self.SendInit()
         while True:
             msg = self.ReadResponse()
-            if not self.pipeHandle:
+            if msg is None:
                 break
 
-            if msg:
-                wx.CallAfter(self.ProcessServerOutput, msg)
-            else:
-                time.sleep(0.01)
+            if not msg:
+                continue
 
-        if self.pipeHandle:
-            win32file.CloseHandle(self.pipeHandle)
+            wx.CallAfter(self.ProcessServerOutput, msg)
 
+        win32file.CloseHandle(self.pipeHandle)
         self.pipeHandle = None
         log.info("[DEBUG CONSOLE] Reader thread exiting, pipe closed.")
 
@@ -475,7 +476,7 @@ class ConsolePanel(wx.Panel):
         """Reads a full response from the pipe in a thread-safe manner."""
         with self.readLock:
             if not self.pipeHandle:
-                return ""
+                return None
 
             try:
                 _, data = win32file.ReadFile(self.pipeHandle, BUFFER_SIZE)
@@ -491,13 +492,18 @@ class ConsolePanel(wx.Panel):
             return
 
         fullCommand = f"{DBGCMD}:{command.upper()}:{data}".encode("utf-8") + b"\n"
-        threading.Thread(target=self.BackgroundWrite, args=(fullCommand,), daemon=True).start()
+        threading.Thread(target=self.BackgroundWrite, args=(fullCommand, 5000), daemon=True).start()
 
-    def BackgroundWrite(self, buffer):
+    def BackgroundWrite(self, buffer, timeout=win32event.INFINITE):
         overlapped = pywintypes.OVERLAPPED()
         overlapped.hEvent = win32event.CreateEvent(None, 0, 0, None)
         try:
             win32file.WriteFile(self.pipeHandle, buffer, overlapped)
+            rc = win32event.WaitForSingleObject(overlapped.hEvent, timeout)
+            if rc != win32event.WAIT_OBJECT_0:
+                log.error("[DEBUG CONSOLE] Write timed out or failed: %s", rc)
+            else:
+                win32file.GetOverlappedResult(self.pipeHandle, overlapped, True)
         except pywintypes.error as e:
             log.error("[DEBUG CONSOLE] Pipe write error: %s", e)
         finally:
@@ -520,27 +526,12 @@ class ConsolePanel(wx.Panel):
             self.connected = False
             log.info("[DEBUG CONSOLE] Pipe disconnected successfully.")
         elif cmd == "quit":
-            self.SendCommand("C")
+            self.SendCommand(CMD_CONTINUE)
             self.ShutdownConsole()
         elif cmd == "clear":
             self.outputConsole.Clear()
         elif cmd in ("",):
             pass
-        elif cmd == "b":
-            try:
-                reg, addr = data.split(" ", 1)
-                if addr.upper() in REGISTERS:
-                    regName = addr.upper()
-                    regsText = self.regsDisplay.GetValue()
-                    m = re.search(rf"\b({regName}):\s*([0-9A-Fa-f]+)", regsText)
-                    if m:
-                        addr_val = m.group(2)
-                        addr = addr_val
-
-                data = "|".join([reg, addr])
-                self.SendCommand(cmd, data)
-            except ValueError:
-                self.outputConsole.AppendText("Invalid command: B <register or next> <address>")
         else:
             self.SendCommand(cmd)
 
@@ -587,7 +578,6 @@ class ConsolePanel(wx.Panel):
             CMD_REG_UPDATE: self.HandleRegUpdate,
             CMD_MEM_DUMP: self.HandleMemDump,
             CMD_STACK_UPDATE: self.HandleStackUpdate,
-            CMD_CONTINUE: self.HandleContinue,
             CMD_SET_BREAKPOINT: self.HandleSetBreakpoint,
             CMD_DELETE_BREAKPOINT: self.HandleDeleteBreakpoint,
             CMD_BREAKPOINT_LIST: self.HandleBreakpointsList,
@@ -741,6 +731,15 @@ class ConsolePanel(wx.Panel):
             cip = int(m.group(0), 16)
             self.cip = cip
 
+    def ResolveRef(self, addr):
+        addrStr = f"{addr:#x}"
+        if addrStr and IsValidHexAddress(addrStr):
+            size = 8
+            if self.parent.bits == 32:
+                size = 4
+
+            self.parent.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{size}")
+
     def PatchDisasmText(self, disasmText: str) -> str:
         matches = list(re.finditer(r"\[?0x[0-9a-fA-F]+\]?", disasmText))
         patched = disasmText
@@ -748,22 +747,24 @@ class ConsolePanel(wx.Panel):
 
         for match in matches:
             raw = match.group()
-            addrStr = raw.strip("[]")
-
-            try:
-                addrInt = int(addrStr, 16)
-            except ValueError:
+            addr = self.disassemblyConsole.ParseOperandAddress(raw)
+            if addr is None:
                 continue
 
-            replacement = None
-            export = self.exports.get(addrInt)
-            if export:
-                replacement = export
+            export = self.exports.get(addr)
+            if not export:
+                with self.pageLock:
+                    self.ResolveRef(addr)
+                    export = self.export
+                    self.export = None
 
-            if replacement:
-                start, end = match.start() + offset, match.end() + offset
-                patched = patched[:start] + replacement + patched[end:]
-                offset += len(replacement) - (end - start)
+                if not export:
+                    continue
+
+            start = match.start() + offset
+            end = match.end() + offset
+            patched = patched[:start] + export + patched[end:]
+            offset += len(export) - (end - start)
 
         return patched
 
@@ -877,11 +878,6 @@ class ConsolePanel(wx.Panel):
             addr = int(m.group(0), 16)
             self.disassemblyConsole.ClearBpBackground(addr)
             self.SendCommand(CMD_BREAKPOINT_LIST)
-
-    def HandleContinue(self, payload):
-        self.AppendConsole(payload)
-        self.GetCip(payload)
-        self.JumpTo(self.cip)
 
     def HandleBreakpointsList(self, payload):
         if payload.startswith("Failed"):
@@ -1082,7 +1078,12 @@ class ConsolePanel(wx.Panel):
         self.AppendConsole(payload)
 
     def HandleExecution(self, payload):
-        """Handle execution commands (O, S, U, T) by parsing CIP and updating disassembly."""
+        """Handle execution commands by parsing CIP and updating disassembly."""
+        if "TIMEOUT" in payload:
+            self.AppendConsole(payload)
+            self.disassemblyConsole.ClearHighlight()
+            return
+
         m = re.search(r"0x[0-9a-fA-F]+", payload)
         if m:
             cip = int(m.group(0), 16)

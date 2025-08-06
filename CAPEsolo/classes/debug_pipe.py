@@ -3,6 +3,7 @@ import logging
 log = logging.getLogger(__name__)
 
 TIMEOUT = 6000
+stepCmds = {b"SI", b"SO", b"OU", b"CT", b"RU"}
 
 
 class CommandPipeHandler:
@@ -43,10 +44,11 @@ class CommandPipeHandler:
 
             self.console.pendingCommand = data
             self.console.breakCondition.notify_all()
-            notified = self.console.breakCondition.wait_for(lambda: self.console.debuggerResponse is not None, timeout=TIMEOUT)
+            timeout = 5 if cmd in stepCmds else TIMEOUT
+            notified = self.console.breakCondition.wait_for(lambda: self.console.debuggerResponse is not None, timeout=timeout)
             if not notified:
                 self.console.pendingCommand = None
-                return b":TIMEOUT"
+                return cmd + b":TIMEOUT"
 
             response = b":" + self.console.debuggerResponse
             if cmd:
@@ -61,15 +63,14 @@ class CommandPipeHandler:
             log.critical("[DEBUG CONSOLE] Unknown command received from the debug server: %s", data.strip())
         else:
             command, arguments = data.strip().split(b":", 1)
-            # log.info((command, data, "console dispatch"))
+            #log.info(arguments[:64]))
             fn = getattr(self, f"_handle_{command.lower().decode()}", None)
             if not fn:
                 log.critical("[DEBUG CONSOLE] Unknown command received from the debug server: %s", data.strip())
             else:
                 try:
                     response = fn(arguments)
-                    # if response.decode("ascii")[0] not in ("M", "R", "K", "I"):
-                    # log.info(response)
+                    #log.info(response[:64])
                 except Exception as e:
                     log.error(e, exc_info=True)
                     log.exception(

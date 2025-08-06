@@ -127,15 +127,15 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
                     if inst.address in self.parent.patchHistoryByAddr:
                         self.SetItemFont(row, fontItalic)
+
         finally:
             self.Thaw()
 
-        if append:
-            self.Refresh()
-        else:
-            row = self.GetCipRow()
-            if row != -1:
-                self.HighlightCip(row)
+        self.Refresh()
+        if not append:
+            cipRow = self.GetCipRow()
+            if cipRow != -1:
+                self.HighlightCip(cipRow)
 
     def GetCipRow(self, cip=None):
         row = -1
@@ -161,12 +161,14 @@ class DisassemblyListCtrl(wx.ListCtrl):
                     break
         return row
 
+    def ClearHighlight(self):
+        for i in range(self.GetItemCount()):
+            if self.GetItemBackgroundColour(i) != COLOR_LIGHT_RED:
+                self.SetItemBackgroundColour(i, wx.Colour(wx.WHITE))
+
     def HighlightCip(self, row):
         if row >= 0:
-            for i in range(self.GetItemCount()):
-                if self.GetItemBackgroundColour(i) != COLOR_LIGHT_YELLOW:
-                    self.SetItemBackgroundColour(i, wx.Colour(wx.WHITE))
-
+            self.ClearHighlight()
             self.SetItemBackgroundColour(row, wx.Colour(wx.CYAN))
             self.CenterRow(row)
         else:
@@ -439,6 +441,43 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         return registers
 
+    def ParseOperandAddress(self, inst: str, row: int = None) -> int | None:
+        if row is not None:
+            m = re.search(r"\[([A-Za-z]{2}:)?([^\]]+)\]", inst)
+            if m:
+                seg = m.group(1).lower()[:-1] if m.group(1) else None
+                expr = m.group(2).replace(" ", "").lower()
+                regsText = self.parent.regsDisplay.GetValue()
+                regVals = {g.group(1).lower(): int(g.group(2), 16) for g in
+                    re.finditer(r"([A-Za-z0-9]+):\s*([0-9A-Fa-f]+)", regsText)}
+                try:
+                    instLen = len(self.GetItemText(row, 1)) // 2
+                    ripBase = int(self.GetItemText(row, 0), 16) + instLen
+                    regVals["rip"] = ripBase
+                except ValueError:
+                    return None
+
+                for reg in sorted(regVals, key=len, reverse=True):
+                    expr = re.sub(rf"\b{reg}\b", str(regVals[reg]), expr)
+
+                try:
+                    addr = self.SafeEval(expr)
+                except Exception:
+                    return None
+
+                if seg and seg in regVals:
+                    addr += regVals[seg]
+                return addr
+
+        m2 = re.search(r"0x[0-9A-Fa-f]{8,16}}", inst)
+        if m2:
+            try:
+                return self.SafeEval(m2.group(0))
+            except ValueError:
+                return None
+
+        return None
+
     def OnOperandHover(self, event):
         x, y = event.GetPosition()
         row, flags = self.HitTest(wx.Point(x, y))
@@ -453,43 +492,11 @@ class DisassemblyListCtrl(wx.ListCtrl):
             return event.Skip()
 
         inst = self.GetItemText(row, 2)
-        instlen = len(self.GetItemText(row, 1)) // 2
-
-        m = re.search(r"\[([a-zA-Z]{2}:)?([^\]]+)\]", inst)
-        if m:
-            segmentPrefix = m.group(1).lower()[:-1] if m.group(1) else None
-            expr = m.group(2).lower().replace(" ", "")
-            regsText = self.parent.regsDisplay.GetValue()
-            regVals = {m.group(1).lower(): int(m.group(2), 16) for m in re.finditer(r"([a-zA-Z0-9]+):\s*([0-9A-Fa-f]+)", regsText)}
-            try:
-                regVals["rip"] = int(self.GetItemText(row, 0), 16) + instlen
-            except ValueError:
-                self.SetToolTip(None)
-                self.lastTipRow = None
-                return event.Skip()
-
-            safeExpr = expr
-            for reg in sorted(regVals, key=len, reverse=True):
-                safeExpr = re.sub(rf"\b{reg}\b", str(regVals[reg]), safeExpr)
-
-            try:
-                addr = self.SafeEval(safeExpr)
-            except Exception:
-                self.SetToolTip(None)
-                self.lastTipRow = None
-                return event.Skip()
-
-            if segmentPrefix and segmentPrefix in regVals:
-                addr += regVals[segmentPrefix]
-        else:
-            m2 = re.search(r"(0x[0-9A-Fa-f]{8,16})", inst)
-            if not m2:
-                self.SetToolTip(None)
-                self.lastTipRow = None
-                return event.Skip()
-
-            addrHex = m2.group(1)
-            addr = int(addrHex, 16)
+        addr = self.ParseOperandAddress(inst, row)
+        if addr is None:
+            self.SetToolTip(None)
+            self.lastTipRow = None
+            return event.Skip()
 
         addrStr = f"{addr:#x}"
         self.SetToolTip(f"{addrStr} copied.")

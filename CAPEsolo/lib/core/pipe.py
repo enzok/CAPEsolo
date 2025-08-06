@@ -160,12 +160,13 @@ class PipeDispatcher(threading.Thread):
             message = self._read_message(buf)
             if not message:
                 break
+            try:
+                response = self.dispatcher.dispatch(message) or b"OK"
+            except Exception as e:
+                log.error("[PIPE] Unhandled exception in dispatch: %s", e, exc_info=True)
+                response = b"ERROR"
 
-            response = self.dispatcher.dispatch(message) or b"OK"
-
-            KERNEL32.WriteFile(
-                self.pipe_handle, response, len(response), byref(bytes_written), None
-            )
+            KERNEL32.WriteFile(self.pipe_handle, response, len(response), byref(bytes_written), None)
 
         KERNEL32.DisconnectNamedPipe(self.pipe_handle)
 
