@@ -2,10 +2,10 @@ import bisect
 import logging
 import re
 import struct
-import threading
 import zlib
 from collections import defaultdict
 from contextlib import suppress
+from threading import Condition, Lock, Thread
 from typing import Dict, List, Tuple
 
 import pywintypes
@@ -16,14 +16,24 @@ from distorm3 import Decode, Decode32Bits, Decode64Bits
 
 from CAPEsolo.capelib.cmdconsts import *
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
-from .debug_controls import (BreakpointsListCtrl, DecodedInstruction, DisassemblyListCtrl, IsValidHexAddress, MemDumpListCtrl,
-    ModulesListCtrl, RegsTextCtrl, StackListCtrl, ThreadListCtrl)
+from .debug_controls import (
+    BreakpointsListCtrl,
+    DecodedInstruction,
+    DisassemblyListCtrl,
+    IsValidHexAddress,
+    MemDumpListCtrl,
+    ModulesListCtrl,
+    RegsTextCtrl,
+    StackListCtrl,
+    ThreadListCtrl,
+)
 from .debug_pipe import CommandPipeHandler
 from .patch_assembler import Assembler
 from .patch_models import PatchEntry
 
 log = logging.getLogger(__name__)
 
+MAX_LEN = 256
 PAGE_SIZE = 4 * 1024
 BUFFER_SIZE = 65 * 1024
 CHUNK_SIZE = BUFFER_SIZE // 2
@@ -56,6 +66,10 @@ REGISTERS = {
     "R15",
 }
 wx.Bell = lambda: None
+JMP_CALL_ADDR_RX = re.compile(
+    r"\b(?P<mnemonic>jmp|call)\b\s+(?:[A-Za-z_]+\s+)*?(?P<operand>\[[^\]]+\]|0x[0-9A-Fa-f]+)$", re.IGNORECASE
+)
+LEA_MOV_ADDR_RX = re.compile(r"\b(?P<mnemonic>lea|mov)\b\s+(?P<dest>[A-Za-z0-9]+)\s*,\s*(?P<source>\[[^\]]+\])$", re.IGNORECASE)
 
 
 class DebugConsole:
@@ -70,7 +84,7 @@ class DebugConsole:
         self.frame = None
 
         # These shared condition variables and buffers are used by the pipe handler.
-        self.breakCondition = threading.Condition()
+        self.breakCondition = Condition()
         self.pendingCommand = None
         self.lastCommand = None
         self.debuggerResponse = None
@@ -173,7 +187,7 @@ class ConsolePanel(wx.Panel):
         self.pipe = parent.pipe
         self.pipeHandle = None
         self.connected = False
-        self.readLock = threading.Lock()
+        self.readLock = Lock()
         self.slotCount = 512
         self.prevHighlight = None
         self.initMemDump = True
@@ -181,18 +195,23 @@ class ConsolePanel(wx.Panel):
         self.bits = None
         self.pageBuffers: Dict[int, bytes] = {}
         self.requestedPages = set()
-        self.pageLock = threading.Lock()
+        self.pageLock = Lock()
         self.pageHashes = {}
         self.idleDecodeQueue = []
         self.exports: Dict[int, str] = {}
         self.exportModules = []
         self.export = None
+        self.resolvedExports: Dict[int, Dict[int, str]] = {}
+        self.resolvedStrings: Dict[int, str] = {}
         self.currentExportsModule = None
         self.exportsPage = 0
         self.moduleRanges = []
         self.patchHistory: list[PatchEntry] = []
         self.patchHistoryByAddr: dict[int, list[PatchEntry]] = defaultdict(list)
+        self.derefCount = 0
+        self.derefPending: set[int] = set()
         self.assembler = None
+        self.firstBreak = True
         self.CMD_PAGE_MAP = None
         self.CMD_PAGE_LOAD = None
         self.CMD_REG_UPDATE = None
@@ -433,7 +452,7 @@ class ConsolePanel(wx.Panel):
         self.statusBar.SetLabel(status)
 
     def InitPipe(self):
-        threading.Thread(target=self.PipeLoop, daemon=True).start()
+        Thread(target=self.PipeLoop, daemon=True).start()
 
     def PipeLoop(self):
         try:
@@ -492,7 +511,7 @@ class ConsolePanel(wx.Panel):
             return
 
         fullCommand = f"{DBGCMD}:{command.upper()}:{data}".encode("utf-8") + b"\n"
-        threading.Thread(target=self.BackgroundWrite, args=(fullCommand, 5000), daemon=True).start()
+        Thread(target=self.BackgroundWrite, args=(fullCommand, 5000), daemon=True).start()
 
     def BackgroundWrite(self, buffer, timeout=win32event.INFINITE):
         overlapped = pywintypes.OVERLAPPED()
@@ -665,7 +684,7 @@ class ConsolePanel(wx.Panel):
         mode = Decode64Bits if self.bits == 64 else Decode32Bits
         insts: List[DecodedInstruction] = []
         for address, size, text, hexBytes in Decode(baseAddress, bytes(hotData), mode):
-            patchText = self.PatchDisasmText(text)
+            patchText = self.PatchDisasmText(address, text)
             insts.append(DecodedInstruction(address, hexBytes, patchText))
 
         insts = prefix + insts
@@ -683,7 +702,7 @@ class ConsolePanel(wx.Panel):
             mode = Decode64Bits if self.bits == 64 else Decode32Bits
             insts = []
             for address, size, text, hexBytes in Decode(pageBase, pageData, mode):
-                patchText = self.PatchDisasmText(text)
+                patchText = self.PatchDisasmText(address, text)
                 insts.append(DecodedInstruction(address, hexBytes, patchText))
 
             self.disassemblyConsole.SetInstructions(insts, append=True)
@@ -692,38 +711,38 @@ class ConsolePanel(wx.Panel):
             wx.CallLater(1, self.ProcessNextIdlePage)
 
     def UpdateDisassemblyView(self):
-        """Combine instructions from all requested pages and update the view."""
-        with self.pageLock:
-            buffers = dict(self.pageBuffers)
-
-        sortedPages = sorted(buffers.keys())
-        if not sortedPages:
-            return
-
-        prefix = []
-        if hasattr(self.disassemblyConsole, "decodeCache"):
-            prefix = [inst for inst in self.disassemblyConsole.decodeCache if inst.address < self.cip]
-
-        baseAddress = self.cip
-        fullData = bytearray()
-        for page in sortedPages:
-            pageData = buffers[page]
-            pageEnd = page + len(pageData)
-            start = max(self.cip, page)
-            end = min(self.cip + CHUNK_SIZE, pageEnd)
-            if start < end:
-                fullData.extend(pageData[start - page : end - page])
-
-        decodeMode = Decode64Bits if self.bits == 64 else Decode32Bits
         insts: List[DecodedInstruction] = []
-        for address, size, text, hexBytes in Decode(baseAddress, bytes(fullData), decodeMode):
-            patchText = self.PatchDisasmText(text)
-            insts.append(DecodedInstruction(address, hexBytes, patchText))
+        cache = getattr(self.disassemblyConsole, "decodeCache", [])
+        for inst in cache:
+            patchText = self.PatchDisasmText(inst.address, inst.text)
+            insts.append(DecodedInstruction(inst.address, inst.bytes, patchText))
 
-        insts = prefix + insts
-        insts.sort(key=lambda i: i.address)
         self.disassemblyConsole.SetInstructions(insts)
         self.RefreshViewState()
+
+    def DereferenceCalls(self):
+        cache = getattr(self.disassemblyConsole, "decodeCache", [])
+        for inst in cache:
+            if "call" not in inst.text.lower():
+                continue
+
+            try:
+                ripBase = inst.address + len(inst.bytes) // 2
+                targetAddr = self.disassemblyConsole.ParseOperandAddress(inst.text, ripBase)
+            except Exception:
+                continue
+
+            if targetAddr is None:
+                continue
+
+            with self.pageLock:
+                if targetAddr not in self.derefPending:
+                    self.derefPending.add(targetAddr)
+                    self.derefCount += 1
+
+                self.resolvedExports[inst.address] = {targetAddr: ""}
+
+            wx.CallLater(1, self.ResolveRef, targetAddr)
 
     def GetCip(self, data):
         m = re.search(r"0x[0-9a-fA-F]+", data)
@@ -732,41 +751,64 @@ class ConsolePanel(wx.Panel):
             self.cip = cip
 
     def ResolveRef(self, addr):
-        addrStr = f"{addr:#x}"
+        addrStr = addr
+        if isinstance(addr, int):
+            addrStr = f"{addr:#x}"
+
         if addrStr and IsValidHexAddress(addrStr):
-            size = 8
-            if self.parent.bits == 32:
-                size = 4
+            size = 4 if self.bits == 32 else 8
+            self.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{hex(size)}")
 
-            self.parent.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{size}")
+    def ResolveString(self, addr: int):
+        addrStr = addr
+        if isinstance(addr, int):
+            addrStr = f"{addr:#x}"
 
-    def PatchDisasmText(self, disasmText: str) -> str:
-        matches = list(re.finditer(r"\[?0x[0-9a-fA-F]+\]?", disasmText))
-        patched = disasmText
-        offset = 0
+        if addrStr and IsValidHexAddress(addrStr):
+            self.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{hex(MAX_LEN)}")
 
-        for match in matches:
-            raw = match.group()
-            addr = self.disassemblyConsole.ParseOperandAddress(raw)
-            if addr is None:
-                continue
+    @staticmethod
+    def ProcessStringDump(raw: bytes, secondPass: bool = False) -> str:
+        s = None
+        if not secondPass:
+            pos = raw.find(b"\x00")
+            if pos != -1:
+                with suppress(UnicodeDecodeError, LookupError):
+                    s = raw[:pos].decode("utf-8")
+        else:
+            term = raw.find(b"\x00\x00")
+            if term != -1:
+                with suppress(UnicodeDecodeError, LookupError):
+                    s = raw[:term].decode("utf-16le")
 
-            export = self.exports.get(addr)
-            if not export:
-                with self.pageLock:
-                    self.ResolveRef(addr)
-                    export = self.export
-                    self.export = None
+        return s
 
-                if not export:
-                    continue
+    def PatchDisasmText(self, addr: int, disasmText: str) -> str:
+        export = None
+        with self.pageLock:
+            exportMap = self.resolvedExports.get(addr)
+            if exportMap:
+                export = next(iter(exportMap.values()), None)
 
-            start = match.start() + offset
-            end = match.end() + offset
-            patched = patched[:start] + export + patched[end:]
-            offset += len(export) - (end - start)
+        name = export or self.exports.get(addr) or self.resolvedStrings.get(addr)
+        if name:
+            m = JMP_CALL_ADDR_RX.search(disasmText)
+            if m:
+                mnemonic = m.group("mnemonic")
+                dest = None
+                raw = m.group("operand")
+            else:
+                m2 = LEA_MOV_ADDR_RX.search(disasmText)
+                if not m2:
+                    return disasmText
 
-        return patched
+                mnemonic = m2.group("mnemonic")
+                dest = m2.group("dest")
+                raw = m2.group("source")
+
+            return f"{mnemonic} {dest}, {name}" if dest else f"{mnemonic} {name}"
+
+        return disasmText
 
     def GetAllExports(self, modules: List[Tuple[str, str, str, str]]):
         self.exportModules = list(modules)
@@ -940,7 +982,8 @@ class ConsolePanel(wx.Panel):
             self.GetAllExports(modules)
             self.UpdateModules(modules)
 
-        if self.AddressInModules(self.cip):
+        if self.AddressInModules(self.cip) or self.firstBreak:
+            self.firstBreak = False
             self.JumpTo(self.cip)
 
     def HandleExports(self, payload):
@@ -990,6 +1033,7 @@ class ConsolePanel(wx.Panel):
         except ValueError as e:
             log.error("[DEBUG CONSOLE] Page load payload invalid: %s (%s)", payload, str(e))
             return
+
         validPages = False
         if pageData and pageData not in ("UNREADABLE", "NODATA"):
             with suppress(ValueError):
@@ -1054,18 +1098,80 @@ class ConsolePanel(wx.Panel):
 
     def HandleMemDump(self, payload):
         if payload.startswith("Failed"):
-            log.warning("[DEBUG CONSOLE] Memdump: %s", payload)
+            # log.warning("[DEBUG CONSOLE] Memdump: %s", payload)
             return
 
-        if len(payload) == 8 or len(payload) == 16:
-            export = self.GetExport(payload)
-        else:
-            self.UpdateMemDump(payload)
+        data = ""
+        addr = None
+        if "|" in payload:
+            requestAddr, data = payload.split("|", 1)
+            addr = int(requestAddr, 16)
+
+        if "Failed" in data:
+            if addr in self.derefPending:
+                self.derefPending.remove(addr)
+                if self.derefCount > 0:
+                    self.derefCount -= 1
+                    print(f"Failed: {self.derefCount}")
+
             return
 
-        if export:
-            self.AppendConsole(export)
-            self.export = export
+        datalen = len(data)
+        if datalen > MAX_LEN * 4:
+            self.UpdateMemDump(data)
+            return
+
+        if datalen in (8, 16):
+            export = self.GetExport(data)
+            with self.pageLock:
+                instAddrs = [instAddr for instAddr, exportMap in self.resolvedExports.items() if addr in exportMap]
+                for instAddr in instAddrs:
+                    if export:
+                        self.resolvedExports[instAddr][addr] = export
+                    else:
+                        del self.resolvedExports[instAddr]
+
+                if addr in self.derefPending:
+                    self.derefPending.remove(addr)
+                    if self.derefCount > 0:
+                        self.derefCount -= 1
+
+            if export:
+                self.AppendConsole(export)
+
+            if self.derefCount == 0:
+                self.AppendConsole("Completed resolving calls.")
+                self.UpdateDisassemblyView()
+                self.disassemblyConsole.resolveAllRefsStatus = True
+
+            return
+
+        if datalen == MAX_LEN * 2:
+            raw = b""
+            with suppress(ValueError):
+                raw = bytes.fromhex(data)
+
+            s = self.ProcessStringDump(raw, secondPass=False)
+            if not s:
+                self.SendCommand(CMD_MEM_DUMP, f"{addr:#x}|{hex(MAX_LEN * 2)}")
+                return
+
+            self.AppendConsole(s)
+            with self.pageLock:
+                self.resolvedStrings[addr] = s
+
+            return
+
+        if datalen == MAX_LEN * 4:
+            raw = b""
+            with suppress(ValueError):
+                raw = bytes.fromhex(data)
+
+            s = self.ProcessStringDump(raw, secondPass=True)
+            if s:
+                self.AppendConsole(s)
+                with self.pageLock:
+                    self.resolvedStrings[addr] = s
 
     def HandleStackUpdate(self, payload):
         if payload.startswith("Failed"):

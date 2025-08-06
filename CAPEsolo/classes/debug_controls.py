@@ -22,17 +22,13 @@ MAX_IDLE = 1
 
 DecodedInstruction = namedtuple("DecodedInstruction", ["address", "bytes", "text"])
 
-
 def IsValidHexAddress(s: str) -> bool:
-    pattern = r"^(0[xX])?[0-9a-fA-F]{1,16}$"
-    if not re.match(pattern, s):
+    try:
+        value = int(s, 0)
+    except ValueError:
         return False
 
-    hex_digits = s[2:] if s.lower().startswith("0x") else s
-    num_digits = len(hex_digits)
-
-    return 1 <= num_digits <= 16
-
+    return value > 0x10000
 
 def SetClipboard(text: str):
     clipboard = wx.TheClipboard
@@ -71,6 +67,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.decodeCache: List[DecodedInstruction] = []
         self.cacheLock = threading.Lock()
         self.backHistory: List[int] = []
+        self.resolveAllRefsStatus = True
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
         self.Bind(wx.EVT_MOTION, self.OnOperandHover)
 
@@ -235,6 +232,12 @@ class DisassemblyListCtrl(wx.ListCtrl):
         miDumpAddress = menu.Append(wx.ID_ANY, "Dump Address")
         miResolveAddress = menu.Append(wx.ID_ANY, "Resolve Export Name From Address")
         miResolveRef = menu.Append(wx.ID_ANY, "Resolve Export Name From Dereference")
+        if self.resolveAllRefsStatus:
+            miResolveAllRefs = menu.Append(wx.ID_ANY, "Resolve All Export Names for Calls")
+            self.Bind(wx.EVT_MENU, self.OnResolveAllRefs, miResolveAllRefs)
+
+        miStringAddress = menu.Append(wx.ID_ANY, "Resolve String From Address")
+        miStringRef = menu.Append(wx.ID_ANY, "Resolve String From Dereference")
         menu.AppendSeparator()
         miStepInto = menu.Append(wx.ID_ANY, "Step Into")
         miStepOver = menu.Append(wx.ID_ANY, "Step Over")
@@ -259,6 +262,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.Bind(wx.EVT_MENU, self.OnDumpAddress, miDumpAddress)
         self.Bind(wx.EVT_MENU, self.OnResolveAddress, miResolveAddress)
         self.Bind(wx.EVT_MENU, self.OnResolveRef, miResolveRef)
+        self.Bind(wx.EVT_MENU, self.OnStringAddress, miStringAddress)
+        self.Bind(wx.EVT_MENU, self.OnStringRef, miStringRef)
         self.Bind(wx.EVT_MENU, self.OnStepInto, miStepInto)
         self.Bind(wx.EVT_MENU, self.OnStepOver, miStepOver)
         self.Bind(wx.EVT_MENU, self.OnStepOut, miStepOut)
@@ -371,11 +376,17 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
     def ClearBpBackground(self, addr):
         row = self.GetInstructionRow(addr)
+        if row == wx.NOT_FOUND:
+            return
+
         self.SetItemBackgroundColour(row, wx.Colour(wx.WHITE))
         self.Refresh()
 
     def SetBpBackground(self, addr):
         row = self.GetInstructionRow(addr)
+        if row == wx.NOT_FOUND:
+            return
+
         self.SetItemBackgroundColour(row, wx.Colour(COLOR_LIGHT_RED))
         self.Refresh()
 
@@ -441,35 +452,28 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         return registers
 
-    def ParseOperandAddress(self, inst: str, row: int = None) -> int | None:
-        if row is not None:
-            m = re.search(r"\[([A-Za-z]{2}:)?([^\]]+)\]", inst)
-            if m:
-                seg = m.group(1).lower()[:-1] if m.group(1) else None
-                expr = m.group(2).replace(" ", "").lower()
-                regsText = self.parent.regsDisplay.GetValue()
-                regVals = {g.group(1).lower(): int(g.group(2), 16) for g in
-                    re.finditer(r"([A-Za-z0-9]+):\s*([0-9A-Fa-f]+)", regsText)}
-                try:
-                    instLen = len(self.GetItemText(row, 1)) // 2
-                    ripBase = int(self.GetItemText(row, 0), 16) + instLen
-                    regVals["rip"] = ripBase
-                except ValueError:
-                    return None
+    def ParseOperandAddress(self, inst: str, ripBase: int) -> Optional[int]:
+        m = re.search(r"\[([A-Za-z]{2}:)?([^\]]+)\]", inst)
+        if m:
+            seg = m.group(1).lower()[:-1] if m.group(1) else None
+            expr = m.group(2).replace(" ", "").lower()
+            regsText = self.parent.regsDisplay.GetValue()
+            regVals = {g.group(1).lower(): int(g.group(2), 16) for g in
+                re.finditer(r"([A-Za-z0-9]+):\s*([0-9A-Fa-f]+)", regsText)}
+            regVals["rip"] = ripBase
+            for reg in sorted(regVals, key=len, reverse=True):
+                expr = re.sub(rf"\b{reg}\b", str(regVals[reg]), expr)
 
-                for reg in sorted(regVals, key=len, reverse=True):
-                    expr = re.sub(rf"\b{reg}\b", str(regVals[reg]), expr)
+            try:
+                addr = self.SafeEval(expr)
+            except Exception:
+                return None
 
-                try:
-                    addr = self.SafeEval(expr)
-                except Exception:
-                    return None
+            if seg and seg in regVals:
+                addr += regVals[seg]
+            return addr
 
-                if seg and seg in regVals:
-                    addr += regVals[seg]
-                return addr
-
-        m2 = re.search(r"0x[0-9A-Fa-f]{8,16}}", inst)
+        m2 = re.search(r"\b0x[0-9A-Fa-f]{8,16}\b", inst)
         if m2:
             try:
                 return self.SafeEval(m2.group(0))
@@ -485,6 +489,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
             if row == wx.NOT_FOUND:
                 self.SetToolTip(None)
                 self.lastTipRow = None
+
             return event.Skip()
 
         col = self.GetColumnAtX(x)
@@ -492,7 +497,9 @@ class DisassemblyListCtrl(wx.ListCtrl):
             return event.Skip()
 
         inst = self.GetItemText(row, 2)
-        addr = self.ParseOperandAddress(inst, row)
+        instLen = len(self.GetItemText(row, 1)) // 2
+        ripBase = int(self.GetItemText(row, 0), 16) + instLen
+        addr = self.ParseOperandAddress(inst, ripBase)
         if addr is None:
             self.SetToolTip(None)
             self.lastTipRow = None
@@ -536,13 +543,27 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.parent.AppendConsole(export)
 
     def OnResolveRef(self, event):
-        addrStr = GetClipboardText().strip()
-        if addrStr and IsValidHexAddress(addrStr):
-            size = 8
-            if self.parent.bits == 32:
-                size = 4
+        targetAddrStr = GetClipboardText().strip()
+        targetAddrInt = int(targetAddrStr, 16)
+        addrStr = self.GetItemText(self.lastTipRow, 0)
+        addrInt = int(addrStr, 16)
+        if addrInt not in self.parent.resolvedExports:
+            self.parent.resolvedExports[addrInt] = {targetAddrInt: ""}
+            self.parent.ResolveRef(targetAddrStr)
 
-            self.parent.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{size}")
+    def OnResolveAllRefs(self, event):
+        self.resolveAllRefsStatus = False
+        self.parent.DereferenceCalls()
+
+    def OnStringAddress(self, event):
+        addrStr = GetClipboardText().strip()
+        return
+
+    def OnStringRef(self, event):
+        addrStr = GetClipboardText().strip()
+        addrInt = int(addrStr, 16)
+        if addrInt not in self.parent.resolvedStrings:
+            self.parent.ResolveString(addrStr)
 
     def OnNopInstruction(self, row):
         addrStr = self.GetItemText(row, 0)
@@ -737,13 +758,7 @@ class RegsTextCtrl(wx.TextCtrl):
 
     def OnResolveRef(self, event):
         addrStr = self.GetStringSelection().strip()
-        if addrStr and IsValidHexAddress(addrStr):
-            size = 8
-            if self.parent.bits == 32:
-                size = 4
-
-            self.parent.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{size}")
-        return
+        self.parent.ResolveRef(addrStr)
 
 
 class StackListCtrl(wx.ListCtrl):
@@ -911,13 +926,7 @@ class StackListCtrl(wx.ListCtrl):
 
     def OnResolveValueRef(self, row):
         addrStr = self.data[row][1]
-        if addrStr and IsValidHexAddress(addrStr):
-            size = 8
-            if self.parent.bits == 32:
-                size = 4
-
-            self.parent.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{size}")
-        return
+        self.parent.ResolveRef(addrStr)
 
 
 class MemDumpListCtrl(wx.ListCtrl):
@@ -1223,7 +1232,8 @@ class BreakpointsListCtrl(wx.ListCtrl):
         menu.Destroy()
 
     def OnDeleteBreakpoint(self, row):
-        payload = f"{row}"
+        index = self.parent.breakpointsDisplay.GetItemText(row, 0).strip()
+        payload = f"{index}"
         self.parent.SendCommand(CMD_DELETE_BREAKPOINT, payload)
 
     def OnFollowBreakpoint(self, row):
