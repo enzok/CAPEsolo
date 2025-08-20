@@ -2,6 +2,7 @@ import hashlib
 import logging
 import os
 import shutil
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from threading import Thread
@@ -277,7 +278,7 @@ class StartPanel(wx.Panel):
         yaraPane = yaraCollapsiblePane.GetPane()
 
         self.yaraRule = wx.TextCtrl(yaraPane, style=wx.TE_MULTILINE | wx.HSCROLL | wx.VSCROLL, size=wx.Size(-1, 200))
-        self.yaraRule.SetValue(YARARULE)
+        self.YaraLoad()
         yaraSaveBtn = wx.Button(yaraPane, label="Save Rule")
         yaraSaveBtn.Bind(wx.EVT_BUTTON, self.OnYaraSave)
         yaraDeleteBtn = wx.Button(yaraPane, label="Delete Rule")
@@ -802,6 +803,7 @@ class StartPanel(wx.Panel):
         try:
             with open(path, "w") as hfile:
                 hfile.write(content)
+
             if ack:
                 wx.MessageBox(
                     "analysis.conf saved successfully.",
@@ -884,7 +886,15 @@ class StartPanel(wx.Panel):
         yaraText = self.yaraRule.GetValue()
         savePath = Path(self.capesoloRoot) / "data" / "yara" / "DebuggerRule.yar"
 
-        savePath.write_text(yaraText)
+        try:
+            savePath.write_text(yaraText)
+        except (OSError, IOError) as e:
+            wx.MessageBox(
+                f"Failed to save Yara rule:\n{e}",
+                "Save Failed",
+                wx.OK | wx.ICON_ERROR,
+            )
+            return
 
         wx.MessageBox(
             f"Yara rule saved to: {str(savePath)}",
@@ -895,13 +905,37 @@ class StartPanel(wx.Panel):
     def OnYaraDelete(self, event):
         yaraPath = Path(self.capesoloRoot) / "data" / "yara" / "DebuggerRule.yar"
 
-        yaraPath.unlink()
+        try:
+            yaraPath.unlink()
+        except FileNotFoundError:
+            wx.MessageBox(
+                f"Yara rule file not found: {str(yaraPath)}",
+                "Delete Failed",
+                wx.OK | wx.ICON_ERROR,
+            )
+            return
+        except (OSError, IOError) as e:
+            wx.MessageBox(
+                f"Failed to delete Yara rule:\n{e}",
+                "Delete Failed",
+                wx.OK | wx.ICON_ERROR,
+            )
+            return
 
         wx.MessageBox(
             f"Yara rule deleted: {str(yaraPath)}",
             "Delete Successful",
             wx.OK | wx.ICON_INFORMATION,
         )
+
+    def YaraLoad(self):
+        loadPath = Path(self.capesoloRoot) / "data" / "yara" / "DebuggerRule.yar"
+        yaraText = YARARULE
+        if loadPath.exists():
+            with suppress(OSError, IOError):
+                yaraText = loadPath.read_text()
+
+        self.yaraRule.SetValue(yaraText)
 
     def JsonReport(self, event):
         confirm = wx.MessageBox(
@@ -927,4 +961,3 @@ class StartPanel(wx.Panel):
         except Exception as e:
             del busy
             wx.MessageBox(f"Failed to create JSON report:\n{str(e)}", "Error", wx.OK | wx.ICON_ERROR)
-

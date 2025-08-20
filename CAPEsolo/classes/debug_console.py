@@ -210,6 +210,8 @@ class ConsolePanel(wx.Panel):
         self.patchHistoryByAddr: dict[int, list[PatchEntry]] = defaultdict(list)
         self.derefCount = 0
         self.derefPending: set[int] = set()
+        self.dumpFilePath = None
+        self.dumpMemFile = False
         self.assembler = None
         self.firstBreak = True
         self.CMD_PAGE_MAP = None
@@ -269,6 +271,11 @@ class ConsolePanel(wx.Panel):
         self.memAddressInput.SetFont(fontCourier)
         memInput.Add(self.memAddressInput, 1, wx.EXPAND | wx.ALL, 5)
         self.memAddressInput.Bind(wx.EVT_TEXT_ENTER, self.OnAddressEnter)
+
+        # Dump to File button
+        btnDumpToFile = wx.Button(self, label="Dump Memory to File")
+        btnDumpToFile.Bind(wx.EVT_BUTTON, self.OnDumpToFile)
+        memInput.Add(btnDumpToFile, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 5)
         memSizer.Add(memInput, 0, wx.EXPAND | wx.ALL, 5)
 
         # Stack
@@ -409,6 +416,66 @@ class ConsolePanel(wx.Panel):
 
         self.memAddressInput.Clear()
         event.Skip()
+
+    def OnDumpToFile(self, event):
+        addrStr = wx.GetTextFromUser("Enter starting address (hex or decimal):", "Dump to File")
+        if not addrStr:
+            return
+
+        try:
+            addr = int(addrStr, 0)
+        except ValueError:
+            wx.MessageBox("Invalid address format.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        sizeStr = wx.GetTextFromUser("Enter dump size in bytes (hex or decimal):", "Dump to File")
+        if not sizeStr:
+            return
+
+        try:
+            size = int(sizeStr, 0)
+        except ValueError:
+            wx.MessageBox("Invalid size format.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        formats = ["Binary file (*.bin)", "Text file (*.txt)"]
+        with wx.SingleChoiceDialog(self, "Select output format:", "Dump to File", formats) as choiceDialog:
+            if choiceDialog.ShowModal() != wx.ID_OK:
+                return
+            formatChoice = choiceDialog.GetStringSelection()
+
+        wildcard = "Text files (*.txt)|*.txt"
+        if "Binary" in formatChoice:
+            wildcard = "Binary files (*.bin)|*.bin"
+
+        with wx.FileDialog(
+            self,
+            "Save Memory Dump",
+            wildcard=wildcard,
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as fileDialog:
+            if fileDialog.ShowModal() == wx.ID_CANCEL:
+                return
+
+            self.dumpFilePath = fileDialog.GetPath()
+
+        self.dumpMemFile = True
+        self.SendCommand(CMD_MEM_DUMP, f"{addr:#x}|{size:#x}")
+
+    def WriteMemToFile(self, data):
+        try:
+            if self.dumpFilePath.endswith(".bin"):
+                with open(self.dumpFilePath, "wb") as f:
+                    f.write(bytes.fromhex(data))
+            else:
+                with open(self.dumpFilePath, "w", encoding="utf-8") as f:
+                    f.write(data)
+
+            wx.MessageBox(f"Memory dumped successfully to:\n{self.dumpFilePath}", "Success", wx.OK | wx.ICON_INFORMATION)
+        except Exception as e:
+            wx.MessageBox(f"Failed to dump memory: {e}", "Error", wx.OK | wx.ICON_ERROR)
+
+        return
 
     def AppendConsole(self, text: str):
         """Appends text to the output console."""
@@ -1114,6 +1181,10 @@ class ConsolePanel(wx.Panel):
                     self.derefCount -= 1
                     print(f"Failed: {self.derefCount}")
 
+            return
+
+        if self.dumpMemFile and self.dumpFilePath:
+            self.WriteMemToFile(data)
             return
 
         datalen = len(data)

@@ -24,11 +24,14 @@ DecodedInstruction = namedtuple("DecodedInstruction", ["address", "bytes", "text
 
 def IsValidHexAddress(s: str) -> bool:
     try:
-        value = int(s, 0)
+        if not s.lower().startswith("0x"):
+            s = "0x" + s
+
+        value = int(s, 16)
     except ValueError:
         return False
 
-    return value > 0x10000
+    return value > 0x1000
 
 def SetClipboard(text: str):
     clipboard = wx.TheClipboard
@@ -694,7 +697,9 @@ class RegsTextCtrl(wx.TextCtrl):
     def OnFollowAddress(self, event):
         addrStr = self.GetStringSelection().strip()
         if addrStr and IsValidHexAddress(addrStr):
-            self.parent.disassemblyConsole.GoToInstruction(addrStr)
+            row = self.parent.disassemblyConsole.GoToInstruction(addrStr)
+            if row == wx.NOT_FOUND:
+                self.parent.UpdateConsole("Address not found")
 
     def OnCopy(self, event):
         text = self.GetStringSelection().strip()
@@ -1172,7 +1177,9 @@ class ThreadListCtrl(wx.ListCtrl):
 
     def OnFollowStartAddress(self, row):
         addrStr = self.GetItemText(row, 1).strip()
-        self.parent.disassemblyConsole.GoToInstruction(addrStr)
+        row = self.parent.disassemblyConsole.GoToInstruction(addrStr)
+        if row == wx.NOT_FOUND:
+            self.parent.UpdateConsole("Address not found")
 
     def OnMouseOver(self, event):
         x, y = event.GetPosition()
@@ -1238,7 +1245,9 @@ class BreakpointsListCtrl(wx.ListCtrl):
 
     def OnFollowBreakpoint(self, row):
         addrStr = self.GetItemText(row, 1).strip()
-        self.parent.disassemblyConsole.GoToInstruction(addrStr)
+        row = self.parent.disassemblyConsole.GoToInstruction(addrStr)
+        if row == wx.NOT_FOUND:
+            self.parent.UpdateConsole("Address not found")
 
 
 class ModulesListCtrl(wx.ListCtrl):
