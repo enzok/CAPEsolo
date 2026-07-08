@@ -112,8 +112,13 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
             attr.SetAlignment(wx.ALIGN_CENTRE, wx.ALIGN_CENTRE)
             grid.SetColAttr(col, attr)
 
-        grid.SetColAttr(0, attr.SetAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE))
-        grid.SetColAttr(1, attr.SetAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE))
+        leftAttr0 = gridlib.GridCellAttr()
+        leftAttr0.SetAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE)
+        grid.SetColAttr(0, leftAttr0)
+
+        leftAttr1 = gridlib.GridCellAttr()
+        leftAttr1.SetAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE)
+        grid.SetColAttr(1, leftAttr1)
         grid.EnableEditing(False)
 
     def PopulatePeinfo(self, peInfo):

@@ -22,7 +22,7 @@ class SearchDialog(wx.Dialog):
             self.listCtrl = parent.listCtrl
             self.Finder = self.FindInList
             self.FinderNext = self.FindInListNext
-            self.currentSearchPos = (0, 0)
+            self.currentSearchRow = 0
         else:
             self.resultsWindow = parent.resultsWindow
             self.lastFoundPos = -1

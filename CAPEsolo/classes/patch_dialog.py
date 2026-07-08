@@ -90,7 +90,7 @@ class PatchHistoryDialog(wx.Dialog):
 
     def OnUndoPatch(self, row):
         entry = self.patchHistory[row]
-        historyByAddr = self.parent.patchHistoryByAddr
+        historyByAddr = self.parent.parent.patchHistoryByAddr
         addrStr = f"0x{entry.address:08X}"
         self.patchHistory.remove(entry)
         addrList = historyByAddr.get(entry.address)

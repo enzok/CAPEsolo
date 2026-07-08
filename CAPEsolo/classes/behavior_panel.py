@@ -136,8 +136,9 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             attr.SetAlignment(wx.ALIGN_CENTRE, wx.ALIGN_CENTRE)
             self.grid.SetColAttr(col, attr)
 
-        self.grid.SetColAttr(4, attr.SetAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE))
-        self.grid.SetColAttr(8, attr.SetAlignment(wx.ALIGN_CENTRE, wx.ALIGN_CENTRE))
+        argsAttr = gridlib.GridCellAttr()
+        argsAttr.SetAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE)
+        self.grid.SetColAttr(4, argsAttr)
         self.grid.SetRowLabelSize(0)
         self.grid.EnableEditing(False)
 
@@ -383,7 +384,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             self.resultsWindow.SetValue(self.ViewData(data))
 
     def GetCmdLine(self, cmdline, modulepath):
-        if cmdline.startswith('"'):
+        if cmdline.startswith('"') and '"' in cmdline[1:]:
             splitcmdline = cmdline[cmdline[1:].index('"') + 2 :].split()
             argv0 = cmdline[: cmdline[1:].index('"') + 1].lower()
             if modulepath.lower() in argv0:

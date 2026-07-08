@@ -27,8 +27,13 @@ class TargetInfoPanel(wx.Panel):
             attr.SetAlignment(wx.ALIGN_CENTRE, wx.ALIGN_CENTRE)
             self.grid.SetColAttr(col, attr)
 
-        self.grid.SetColAttr(0, attr.SetAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE))
-        self.grid.SetColAttr(1, attr.SetAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE))
+        leftAttr0 = gridlib.GridCellAttr()
+        leftAttr0.SetAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE)
+        self.grid.SetColAttr(0, leftAttr0)
+
+        leftAttr1 = gridlib.GridCellAttr()
+        leftAttr1.SetAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE)
+        self.grid.SetColAttr(1, leftAttr1)
         self.grid.EnableEditing(False)
         vbox.Add(self.grid, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
         self.peButton = wx.Button(self, label="PE")

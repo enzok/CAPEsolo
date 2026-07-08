@@ -73,7 +73,7 @@ class SignaturesPanel(wx.Panel, KeyEventHandlerMixin):
 
     def AddTableData(self):
         try:
-            for i, sig in enumerate(self.results.get("signatures")):
+            for sig in self.results.get("signatures"):
                 if sig.get("description", ""):
                     sigData = sig.get("description")
                     if sig.get("data", []):
@@ -82,7 +82,7 @@ class SignaturesPanel(wx.Panel, KeyEventHandlerMixin):
                                 key = next(iter(item.keys()))
                                 sigData += f"\n    \u2022 {key}: {item[key]}"
                     self.grid.AppendRows(1)
-                    self.grid.SetCellValue(i, 0, sigData)
+                    self.grid.SetCellValue(self.grid.GetNumberRows() - 1, 0, sigData)
         except Exception as e:
             print(e)
 
