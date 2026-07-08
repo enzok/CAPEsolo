@@ -65,7 +65,7 @@ wheels = [
 
 [[package]]
 name = "cape-parsers"
-version = "0.1.62"
+version = "0.1.64"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "capstone" },
@@ -79,14 +79,14 @@ dependencies = [
     { name = "unicorn" },
     { name = "yara-python" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/06/90/75dac11940ee2aa9ae9e886ce58d7c95a33469be6130cef7e9e8b5cb39b3/cape_parsers-0.1.62.tar.gz", hash = "sha256:a377fbd8118b2baeacf9b51b4e13919c9bec4104b027d476b3a64d56fdde7f35", size = 147980, upload-time = "2026-02-05T08:02:13.409Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/bf/baf5c07cccc16639561d8d0ccc21e97837f8477d42ed73a3da508aa11e0e/cape_parsers-0.1.64.tar.gz", hash = "sha256:ecd42b34244d9559f141f9d4ce9ac2887901a6df12f54440934113ef4e9639df", size = 149704, upload-time = "2026-06-05T16:13:25.183Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3b/f3/0fd8d9cafede5b4b277440acede9247105ae8c453d7405e5e134fcf38504/cape_parsers-0.1.62-py3-none-any.whl", hash = "sha256:9009c037ccd65790016d59441f0f459741e5077982bc44ab3926265809856ef0", size = 203317, upload-time = "2026-02-05T08:02:11.623Z" },
+    { url = "https://files.pythonhosted.org/packages/23/e4/ec25082fcb085a73fbca7715335a68956d354532b6615ebdf25329b37a5e/cape_parsers-0.1.64-py3-none-any.whl", hash = "sha256:62d3541dfd0ba54e77d747d392a4dffd8e64b3a557fc67a2a667487b93f9adbd", size = 205730, upload-time = "2026-06-05T16:13:23.746Z" },
 ]
 
 [[package]]
 name = "capesolo"
-version = "0.5.20"
+version = "0.5.21"
 source = { editable = "." }
 dependencies = [
     { name = "bs2json" },
@@ -118,7 +118,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bs2json", specifier = ">=0.3.0" },
-    { name = "cape-parsers", specifier = ">=0.1.62" },
+    { name = "cape-parsers", specifier = ">=0.1.64" },
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "distorm3s", specifier = "==3.5.5" },
     { name = "dnspython", specifier = ">=2.8.0" },
@@ -135,7 +135,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.33.0" },
     { name = "ruff", specifier = ">=0.15.13" },
     { name = "setuptools", specifier = ">=82.0.1" },
-    { name = "sflock2", specifier = ">=0.3.86" },
+    { name = "sflock2", specifier = ">=0.3.87" },
     { name = "tldextract", specifier = ">=5.3.1" },
     { name = "tlsh-python", specifier = ">=0.1.0" },
     { name = "typing-extensions", specifier = "==4.15.0" },
@@ -1399,7 +1399,7 @@ wheels = [
 
 [[package]]
 name = "sflock2"
-version = "0.3.86"
+version = "0.3.87"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1408,9 +1408,9 @@ dependencies = [
     { name = "pefile" },
     { name = "python-dateutil" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/20/b0f131f61f312fdae1adcd7ae34d0d21aadb44d5125ce8a9102e9f0a4feb/sflock2-0.3.86.tar.gz", hash = "sha256:e04aff61a2149243f9310bfca352387239644d8f811a2367501d356592a4ae04", size = 3554145, upload-time = "2025-12-17T16:12:17.967Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/99/d8/02e970656c855517abcf6abe63e1ae3ba10c285489d2ecdc002f225b5ea5/sflock2-0.3.87.tar.gz", hash = "sha256:ac05f55f13525ebf318ef1b27ec2737def608c1b701f31afb4ba9c33c9d9a6d5", size = 3561483, upload-time = "2026-06-16T19:24:15.553Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/96/1e/3708500482d4b66510760be935516451dbdf0c96629b8eac18d074d405d7/sflock2-0.3.86-py3-none-any.whl", hash = "sha256:b9821c4f16fa8960a020a9ae23345c262a4ab65bf482516f5f595af630275940", size = 3653106, upload-time = "2025-12-17T16:12:16.09Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/0a/d625c893033790c92caf69c62b985d5ea9707181e8319845a36375f50718/sflock2-0.3.87-py3-none-any.whl", hash = "sha256:1007ebdfa0d4505f6afc3cb24e362f70efc8bf79def8a67524281aff1e5fe344", size = 3660549, upload-time = "2026-06-16T19:24:13.54Z" },
 ]
 
 [[package]]
