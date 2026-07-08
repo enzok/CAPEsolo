@@ -548,9 +548,12 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
     def OnResolveRef(self, event):
         targetAddrStr = GetClipboardText().strip()
-        targetAddrInt = int(targetAddrStr, 16)
-        addrStr = self.GetItemText(self.lastTipRow, 0)
-        addrInt = int(addrStr, 16)
+        try:
+            targetAddrInt = int(targetAddrStr, 16)
+            addrStr = self.GetItemText(self.lastTipRow, 0)
+            addrInt = int(addrStr, 16)
+        except ValueError:
+            return
         if addrInt not in self.parent.resolvedExports:
             self.parent.resolvedExports[addrInt] = {targetAddrInt: ""}
             self.parent.ResolveRef(targetAddrStr)
@@ -561,11 +564,20 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
     def OnStringAddress(self, event):
         addrStr = GetClipboardText().strip()
-        return
+        try:
+            addrInt = int(addrStr, 16)
+        except ValueError:
+            return
+
+        string = self.parent.resolvedStrings.get(addrInt)
+        self.parent.AppendConsole(string)
 
     def OnStringRef(self, event):
         addrStr = GetClipboardText().strip()
-        addrInt = int(addrStr, 16)
+        try:
+            addrInt = int(addrStr, 16)
+        except ValueError:
+            return
         if addrInt not in self.parent.resolvedStrings:
             self.parent.ResolveString(addrStr)
 
@@ -700,7 +712,7 @@ class RegsTextCtrl(wx.TextCtrl):
         if addrStr and IsValidHexAddress(addrStr):
             row = self.parent.disassemblyConsole.GoToInstruction(addrStr)
             if row == wx.NOT_FOUND:
-                self.parent.UpdateConsole("Address not found")
+                self.parent.AppendConsole("Address not found")
 
     def OnCopy(self, event):
         text = self.GetStringSelection().strip()
@@ -1028,6 +1040,8 @@ class MemDumpListCtrl(wx.ListCtrl):
 
     def OnBack(self, event):
         """Handle ESC: go back to previous address"""
+        if not self.backHistory:
+            return
         self.addr = self.backHistory[-1]
         if len(self.backHistory) > 1:
             self.addr = self.backHistory.pop()
@@ -1180,7 +1194,7 @@ class ThreadListCtrl(wx.ListCtrl):
         addrStr = self.GetItemText(row, 1).strip()
         row = self.parent.disassemblyConsole.GoToInstruction(addrStr)
         if row == wx.NOT_FOUND:
-            self.parent.UpdateConsole("Address not found")
+            self.parent.AppendConsole("Address not found")
 
     def OnMouseOver(self, event):
         x, y = event.GetPosition()
@@ -1248,7 +1262,7 @@ class BreakpointsListCtrl(wx.ListCtrl):
         addrStr = self.GetItemText(row, 1).strip()
         row = self.parent.disassemblyConsole.GoToInstruction(addrStr)
         if row == wx.NOT_FOUND:
-            self.parent.UpdateConsole("Address not found")
+            self.parent.AppendConsole("Address not found")
 
 
 class ModulesListCtrl(wx.ListCtrl):

@@ -370,6 +370,17 @@ class ConsolePanel(wx.Panel):
         self.SetSizer(mainSizer)
         apply_theme(self)
 
+    def IsAddressKnown(self, addr: int) -> bool:
+        pageMap = getattr(self.disassemblyConsole, "pageMap", None)
+        if not pageMap:
+            return False
+
+        for base, size, prot in pageMap:
+            if base <= addr < base + size:
+                return True
+
+        return False
+
     def OnRunUntilAccel(self, event):
         row = self.disassemblyConsole.GetNextItem(-1, wx.LIST_NEXT_ALL, wx.LIST_STATE_SELECTED)
         if row == -1:
@@ -572,7 +583,7 @@ class ConsolePanel(wx.Panel):
                 return response
             except Exception as e:
                 log.error("[DEBUG CONSOLE] Reading response: %s", e)
-                return ""
+                return None
 
     def SendCommand(self, command, data=""):
         if command.lower() != "init" and (not self.connected or not self.pipeHandle):
@@ -658,6 +669,12 @@ class ConsolePanel(wx.Panel):
         self.SendCommand(CMD_THREADS)
         self.SendCommand(CMD_BREAKPOINT_LIST)
 
+    def RefreshPageMap(self):
+        self.SendCommand(CMD_PAGE_MAP)
+
+    def RefreshModuleList(self):
+        self.SendCommand(CMD_MODULE_LIST)
+
     def DispatchCommand(self, command, payload):
         """Dispatch commands to their respective handlers."""
         handlers = {
@@ -699,11 +716,11 @@ class ConsolePanel(wx.Panel):
         """Use pageMap to find page."""
         self.cip = address
         if not self.AddressInModules(address):
-            self.SendCommand(CMD_MODULE_LIST)
+            self.RefreshModuleList()
 
         region = self.disassemblyConsole.FindPage(address)
         if region is None:
-            self.SendCommand(CMD_PAGE_MAP)
+            self.RefreshPageMap()
             return
 
         desiredStart = self.cip
@@ -789,7 +806,7 @@ class ConsolePanel(wx.Panel):
         self.disassemblyConsole.SetInstructions(insts)
         self.RefreshViewState()
 
-    def DereferenceCalls(self):
+    def DeReferenceCalls(self):
         cache = getattr(self.disassemblyConsole, "decodeCache", [])
         for inst in cache:
             if "call" not in inst.text.lower():
@@ -966,7 +983,7 @@ class ConsolePanel(wx.Panel):
 
         self.AppendConsole(payload)
         self.SendCommand(CMD_REG_UPDATE)
-        self.SendCommand(CMD_MODULE_LIST)
+        self.RefreshModuleList()
 
     def HandleSetBreakpoint(self, payload):
         self.AppendConsole(payload)
@@ -1026,7 +1043,8 @@ class ConsolePanel(wx.Panel):
             else:
                 tmpThreads.append(entry)
 
-        threads.append(curThread)
+        if curThread:
+            threads.append(curThread)
         threads.extend(tmpThreads)
         self.UpdateThreads(threads)
 
@@ -1089,11 +1107,51 @@ class ConsolePanel(wx.Panel):
 
     def HandlePageMap(self, payload):
         self.disassemblyConsole.LoadPageMap(payload)
-        self.JumpTo(self.cip)
+        with self.pageLock:
+            self.pageBuffers.clear()
+            self.requestedPages.clear()
+            self.pageHashes.clear()
+            self.idleDecodeQueue.clear()
+
+        cip = self.cip
+        if not self.IsAddressKnown(cip):
+            log.debug(f"[DEBUG] CIP 0x{cip:X} is not present in the new PageMap; waiting for next execution update.")
+            return
+
+        desiredStart = cip
+        desiredEnd = cip + CHUNK_SIZE
+        pageMap = self.disassemblyConsole.pageMap
+        pagesToRequest = set()
+        for base, size, prot in pageMap:
+            regionEnd = base + size
+            if regionEnd < desiredStart or base > desiredEnd:
+                continue
+
+            firstPage = (base // PAGE_SIZE) * PAGE_SIZE
+            lastPage = ((base + size - 1) // PAGE_SIZE) * PAGE_SIZE
+            page = firstPage
+            while page <= lastPage:
+                if desiredStart - PAGE_SIZE <= page <= desiredEnd:
+                    pagesToRequest.add(page)
+
+                page += PAGE_SIZE
+
+        if not pagesToRequest:
+            self.JumpTo(cip)
+            return
+
+        with self.pageLock:
+            for pageBase in sorted(pagesToRequest):
+                self.requestedPages.add(pageBase)
+                self.RequestPage(pageBase)
+
+        self.RefreshViewState()
 
     def HandlePageLoad(self, payload):
-        """Process page load response."""
         if "Failed" in payload:
+            log.debug(f"[DEBUG] PageLoad reported failure: {payload}")
+            self.RefreshPageMap()
+            self.RefreshModuleList()
             return
 
         try:
@@ -1103,8 +1161,14 @@ class ConsolePanel(wx.Panel):
             log.error("[DEBUG CONSOLE] Page load payload invalid: %s (%s)", payload, str(e))
             return
 
+        if pageData in ("UNREADABLE", "NODATA"):
+            log.debug(f"[DEBUG] PageLoad returned {pageData} for page 0x{pageBase:X}. Refreshing PageMap + ModuleList.")
+            self.RefreshPageMap()
+            self.RefreshModuleList()
+            return
+
         validPages = False
-        if pageData and pageData not in ("UNREADABLE", "NODATA"):
+        if pageData:
             with suppress(ValueError):
                 pageData = bytes.fromhex(pageData)
                 validPages = True
@@ -1167,7 +1231,18 @@ class ConsolePanel(wx.Panel):
 
     def HandleMemDump(self, payload):
         if payload.startswith("Failed"):
-            # log.warning("[DEBUG CONSOLE] Memdump: %s", payload)
+            if hasattr(self, "derefPending"):
+                m = re.search(r"0x[0-9a-fA-F]+", payload)
+                if m:
+                    failedAddr = int(m.group(0), 16)
+                    if failedAddr in self.derefPending:
+                        self.derefPending.remove(failedAddr)
+                        if self.derefCount > 0:
+                            self.derefCount -= 1
+
+            log.debug(f"[DEBUG] MemDump fault detected, refreshing PageMap + ModuleList")
+            self.RefreshPageMap()
+            self.RefreshModuleList()
             return
 
         data = ""
@@ -1176,13 +1251,13 @@ class ConsolePanel(wx.Panel):
             requestAddr, data = payload.split("|", 1)
             addr = int(requestAddr, 16)
 
-        if "Failed" in data:
-            if addr in self.derefPending:
-                self.derefPending.remove(addr)
-                if self.derefCount > 0:
-                    self.derefCount -= 1
-                    print(f"Failed: {self.derefCount}")
+        if addr is None:
+            return
 
+        if data in ("UNREADABLE", "NODATA"):
+            log.debug(f"[DEBUG] MemDump returned {data} for 0x{addr:X}. Refreshing memory map.")
+            self.RefreshPageMap()
+            self.RefreshModuleList()
             return
 
         if self.dumpMemFile and self.dumpFilePath:
@@ -1190,10 +1265,6 @@ class ConsolePanel(wx.Panel):
             return
 
         datalen = len(data)
-        if datalen > MAX_LEN * 4:
-            self.UpdateMemDump(data)
-            return
-
         if datalen in (8, 16):
             export = self.GetExport(data)
             with self.pageLock:
@@ -1246,6 +1317,8 @@ class ConsolePanel(wx.Panel):
                 with self.pageLock:
                     self.resolvedStrings[addr] = s
 
+        self.UpdateMemDump(data)
+
     def HandleStackUpdate(self, payload):
         if payload.startswith("Failed"):
             log.warning("[DEBUG CONSOLE] Stack: %s", payload)
@@ -1257,10 +1330,12 @@ class ConsolePanel(wx.Panel):
         self.AppendConsole(payload)
 
     def HandleExecution(self, payload):
-        """Handle execution commands by parsing CIP and updating disassembly."""
         if "TIMEOUT" in payload:
             self.AppendConsole(payload)
             self.disassemblyConsole.ClearHighlight()
+            log.debug("[DEBUG] Execution fault detected, refreshing PageMap...")
+            self.RefreshPageMap()
+            self.RefreshModuleList()
             return
 
         m = re.search(r"0x[0-9a-fA-F]+", payload)
@@ -1268,6 +1343,11 @@ class ConsolePanel(wx.Panel):
             cip = int(m.group(0), 16)
             self.cip = cip
             self.AppendConsole(payload)
+            if not self.IsAddressKnown(cip):
+                self.RefreshPageMap()
+                self.RefreshModuleList()
+                return
+
             self.JumpTo(cip)
         else:
             log.error("[DEBUG CONSOLE] Failed to parse CIP from payload: %s", payload)
