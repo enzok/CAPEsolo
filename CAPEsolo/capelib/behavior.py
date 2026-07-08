@@ -356,7 +356,11 @@ class ParseProcessLog(list):
                 else:
                     argument["raw_value"] = arg_value
 
-            pretty = pretty_print_arg(category, api_name, arg_name, argument["value"])
+            try:
+                pretty = pretty_print_arg(category, api_name, arg_name, argument["value"])
+            except Exception:
+                log.error("Unable to pretty print argument %s=%s", arg_name, argument["value"], exc_info=True)
+                pretty = None
             if pretty:
                 argument["pretty_value"] = pretty
 
@@ -507,7 +511,8 @@ class Summary:
                 self._filtering_helper(self.write_keys, name)
         elif call["api"] == "NtCreateKey" or call["api"].startswith("RegCreateKeyEx"):
             name = self.get_argument(call, "ObjectAttributes" if call["api"] == "NtCreateKey" else "FullName")
-            disposition = int(self.get_argument(call, "Disposition"))
+            disposition_arg = self.get_argument(call, "Disposition")
+            disposition = int(disposition_arg) if disposition_arg else None
             if name and name not in self.keys:
                 self._filtering_helper(self.keys, name)
             # if disposition == 1 then we created a new key
@@ -538,7 +543,7 @@ class Summary:
                 self._filtering_helper(self.files, filename)
         elif call["api"] == "ShellExecuteExW":
             filename = self.get_argument(call, "FilePath")
-            if len(filename) < 2 or filename[1] != ":":
+            if filename and (len(filename) < 2 or filename[1] != ":"):
                 filename = None
             if filename and filename not in self.files:
                 self._filtering_helper(self.files, filename)
@@ -549,7 +554,8 @@ class Summary:
                 self._filtering_helper(self.executed_commands, cmdline)
         elif call["api"] == "NtSetInformationFile":
             filename = self.get_argument(call, "HandleName")
-            infoclass = int(self.get_argument(call, "FileInformationClass"))
+            infoclass_arg = self.get_argument(call, "FileInformationClass")
+            infoclass = int(infoclass_arg) if infoclass_arg else None
             fileinfo = self.get_raw_argument(call, "FileInformation")
             if filename and infoclass and infoclass == 13 and fileinfo and len(fileinfo) > 0:
                 if not isinstance(fileinfo, bytes):
@@ -590,7 +596,8 @@ class Summary:
                 self._filtering_helper(self.executed_commands, cmdline)
 
         elif call["api"] == "LdrGetProcedureAddress" and call["status"]:
-            dllname = self.get_argument(call, "ModuleName").lower()
+            dllname = self.get_argument(call, "ModuleName")
+            dllname = dllname.lower() if dllname else dllname
             funcname = self.get_argument(call, "FunctionName")
             if not funcname:
                 funcname = f"#{self.get_argument(call, 'Ordinal')}"
@@ -757,6 +764,9 @@ class Enhanced:
         def _get_service_action(control_code):
             """@see: http://msdn.microsoft.com/en-us/library/windows/desktop/ms682108%28v=vs.85%29.aspx"""
             codes = {1: "stop", 2: "pause", 3: "continue", 4: "info"}
+
+            if control_code is None:
+                return None
 
             default = "user" if int(control_code) >= 128 else "notify"
             return codes.get(control_code, default)
@@ -946,7 +956,7 @@ class Enhanced:
                 event["data"]["module"] = self._get_loaded_module(args.get("ModuleAddress", ""))
 
             elif call["api"] == "ControlService":
-                event["data"]["action"] = _get_service_action(args["ControlCode"])
+                event["data"]["action"] = _get_service_action(args.get("ControlCode"))
 
             return event
 

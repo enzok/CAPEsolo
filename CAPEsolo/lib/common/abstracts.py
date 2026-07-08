@@ -248,14 +248,15 @@ class Package:
                     if not any(PE_indicator in f.read() for PE_indicator in PE_INDICATORS):
                         return
             dll_export = choose_dll_export(file_path)
+            arguments = self.options.get("arguments")
+            dllloader = self.options.get("dllloader")
             if dll_export == "DllRegisterServer":
                 rundll32 = self.get_path("regsvr32.exe")
+                dll_args = f'"{file_path}"'
             else:
                 rundll32 = self.get_path_app_in_path("rundll32.exe")
                 function = self.options.get("function", "#1")
-            arguments = self.options.get("arguments")
-            dllloader = self.options.get("dllloader")
-            dll_args = f'"{file_path}",{function}'
+                dll_args = f'"{file_path}",{function}'
             if arguments:
                 dll_args += f" {arguments}"
             if dllloader:

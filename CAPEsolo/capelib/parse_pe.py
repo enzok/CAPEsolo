@@ -482,7 +482,7 @@ class PortableExecutable:
 
         peresults = []
 
-        if not hasattr(pe, "VS_VERSIONINFO") and not hasattr(pe, "FileInfo"):
+        if not hasattr(pe, "VS_VERSIONINFO") or not hasattr(pe, "FileInfo"):
             return peresults
 
         for infoentry in pe.FileInfo:
@@ -563,7 +563,7 @@ class PortableExecutable:
 
         dir_index = pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_SECURITY"]
 
-        if len(pe.OPTIONAL_HEADER.DATA_DIRECTORY) < dir_index:
+        if len(pe.OPTIONAL_HEADER.DATA_DIRECTORY) <= dir_index:
             return []
 
         dir_entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[dir_index]

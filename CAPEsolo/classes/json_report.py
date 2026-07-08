@@ -70,7 +70,7 @@ def Payloads(analysisDir):
         fileinfo = File(str(path)).get_all()[0]
         metadata = data[key].get("metadata", "")
         if metadata:
-            payloadData = metadata_processing(metadata)
+            payloadData = metadata_processing(metadata, data[key].get("pids"))
 
         for key, value in fileinfo.items():
             if key not in "path" and value:

@@ -73,7 +73,7 @@ def bytes2str(convert):
                 try:
                     tmp_dict[k] = v.decode()
                 except UnicodeDecodeError:
-                    tmp_dict[k] = "".join(str(ord(_)) for _ in v)
+                    tmp_dict[k] = "".join(chr(_) for _ in v)
             elif isinstance(v, str):
                 tmp_dict[k] = v
         return tmp_dict
@@ -85,7 +85,7 @@ def bytes2str(convert):
                 try:
                     converted_list.append(v.decode())
                 except UnicodeDecodeError:
-                    converted_list.append("".join(str(ord(_)) for _ in v))
+                    converted_list.append("".join(chr(_) for _ in v))
 
         return converted_list
 

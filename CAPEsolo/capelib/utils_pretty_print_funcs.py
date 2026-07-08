@@ -197,7 +197,7 @@ def category_services_arg_name_starttype(arg_val):
 
 def category_services_arg_name_servicetype(arg_val):
     val = int(arg_val)
-    retstr = utils_dicts.ServicesServiceTypeDict().get(val & 0x3F)
+    retstr = utils_dicts.ServicesServiceTypeDict().get(val & 0x3F, "")
     if val & 0x130:
         retstr += "|SERVICE_INTERACTIVE_PROCESS"
     return retstr

@@ -174,9 +174,9 @@ class Process:
 
     def __del__(self):
         """Close open handles."""
-        if hasattr(self, "h_process") and self.h_process != KERNEL32.GetCurrentProcess():
+        if hasattr(self, "h_process") and self.h_process.value != KERNEL32.GetCurrentProcess().value:
             KERNEL32.CloseHandle(self.h_process)
-        if hasattr(self, "h_thread") and self.h_thread != 0:
+        if hasattr(self, "h_thread") and self.h_thread:
             KERNEL32.CloseHandle(self.h_thread)
 
     def fill_system_info(self):
@@ -502,10 +502,10 @@ class Process:
             snapshot = KERNEL32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
             flag = KERNEL32.Process32First(snapshot, byref(proc_info))
             while flag:
-                if proc_info.sz_exeFile == "VBoxService.exe":
+                if proc_info.sz_exeFile == b"VBoxService.exe":
                     log.info("VBoxService.exe found!")
                     pid_vboxservice = proc_info.th32ProcessID
-                elif proc_info.sz_exeFile == "VBoxTray.exe":
+                elif proc_info.sz_exeFile == b"VBoxTray.exe":
                     pid_vboxtray = proc_info.th32ProcessID
                     log.info("VBoxTray.exe found!")
                 flag = KERNEL32.Process32Next(snapshot, byref(proc_info))
@@ -638,7 +638,7 @@ class Process:
 
     def set_terminate_event(self):
         """Sets the termination event for the process."""
-        if self.h_process == 0:
+        if not self.h_process:
             self.open()
 
         event_name = TERMINATE_EVENT + str(self.pid)
@@ -673,7 +673,7 @@ class Process:
         """Terminate process.
         @return: operation status.
         """
-        if self.h_process == 0:
+        if not self.h_process:
             self.open()
 
         if KERNEL32.TerminateProcess(self.h_process, 1):
@@ -687,7 +687,7 @@ class Process:
         """Determines if a process is 64bit.
         @return: True if 64bit, False if not
         """
-        if self.h_process == 0:
+        if not self.h_process:
             self.open()
 
         with contextlib.suppress(Exception):

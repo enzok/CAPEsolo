@@ -43,7 +43,7 @@ def is_pe_image(path) -> bool:
             except struct.error:
                 machine_probe = ""
             if machine_probe and machine_probe in {IMAGE_FILE_MACHINE_I386, IMAGE_FILE_MACHINE_AMD64}:
-                nt_headers = buf[offset - 4: offset + 252]
+                nt_headers = buf[max(offset - 4, 0): offset + 252]
                 break
             offset += 2
     else:

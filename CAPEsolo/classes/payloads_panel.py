@@ -87,7 +87,7 @@ class PayloadsPanel(wx.Panel):
                 cape_info = {}
                 metadata = data[key].get("metadata", "")
                 if metadata:
-                    cape_info = metadata_processing(metadata)
+                    cape_info = metadata_processing(metadata, data[key].get("pids"))
 
                 path = Path(self.analysisDir) / key
                 fileinfo = File(str(path)).get_all()[0]

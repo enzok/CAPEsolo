@@ -256,7 +256,7 @@ class File:
 
         if file_type is None:
             try:
-                magic_path = Path(magic.__file__, "libmagic", "magic.mgc")
+                magic_path = Path(magic.__file__).parent / "libmagic" / "magic.mgc"
                 p = subprocess.Popen(
                     [
                         "bin\\file.exe",

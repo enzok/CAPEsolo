@@ -204,30 +204,30 @@ def extract_zip(zip_path, extract_path, password=b"infected", recursion_depth=1,
                         archive.extractall(path=extract_path, pwd=pword)
                     except RuntimeError as e:
                         raise CuckooPackageError(f"Unable to extract Zip file: {e}") from e
-            finally:
-                if recursion_depth < 4:
-                    # Extract nested archives.
-                    for name in archive.namelist():
-                        if name.endswith(".zip"):
-                            # Recurse.
-                            try:
-                                extract_zip(
-                                    os.path.join(extract_path, name),
-                                    extract_path,
-                                    # Note that the password list is passed on, not the current password in the iteration
-                                    password=password,
-                                    recursion_depth=recursion_depth + 1,
-                                    try_multiple_passwords=try_multiple_passwords,
-                                )
-                            except BadZipfile:
-                                log.warning(
-                                    "Nested file '%s' name ends with .zip extension is not a valid Zip. Skip extraction", name
-                                )
-                            except RuntimeError as run_err:
-                                log.error("Error extracting nested Zip file %s with details: %s", name, run_err)
 
         if password_fail:
             raise CuckooPackageError(f"Unable to extract password-protected Zip file with the password(s): {passwords}")
+
+        if recursion_depth < 4:
+            # Extract nested archives.
+            for name in archive.namelist():
+                if name.endswith(".zip"):
+                    # Recurse.
+                    try:
+                        extract_zip(
+                            os.path.join(extract_path, name),
+                            extract_path,
+                            # Note that the password list is passed on, not the current password in the iteration
+                            password=password,
+                            recursion_depth=recursion_depth + 1,
+                            try_multiple_passwords=try_multiple_passwords,
+                        )
+                    except BadZipfile:
+                        log.warning(
+                            "Nested file '%s' name ends with .zip extension is not a valid Zip. Skip extraction", name
+                        )
+                    except RuntimeError as run_err:
+                        log.error("Error extracting nested Zip file %s with details: %s", name, run_err)
 
 
 def is_overwritten(zip_path):

@@ -64,9 +64,10 @@ def netlog_sanitize_fname(path):
         path = path.replace(b"aux", b"aux_")
     if dir_part not in RESULT_DIRECTORIES:
         log.error(f"Netlog client requested banned path: {path}")
+        raise Disconnect
     if any(c in BANNED_PATH_CHARS for c in name):
         for c in BANNED_PATH_CHARS:
-            path.replace(bytes([c]), b"X")
+            path = path.replace(bytes([c]), b"X")
 
     return path
 

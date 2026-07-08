@@ -133,7 +133,7 @@ class PipeDispatcher(threading.Thread):
         while True:
             success = KERNEL32.ReadFile(self.pipe_handle, byref(buf), sizeof(buf), byref(bytes_read), None)
 
-            if KERNEL32.GetLastError() == ERROR_MORE_DATA:
+            if not success and KERNEL32.GetLastError() == ERROR_MORE_DATA:
                 ret += buf.raw[:bytes_read.value]
                 #ret += buf.value
             elif success:

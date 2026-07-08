@@ -84,7 +84,7 @@ def cape_type_string(type_strings, file_info, append_file):
     return append_file
 
 
-def metadata_processing(metadata):
+def metadata_processing(metadata, pids=None):
     file_info = {}
     file_info["cape_type_code"] = 0
     file_info["cape_type"] = ""
@@ -96,12 +96,8 @@ def metadata_processing(metadata):
     if len(metastrings) > 3:
         file_info["module_path"] = metastrings[2]
 
-    if "pids" in metadata:
-        file_info["pid"] = (
-            metadata["pids"][0]
-            if len(metadata["pids"]) == 1
-            else ",".join(metadata["pids"])
-        )
+    if pids:
+        file_info["pid"] = pids[0] if len(pids) == 1 else ",".join(str(pid) for pid in pids)
 
     if metastrings and metastrings[0] and metastrings[0].isdigit():
         file_info["cape_type_code"] = int(metastrings[0])

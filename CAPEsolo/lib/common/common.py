@@ -41,10 +41,10 @@ def disable_wow64_redirection(func):
             old_value = wintypes.HANDLE()
             Wow64DisableWow64FsRedirection(ctypes.byref(old_value))
 
-            result = func(*args, **kwargs)
-
-            Wow64RevertWow64FsRedirection(old_value)
-            return result
+            try:
+                return func(*args, **kwargs)
+            finally:
+                Wow64RevertWow64FsRedirection(old_value)
         else:
             log.info("no wrapping")
             return func(*args, **kwargs)

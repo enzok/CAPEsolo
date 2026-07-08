@@ -166,7 +166,7 @@ class YaraProcessor(object):
 
             indexed = sorted(indexed)
             for entry in indexed:
-                if (category, entry) == indexed[-1]:
+                if entry == indexed[-1]:
                     log.debug("\t `-- %s %s", category, entry)
                 else:
                     log.debug("\t |-- %s %s", category, entry)
