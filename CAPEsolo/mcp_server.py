@@ -1,5 +1,7 @@
+import argparse
 import configparser
 import hashlib
+import hmac
 import logging
 import os
 import shutil
@@ -15,6 +17,25 @@ from sflock.abstracts import File as SflockFile
 from sflock.ident import identify as sflock_identify
 from sflock.main import unpack as sflock_unpack
 
+from CAPEsolo.capelib.cmdconsts import (
+    CMD_BREAKPOINT_LIST,
+    CMD_CONTINUE,
+    CMD_DELETE_BREAKPOINT,
+    CMD_MEM_DUMP,
+    CMD_MOD_FLAG,
+    CMD_MODULE_LIST,
+    CMD_NOP_INSTRUCTION,
+    CMD_PATCH_BYTES,
+    CMD_REG_UPDATE,
+    CMD_RUN_UNTIL,
+    CMD_SET_BREAKPOINT,
+    CMD_SET_REGISTER,
+    CMD_STACK_UPDATE,
+    CMD_STEP_INTO,
+    CMD_STEP_OUT,
+    CMD_STEP_OVER,
+    CMD_THREADS,
+)
 from CAPEsolo.capelib.resultserver import ResultServer
 from CAPEsolo.capelib.utils import sanitize_filename
 from CAPEsolo.capelib.utils import LoadFilesJson
@@ -24,9 +45,12 @@ from CAPEsolo.lib.common.hashing import hash_file
 from CAPEsolo.utils.update_yara import UpdateYara
 
 try:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 except ImportError:
-    FastMCP = None
+    try:
+        from mcp.server.fastmcp import FastMCP as MCPServer
+    except ImportError:
+        MCPServer = None
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +62,32 @@ DEFAULT_ANALYSIS_ID = 2
 MIN_TIMEOUT_SECONDS = 1
 MAX_TIMEOUT_SECONDS = 14400
 MAX_OPTIONS_LENGTH = 8192
+IDBG_TIMEOUT_SECONDS = 14400
+DBG_DISASM_WINDOW = 8
+DBG_STEP_COMMANDS = {
+    "into": CMD_STEP_INTO,
+    "over": CMD_STEP_OVER,
+    "out": CMD_STEP_OUT,
+}
+DBG_FLAG_ACTIONS = (
+    "ClearZeroFlag",
+    "SetZeroFlag",
+    "FlipZeroFlag",
+    "ClearSignFlag",
+    "SetSignFlag",
+    "FlipSignFlag",
+    "ClearCarryFlag",
+    "SetCarryFlag",
+    "FlipCarryFlag",
+)
+DBG_BREAKPOINT_SLOTS = ("next", "0", "1", "2", "3")
+MCP_TRANSPORTS = ("stdio", "streamable-http")
+DEFAULT_MCP_TRANSPORT = "stdio"
+DEFAULT_MCP_HOST = "127.0.0.1"
+DEFAULT_MCP_PORT = 8000
+DEFAULT_MCP_PATH = "/mcp"
+MCP_TOKEN_ENV = "CAPESOLO_MCP_TOKEN"
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 SANDBOXPACKAGES = (
     "Shellcode",
     "Shellcode_trace",
@@ -85,6 +135,31 @@ def _read_analysis_dir() -> Path:
     return Path(path)
 
 
+def _split_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _read_mcp_settings() -> dict[str, Any]:
+    """Read the optional [mcp_server] section; fallbacks apply even when it is absent."""
+    config = configparser.ConfigParser()
+    config.read(CFG_INI)
+    section = "mcp_server"
+    try:
+        port = config.getint(section, "port", fallback=DEFAULT_MCP_PORT)
+    except ValueError:
+        log.warning("Invalid [mcp_server] port in %s, using %s", CFG_INI, DEFAULT_MCP_PORT)
+        port = DEFAULT_MCP_PORT
+
+    return {
+        "transport": config.get(section, "transport", fallback=DEFAULT_MCP_TRANSPORT).strip().lower(),
+        "host": config.get(section, "host", fallback=DEFAULT_MCP_HOST).strip(),
+        "port": port,
+        "path": config.get(section, "path", fallback=DEFAULT_MCP_PATH).strip(),
+        "allowed_hosts": _split_csv(config.get(section, "allowed_hosts", fallback="")),
+        "allowed_origins": _split_csv(config.get(section, "allowed_origins", fallback="")),
+    }
+
+
 def _read_default_analysis_id() -> int:
     config = configparser.ConfigParser()
     config.read(CAPESOLO_ROOT / "analysis_conf.default")
@@ -92,6 +167,16 @@ def _read_default_analysis_id() -> int:
         return config.getint("analysis", "id", fallback=DEFAULT_ANALYSIS_ID)
     except Exception:
         return DEFAULT_ANALYSIS_ID
+
+
+def _import_debug_session():
+    """Import the debugger session lazily; CAPEsolo.lib.core.pipe needs CAPESOLO_ROOT on sys.path."""
+    if str(CAPESOLO_ROOT) not in sys.path:
+        sys.path.append(str(CAPESOLO_ROOT))
+
+    from CAPEsolo.capelib import debug_session
+
+    return debug_session
 
 
 def _termination_folder_for_analysis_id(analysis_id: int) -> Path:
@@ -254,6 +339,7 @@ class AnalysisJobManager:
         self._lock = threading.Lock()
         self._jobs: dict[str, dict[str, Any]] = {}
         self._active_job_id: str | None = None
+        self._debugger: Any = None
         self.analysis_dir = _read_analysis_dir()
         self.default_analysis_id = _read_default_analysis_id()
         self.available_packages = _get_available_packages()
@@ -278,7 +364,11 @@ class AnalysisJobManager:
         timeout: int = 200,
         enforce_timeout: bool = False,
         run_from_current_directory: bool = True,
+        interactive_debug: bool = False,
     ) -> dict[str, Any]:
+        if not isinstance(interactive_debug, bool):
+            return {"accepted": False, "error": "interactive_debug must be true or false."}
+
         valid, source, package, options, timeout, enforce_timeout, run_from_current_directory, error = self._validate_submission_inputs(
             sample_path=sample_path,
             package=package,
@@ -289,6 +379,10 @@ class AnalysisJobManager:
         )
         if not valid:
             return {"accepted": False, "error": error}
+
+        if interactive_debug:
+            options = f"{options},idbg=1" if options else "idbg=1"
+            timeout = IDBG_TIMEOUT_SECONDS
 
         with self._lock:
             if self._active_job_id:
@@ -307,16 +401,17 @@ class AnalysisJobManager:
                 "timeout": timeout,
                 "enforce_timeout": enforce_timeout,
                 "run_from_current_directory": run_from_current_directory,
+                "interactive_debug": interactive_debug,
                 "analysis_id": self.default_analysis_id,
             }
 
         thread = threading.Thread(
             target=self._run_job,
-            args=(job_id, source, package, options, timeout, enforce_timeout, run_from_current_directory),
+            args=(job_id, source, package, options, timeout, enforce_timeout, run_from_current_directory, interactive_debug),
             daemon=True,
         )
         thread.start()
-        return {"accepted": True, "job_id": job_id, "state": "queued"}
+        return {"accepted": True, "job_id": job_id, "state": "queued", "interactive_debug": interactive_debug}
 
     def _validate_submission_inputs(
         self,
@@ -400,6 +495,7 @@ class AnalysisJobManager:
         timeout: int,
         enforce_timeout: bool,
         run_from_current_directory: bool,
+        interactive_debug: bool = False,
     ) -> None:
         analyzer = None
         resultserver = None
@@ -444,6 +540,11 @@ class AnalysisJobManager:
             resultserver = ResultServer("localhost", 9999, str(self.analysis_dir))
             analyzer = Analyzer()
             analyzer.prepare()
+
+            if interactive_debug:
+                self._debugger = _import_debug_session().DebuggerSession()
+                self._debugger.launch()
+
             run_result = analyzer.run()
 
             self._set_job(
@@ -465,6 +566,10 @@ class AnalysisJobManager:
             )
             log.exception("Analysis job %s failed", job_id)
         finally:
+            if self._debugger:
+                self._debugger.shutdown()
+                self._debugger = None
+
             _cleanup_analyzer(analyzer, resultserver)
 
     def wait_for_completion(self, job_id: str, timeout: int = 0, poll_interval: float = 1.0) -> dict[str, Any]:
@@ -512,6 +617,7 @@ class AnalysisJobManager:
         enforce_timeout: bool = False,
         run_from_current_directory: bool = True,
         archive_member_path: str = "",
+        interactive_debug: bool = False,
     ) -> dict[str, Any]:
         if not isinstance(zip_path, str) or not zip_path.strip():
             return {"accepted": False, "error": "zip_path must be a non-empty string."}
@@ -547,6 +653,7 @@ class AnalysisJobManager:
             timeout=timeout,
             enforce_timeout=enforce_timeout,
             run_from_current_directory=run_from_current_directory,
+            interactive_debug=interactive_debug,
         )
         if submitted.get("accepted"):
             job_id = submitted.get("job_id")
@@ -765,9 +872,344 @@ class AnalysisJobManager:
         completed, msg = report.run(analysis_dir, str(CAPESOLO_ROOT), results)
         return {"found": True, "ready": True, "state": state, "completed": completed, "message": str(msg) if msg else ""}
 
+    @property
+    def _dbg(self):
+        return _import_debug_session()
+
+    @staticmethod
+    def _format_cip(session: Any) -> str | None:
+        return f"{session.cip:#x}" if session.cip is not None else None
+
+    def _require_debugger(self, require_break: bool = True) -> tuple[Any, dict[str, Any] | None]:
+        session = self._debugger
+        if not session:
+            return None, {"ok": False, "error": "No interactive debug session is active."}
+        if require_break and not session.connected:
+            return None, {"ok": False, "error": "Debugger has not reported a break yet. Call capesolo_dbg_wait_break first."}
+        return session, None
+
+    def _validate_timeout(self, timeout_seconds: Any, default: float) -> tuple[float | None, dict[str, Any] | None]:
+        if timeout_seconds is None:
+            return default, None
+        if isinstance(timeout_seconds, bool):
+            return None, {"ok": False, "error": "timeout_seconds must be a number."}
+        try:
+            value = float(timeout_seconds)
+        except (TypeError, ValueError):
+            return None, {"ok": False, "error": "timeout_seconds must be a number."}
+        if value < 1 or value > self._dbg.MAX_TIMEOUT:
+            return None, {"ok": False, "error": f"timeout_seconds must be between 1 and {self._dbg.MAX_TIMEOUT}."}
+        return value, None
+
+    def _validate_count(self, value: Any, maximum: int, name: str) -> tuple[int | None, dict[str, Any] | None]:
+        if isinstance(value, bool):
+            return None, {"ok": False, "error": f"{name} must be an integer."}
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return None, {"ok": False, "error": f"{name} must be an integer."}
+        if value < 1 or value > maximum:
+            return None, {"ok": False, "error": f"{name} must be between 1 and {maximum}."}
+        return value, None
+
+    def _command(self, session: Any, command: str, data: str = "") -> tuple[str | None, dict[str, Any] | None]:
+        payload = session.SendCommand(command, data, self._dbg.DEFAULT_COMMAND_TIMEOUT)
+        if payload is None:
+            return None, {"ok": False, "error": f"Debugger command {command} timed out."}
+        if self._dbg.IsFailure(payload):
+            return None, {"ok": False, "error": payload}
+        return payload, None
+
+    def _simple_command(self, command: str, data: str = "", key: str = "", parser: Any = None) -> dict[str, Any]:
+        session, error = self._require_debugger()
+        if error:
+            return error
+
+        payload, error = self._command(session, command, data)
+        if error:
+            return error
+
+        result = {"ok": True, "payload": payload}
+        if key and parser:
+            result[key] = parser(payload)
+        return result
+
+    def debugger_status(self) -> dict[str, Any]:
+        session = self._debugger
+        if not session:
+            return {"ok": True, "active": False}
+        with self._lock:
+            job_id = self._active_job_id
+        return {
+            "ok": True,
+            "active": True,
+            "connected": session.connected,
+            "cip": self._format_cip(session),
+            "bits": session.bits,
+            "job_id": job_id,
+        }
+
+    def debugger_wait_break(self, timeout_seconds: Any = None) -> dict[str, Any]:
+        session, error = self._require_debugger(require_break=False)
+        if error:
+            return error
+
+        timeout, error = self._validate_timeout(timeout_seconds, self._dbg.DEFAULT_BREAK_TIMEOUT)
+        if error:
+            return error
+
+        payload = session.WaitForBreak(timeout)
+        if payload is None:
+            return {"ok": True, "state": "running", "message": "No break reported within the timeout."}
+        return {"ok": True, "state": "halted", "cip": self._format_cip(session), "payload": payload}
+
+    def debugger_registers(self) -> dict[str, Any]:
+        session, error = self._require_debugger()
+        if error:
+            return error
+        return self._collect_registers(session)
+
+    def _collect_registers(self, session: Any) -> dict[str, Any]:
+        payload, error = self._command(session, CMD_REG_UPDATE)
+        if error:
+            return error
+
+        if not session.bits:
+            session.bits = 64 if "RAX" in payload else 32
+
+        session.UpdateCip(payload)
+        return {
+            "ok": True,
+            "bits": session.bits,
+            "cip": self._format_cip(session),
+            "registers": self._dbg.ParseRegisters(payload),
+            "raw": payload,
+        }
+
+    def debugger_read_memory(self, address: Any, size: Any = 256) -> dict[str, Any]:
+        session, error = self._require_debugger()
+        if error:
+            return error
+
+        addr = self._dbg.ParseAddress(address)
+        if addr is None:
+            return {"ok": False, "error": f"Invalid address: {address}"}
+
+        size, error = self._validate_count(size, self._dbg.MAX_MEM_READ, "size")
+        if error:
+            return error
+
+        payload, error = self._command(session, CMD_MEM_DUMP, f"{addr:#x}|{size:#x}")
+        if error:
+            return error
+
+        dumpAddr, data = self._dbg.ParseMemDump(payload)
+        if dumpAddr is None:
+            return {"ok": False, "error": f"Unexpected memory dump payload: {payload[:64]}"}
+        if self._dbg.IsFailure(data):
+            return {"ok": False, "error": data}
+
+        return {"ok": True, "address": f"{dumpAddr:#x}", "size": len(data) // 2, "hex": data}
+
+    def debugger_disassemble(self, address: Any = None, count: Any = 32) -> dict[str, Any]:
+        session, error = self._require_debugger()
+        if error:
+            return error
+
+        count, error = self._validate_count(count, self._dbg.MAX_INSTRUCTIONS, "count")
+        if error:
+            return error
+
+        if address is None or address == "":
+            if session.cip is None:
+                return {"ok": False, "error": "No current instruction pointer is known; provide an address."}
+            addr = session.cip
+        else:
+            addr = self._dbg.ParseAddress(address)
+            if addr is None:
+                return {"ok": False, "error": f"Invalid address: {address}"}
+
+        if not session.bits:
+            registers = self._collect_registers(session)
+            if not registers.get("ok"):
+                return registers
+
+        size = min(count * self._dbg.MAX_INSTRUCTION_LEN, self._dbg.MAX_MEM_READ)
+        memory = self.debugger_read_memory(f"{addr:#x}", size)
+        if not memory.get("ok"):
+            return memory
+
+        try:
+            raw = bytes.fromhex(memory["hex"])
+        except ValueError:
+            return {"ok": False, "error": "Memory dump was not valid hex."}
+
+        return {
+            "ok": True,
+            "address": f"{addr:#x}",
+            "bits": session.bits,
+            "instructions": self._dbg.Disassemble(addr, raw, session.bits, count),
+        }
+
+    def debugger_execute(self, command: str, data: str = "", timeout_seconds: Any = None) -> dict[str, Any]:
+        session, error = self._require_debugger()
+        if error:
+            return error
+
+        timeout, error = self._validate_timeout(timeout_seconds, self._dbg.DEFAULT_BREAK_TIMEOUT)
+        if error:
+            return error
+
+        payload = session.SendCommand(command, data, timeout)
+        if payload is None or payload.startswith("TIMEOUT"):
+            return {"ok": True, "state": "running", "message": "Target did not break within the timeout."}
+        if self._dbg.IsFailure(payload):
+            return {"ok": False, "error": payload}
+
+        session.UpdateCip(payload)
+        result = {"ok": True, "state": "halted", "cip": self._format_cip(session), "payload": payload}
+
+        registers = self._collect_registers(session)
+        if registers.get("ok"):
+            result["bits"] = registers["bits"]
+            result["cip"] = registers["cip"]
+            result["registers"] = registers["registers"]
+
+        disassembly = self.debugger_disassemble(count=DBG_DISASM_WINDOW)
+        if disassembly.get("ok"):
+            result["instructions"] = disassembly["instructions"]
+
+        return result
+
+    def debugger_step(self, mode: str = "into", timeout_seconds: Any = None) -> dict[str, Any]:
+        if not isinstance(mode, str) or mode.strip().lower() not in DBG_STEP_COMMANDS:
+            return {"ok": False, "error": f"mode must be one of {', '.join(DBG_STEP_COMMANDS)}."}
+        return self.debugger_execute(DBG_STEP_COMMANDS[mode.strip().lower()], timeout_seconds=timeout_seconds)
+
+    def debugger_continue(self, timeout_seconds: Any = None) -> dict[str, Any]:
+        return self.debugger_execute(CMD_CONTINUE, timeout_seconds=timeout_seconds)
+
+    def debugger_run_until(self, address: Any, timeout_seconds: Any = None) -> dict[str, Any]:
+        addr = self._dbg.ParseAddress(address)
+        if addr is None:
+            return {"ok": False, "error": f"Invalid address: {address}"}
+        return self.debugger_execute(CMD_RUN_UNTIL, f"{addr:#X}", timeout_seconds=timeout_seconds)
+
+    def debugger_set_breakpoint(self, address: Any, slot: str = "next") -> dict[str, Any]:
+        addr = self._dbg.ParseAddress(address)
+        if addr is None:
+            return {"ok": False, "error": f"Invalid address: {address}"}
+        if not isinstance(slot, str) or slot.strip().lower() not in DBG_BREAKPOINT_SLOTS:
+            return {"ok": False, "error": f"slot must be one of {', '.join(DBG_BREAKPOINT_SLOTS)}."}
+        return self._simple_command(CMD_SET_BREAKPOINT, f"{slot.strip().lower()}|{addr:#X}")
+
+    def debugger_delete_breakpoint(self, index: Any) -> dict[str, Any]:
+        error = {"ok": False, "error": "index must be a debug register number between 0 and 3."}
+        if isinstance(index, bool):
+            return error
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            return error
+        if index < 0 or index > 3:
+            return error
+        return self._simple_command(CMD_DELETE_BREAKPOINT, str(index))
+
+    def debugger_list_breakpoints(self) -> dict[str, Any]:
+        return self._simple_command(CMD_BREAKPOINT_LIST, key="breakpoints", parser=self._dbg.ParseBreakpoints)
+
+    def debugger_get_stack(self) -> dict[str, Any]:
+        return self._simple_command(CMD_STACK_UPDATE, key="stack", parser=self._dbg.ParseStack)
+
+    def debugger_list_modules(self) -> dict[str, Any]:
+        return self._simple_command(CMD_MODULE_LIST, key="modules", parser=self._dbg.ParseModules)
+
+    def debugger_list_threads(self) -> dict[str, Any]:
+        return self._simple_command(CMD_THREADS, key="threads", parser=self._dbg.ParseThreads)
+
+    def debugger_set_register(self, name: Any, value: Any) -> dict[str, Any]:
+        if not isinstance(name, str) or not name.strip().isalnum():
+            return {"ok": False, "error": "name must be a register name such as RAX or EIP."}
+
+        register = name.strip().upper()
+        if isinstance(value, bool):
+            return {"ok": False, "error": "value must be an integer or hex string."}
+        if isinstance(value, str):
+            try:
+                value = int(value.strip(), 0)
+            except ValueError:
+                return {"ok": False, "error": f"Invalid register value: {value}"}
+        elif not isinstance(value, int):
+            return {"ok": False, "error": "value must be an integer or hex string."}
+
+        session, error = self._require_debugger()
+        if error:
+            return error
+
+        payload, error = self._command(session, CMD_SET_REGISTER, f"{register}|{value:#X}")
+        if error:
+            return error
+
+        session.UpdateCip(payload)
+        return {"ok": True, "cip": self._format_cip(session), "registers": self._dbg.ParseRegisters(payload), "raw": payload}
+
+    def debugger_set_cip(self, address: Any) -> dict[str, Any]:
+        session, error = self._require_debugger()
+        if error:
+            return error
+
+        addr = self._dbg.ParseAddress(address)
+        if addr is None:
+            return {"ok": False, "error": f"Invalid address: {address}"}
+
+        if not session.bits:
+            registers = self._collect_registers(session)
+            if not registers.get("ok"):
+                return registers
+
+        return self.debugger_set_register("EIP" if session.bits == 32 else "RIP", addr)
+
+    def debugger_modify_flag(self, action: Any) -> dict[str, Any]:
+        if not isinstance(action, str) or action.strip() not in DBG_FLAG_ACTIONS:
+            return {"ok": False, "error": f"action must be one of {', '.join(DBG_FLAG_ACTIONS)}."}
+
+        session, error = self._require_debugger()
+        if error:
+            return error
+
+        payload, error = self._command(session, CMD_MOD_FLAG, action.strip())
+        if error:
+            return error
+
+        return {"ok": True, "registers": self._dbg.ParseRegisters(payload), "raw": payload}
+
+    def debugger_patch_bytes(self, address: Any, hex_bytes: Any) -> dict[str, Any]:
+        addr = self._dbg.ParseAddress(address)
+        if addr is None:
+            return {"ok": False, "error": f"Invalid address: {address}"}
+
+        if not isinstance(hex_bytes, str):
+            return {"ok": False, "error": "hex_bytes must be a hex string."}
+
+        code = hex_bytes.strip().replace(" ", "")
+        try:
+            patch = bytes.fromhex(code)
+        except ValueError:
+            return {"ok": False, "error": f"hex_bytes is not valid hex: {hex_bytes}"}
+        if not patch:
+            return {"ok": False, "error": "hex_bytes must contain at least one byte."}
+
+        return self._simple_command(CMD_PATCH_BYTES, f"{addr:#x}|{code.upper()}")
+
+    def debugger_nop_instruction(self, address: Any) -> dict[str, Any]:
+        addr = self._dbg.ParseAddress(address)
+        if addr is None:
+            return {"ok": False, "error": f"Invalid address: {address}"}
+        return self._simple_command(CMD_NOP_INSTRUCTION, f"{addr:016X}")
+
 
 manager = AnalysisJobManager()
-mcp = FastMCP("capesolo") if FastMCP else None
+mcp = MCPServer("capesolo") if MCPServer else None
 
 if mcp:
     @mcp.tool()
@@ -778,7 +1220,14 @@ if mcp:
         timeout: int = 200,
         enforce_timeout: bool = False,
         run_from_current_directory: bool = True,
+        interactive_debug: bool = False,
     ) -> dict[str, Any]:
+        """Submit a sample for detonation and return immediately with a job_id.
+
+        Set interactive_debug to halt the sample under the CAPEsolo debugger; that forces
+        idbg=1 into the options and a 4 hour timeout, and enables the capesolo_dbg_* tools.
+        Pair it with breakpoint options such as "bp0=ep".
+        """
         return manager.submit(
             sample_path=sample_path,
             package=package,
@@ -786,6 +1235,7 @@ if mcp:
             timeout=timeout,
             enforce_timeout=enforce_timeout,
             run_from_current_directory=run_from_current_directory,
+            interactive_debug=interactive_debug,
         )
 
 
@@ -799,7 +1249,9 @@ if mcp:
         enforce_timeout: bool = False,
         run_from_current_directory: bool = True,
         archive_member_path: str = "",
+        interactive_debug: bool = False,
     ) -> dict[str, Any]:
+        """Extract one file from a password-protected ZIP and submit it for detonation."""
         return manager.submit_password_zip(
             zip_path=zip_path,
             zip_password=zip_password,
@@ -809,6 +1261,7 @@ if mcp:
             enforce_timeout=enforce_timeout,
             run_from_current_directory=run_from_current_directory,
             archive_member_path=archive_member_path,
+            interactive_debug=interactive_debug,
         )
 
 
@@ -858,10 +1311,225 @@ if mcp:
         return {"updated": updated or {}}
 
 
+    @mcp.tool()
+    def capesolo_dbg_status() -> dict[str, Any]:
+        """Report whether an interactive debug session is active and where it is halted."""
+        return manager.debugger_status()
+
+
+    @mcp.tool()
+    def capesolo_dbg_wait_break(timeout_seconds: float = 120) -> dict[str, Any]:
+        """Wait for the target to halt at a breakpoint and return the break payload.
+
+        Call this once after submitting with interactive_debug to catch the first break,
+        and again after any tool that returns state "running".
+        """
+        return manager.debugger_wait_break(timeout_seconds)
+
+
+    @mcp.tool()
+    def capesolo_dbg_step(mode: str = "into", timeout_seconds: float = 120) -> dict[str, Any]:
+        """Single-step the halted target. mode is one of into, over, out.
+
+        Returns the new instruction pointer, registers and a short disassembly window.
+        """
+        return manager.debugger_step(mode, timeout_seconds)
+
+
+    @mcp.tool()
+    def capesolo_dbg_continue(timeout_seconds: float = 120) -> dict[str, Any]:
+        """Resume the target until it hits the next breakpoint or the timeout expires."""
+        return manager.debugger_continue(timeout_seconds)
+
+
+    @mcp.tool()
+    def capesolo_dbg_run_until(address: str, timeout_seconds: float = 120) -> dict[str, Any]:
+        """Resume the target until it reaches address. Addresses are hex, 0x prefix optional."""
+        return manager.debugger_run_until(address, timeout_seconds)
+
+
+    @mcp.tool()
+    def capesolo_dbg_get_registers() -> dict[str, Any]:
+        """Read the register set of the halted target as both parsed values and raw text."""
+        return manager.debugger_registers()
+
+
+    @mcp.tool()
+    def capesolo_dbg_get_stack() -> dict[str, Any]:
+        """Read the stack window around the current stack pointer."""
+        return manager.debugger_get_stack()
+
+
+    @mcp.tool()
+    def capesolo_dbg_read_memory(address: str, size: int = 256) -> dict[str, Any]:
+        """Read up to 16384 bytes of target memory at address and return them as hex."""
+        return manager.debugger_read_memory(address, size)
+
+
+    @mcp.tool()
+    def capesolo_dbg_disassemble(address: str = "", count: int = 32) -> dict[str, Any]:
+        """Disassemble instructions at address, defaulting to the current instruction pointer."""
+        return manager.debugger_disassemble(address, count)
+
+
+    @mcp.tool()
+    def capesolo_dbg_set_breakpoint(address: str, slot: str = "next") -> dict[str, Any]:
+        """Set a hardware breakpoint at address. slot is next or a debug register 0-3."""
+        return manager.debugger_set_breakpoint(address, slot)
+
+
+    @mcp.tool()
+    def capesolo_dbg_delete_breakpoint(index: int) -> dict[str, Any]:
+        """Delete the hardware breakpoint held in debug register index (0-3)."""
+        return manager.debugger_delete_breakpoint(index)
+
+
+    @mcp.tool()
+    def capesolo_dbg_list_breakpoints() -> dict[str, Any]:
+        """List the hardware breakpoints currently set, with their debug register slots."""
+        return manager.debugger_list_breakpoints()
+
+
+    @mcp.tool()
+    def capesolo_dbg_list_modules() -> dict[str, Any]:
+        """List the modules loaded in the target with their base addresses, sizes and paths."""
+        return manager.debugger_list_modules()
+
+
+    @mcp.tool()
+    def capesolo_dbg_list_threads() -> dict[str, Any]:
+        """List the target threads with their start addresses; the current thread is flagged."""
+        return manager.debugger_list_threads()
+
+
+    @mcp.tool()
+    def capesolo_dbg_set_register(name: str, value: str) -> dict[str, Any]:
+        """Set a register such as RAX or EIP. value accepts decimal or 0x-prefixed hex."""
+        return manager.debugger_set_register(name, value)
+
+
+    @mcp.tool()
+    def capesolo_dbg_set_cip(address: str) -> dict[str, Any]:
+        """Move the instruction pointer to address, picking EIP or RIP by target bitness."""
+        return manager.debugger_set_cip(address)
+
+
+    @mcp.tool()
+    def capesolo_dbg_modify_flag(action: str) -> dict[str, Any]:
+        """Set, clear or flip a status flag.
+
+        action is one of SetZeroFlag, ClearZeroFlag, FlipZeroFlag, SetSignFlag,
+        ClearSignFlag, FlipSignFlag, SetCarryFlag, ClearCarryFlag, FlipCarryFlag.
+        """
+        return manager.debugger_modify_flag(action)
+
+
+    @mcp.tool()
+    def capesolo_dbg_patch_bytes(address: str, hex_bytes: str) -> dict[str, Any]:
+        """Overwrite target memory at address with the given hex byte string."""
+        return manager.debugger_patch_bytes(address, hex_bytes)
+
+
+    @mcp.tool()
+    def capesolo_dbg_nop_instruction(address: str) -> dict[str, Any]:
+        """Replace the instruction at address with NOPs."""
+        return manager.debugger_nop_instruction(address)
+
+
+class BearerTokenMiddleware:
+    """ASGI middleware requiring a shared bearer token on every request."""
+
+    def __init__(self, app: Any, token: str):
+        self.app = app
+        self.expected = f"Bearer {token}".encode()
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        supplied = b""
+        for name, value in scope.get("headers", []):
+            if name.lower() == b"authorization":
+                supplied = value
+                break
+
+        if not hmac.compare_digest(supplied, self.expected):
+            log.warning("Rejected unauthenticated MCP request to %s", scope.get("path", ""))
+            await send({"type": "http.response.start", "status": 401, "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Unauthorized"})
+            return
+
+        await self.app(scope, receive, send)
+
+
+def _run_streamable_http(host: str, port: int, path: str, allowed_hosts: list[str], allowed_origins: list[str]) -> None:
+    import uvicorn
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    token = os.environ.get(MCP_TOKEN_ENV, "").strip()
+    if host not in LOOPBACK_HOSTS and not token:
+        log.warning(
+            "MCP server is bound to %s without %s set. Use a host-only VM network and "
+            "never expose this port beyond it: these tools detonate samples and can read "
+            "and patch process memory.",
+            host,
+            MCP_TOKEN_ENV,
+        )
+
+    if not allowed_hosts:
+        if host == "0.0.0.0":
+            log.warning(
+                "Binding 0.0.0.0 without [mcp_server] allowed_hosts; the Host header cannot be "
+                "derived, so requests will be rejected. Set allowed_hosts to the address clients use."
+            )
+        else:
+            allowed_hosts = [f"{host}:{port}", f"{host}:*"]
+
+    app = mcp.streamable_http_app(
+        streamable_http_path=path,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=allowed_hosts,
+            allowed_origins=allowed_origins,
+        ),
+        host=host,
+    )
+    if token:
+        app = BearerTokenMiddleware(app, token)
+
+    log.info("MCP server listening on http://%s:%s%s (auth: %s)", host, port, path, "bearer token" if token else "none")
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
 def main() -> None:
     if not mcp:
         raise ImportError("MCP server requires the 'mcp' package. Install dependencies and retry.")
-    mcp.run()
+
+    settings = _read_mcp_settings()
+    parser = argparse.ArgumentParser(description="CAPEsolo MCP server.")
+    parser.add_argument(
+        "--transport",
+        choices=MCP_TRANSPORTS,
+        default=settings["transport"],
+        help="Transport to serve on (default: %(default)s)",
+    )
+    parser.add_argument("--host", default=settings["host"], help="Bind address for streamable-http (default: %(default)s)")
+    parser.add_argument("--port", type=int, default=settings["port"], help="Bind port for streamable-http (default: %(default)s)")
+    parser.add_argument("--path", default=settings["path"], help="HTTP path for streamable-http (default: %(default)s)")
+    args = parser.parse_args()
+
+    if args.transport == "stdio":
+        mcp.run()
+        return
+
+    _run_streamable_http(
+        host=args.host,
+        port=args.port,
+        path=args.path,
+        allowed_hosts=settings["allowed_hosts"],
+        allowed_origins=settings["allowed_origins"],
+    )
 
 
 if __name__ == "__main__":
