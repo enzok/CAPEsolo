@@ -16,6 +16,7 @@ from .target_info import TargetInfoPanel
 from .yara_panel import YaraPanel
 from .signatures_panel import SignaturesPanel
 from .theme import BG_MAIN, _init as _init_theme, apply_theme
+from CAPEsolo.capelib.config_paths import config_paths
 from CAPEsolo.capelib.path_utils import path_mkdir
 
 
@@ -132,8 +133,7 @@ class MainFrame(wx.Frame):
             path_mkdir(self.analysisDir)
 
     def GetConfig(self):
-        configFile = os.path.join(self.capesoloRoot, "cfg.ini")
-        g_config = ConfigReader(configFile)
+        g_config = ConfigReader(config_paths())
         analysisDir = g_config.analysis_directory.analysis
         if analysisDir:
             self.analysisDir = analysisDir

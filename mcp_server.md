@@ -24,12 +24,26 @@ Install project dependencies (including `mcp`) in your environment first.
 Settings resolve in this order, first match wins:
 
 1. **Command line flag** - `--transport`, `--host`, `--port`, `--path`
-2. **`cfg.ini`** - the optional `[mcp_server]` section
-3. **Built-in default**
+2. **User `cfg.ini`** - `C:\Users\Public\CAPEsolo\cfg.ini`
+3. **Packaged `cfg.ini`** - `python-path\site-packages\CAPEsolo\cfg.ini`
+4. **Built-in default**
 
-`cfg.ini` lives at `python-path\site-packages\CAPEsolo\cfg.ini`. The whole
-`[mcp_server]` section is optional; if it is absent every value falls back to its default
-and the server behaves exactly as it always has.
+Put your settings in the **user** file. The packaged copy is replaced on every
+`pip install --upgrade CAPEsolo`, which silently reverts anything you changed there; the
+user file is never touched. It sits next to the analysis directory, in the CAPEsolo folder
+you already have.
+
+Override only the keys you care about - the two files are merged **per key**, so a user file
+containing just a `port` line keeps every other value from the packaged defaults and still
+picks up new keys added by future versions. Copying the whole packaged file is unnecessary
+and makes upgrades staler. A missing user file is simply skipped, so an existing install
+behaves exactly as before.
+
+Set `CAPESOLO_CFG` to use a different file entirely, which is handy for keeping the guest
+and host on separate configs.
+
+The whole `[mcp_server]` section is optional; if it is absent from both files every value
+falls back to its default.
 
 ### 2.1. `[mcp_server]` keys
 
@@ -47,7 +61,10 @@ and the server behaves exactly as it always has.
 Set `CAPESOLO_MCP_TOKEN` in the guest before starting the server to require
 `Authorization: Bearer <token>` on every HTTP request. Leave it unset to run without auth.
 
-**Do not put the token in `cfg.ini` - that file is tracked in git.**
+**Keep the token in the environment, not in either `cfg.ini`.** The packaged file is tracked
+in git, so a token there can be committed by accident. The user file is not in git, but
+`C:\Users\Public` is world-readable by default, so a token there is exposed to every account
+on the VM.
 
 ```
 set CAPESOLO_MCP_TOKEN=some-long-random-value
@@ -58,13 +75,16 @@ CAPEsolo-mcp --transport streamable-http --host 192.168.56.10
 
 ## 3. Remote Access (guest VM to host)
 
-Point the host client at `http://<guest-ip>:<port>/mcp` using its remote/URL server form
-rather than `command`/`args`:
+Point the host client at `http://<guest-ip>:<port>/mcp`. The config form differs by client -
+see 3.1 and 3.2 below. Drop the `headers` / `env` block in either if you are not using a token.
+
+### 3.1. Claude Code, Cursor, and other clients with native HTTP support
 
 ```json
 {
   "mcpServers": {
     "capesolo": {
+      "type": "http",
       "url": "http://192.168.56.10:8000/mcp",
       "headers": { "Authorization": "Bearer some-long-random-value" }
     }
@@ -72,9 +92,45 @@ rather than `command`/`args`:
 }
 ```
 
-Drop the `headers` block if you are not using a token.
+**`type` is required.** A `url` entry without it is read as a stdio server and skipped.
+`streamable-http` is accepted as an alias for `http`.
 
-### 3.1. Security
+Claude Code can also add it from the command line:
+
+```
+claude mcp add --transport http capesolo http://192.168.56.10:8000/mcp \
+  --header "Authorization: Bearer some-long-random-value"
+```
+
+### 3.2. Claude Desktop - use a connector or the mcp-remote bridge
+
+**Do not put a `url` entry in `claude_desktop_config.json`.** Claude Desktop silently
+discards the whole `mcpServers` section on startup when one is present, with no error.
+Either add the server under **Settings - Connectors - Add custom connector**, or bridge it
+through `mcp-remote` as a stdio server (needs Node.js on the host, not the guest):
+
+```json
+{
+  "mcpServers": {
+    "capesolo": {
+      "command": "npx",
+      "args": [
+        "-y", "mcp-remote@latest",
+        "http://192.168.56.10:8000/mcp",
+        "--allow-http",
+        "--header", "Authorization:${AUTH_HEADER}"
+      ],
+      "env": { "AUTH_HEADER": "Bearer some-long-random-value" }
+    }
+  }
+}
+```
+
+`--allow-http` is required because the server speaks plain HTTP. Write the header as
+`Authorization:${AUTH_HEADER}` with **no space after the colon** and keep the value in
+`env` - Claude Desktop mishandles arguments containing spaces.
+
+### 3.3. Security
 
 * Use a **host-only or internal** VM network. Never bridge the guest to a real LAN or
   forward this port to the internet: these tools detonate samples, and the debugger tools
@@ -89,7 +145,80 @@ Drop the `headers` block if you are not using a token.
 
 ---
 
-## 4. Analysis Tools
+## 4. Uploading Files
+
+Every analysis tool takes a path **inside the VM**. When the client runs on the host, upload
+the bytes first and pass back the returned path.
+
+| Tool | Description |
+|------|-------------|
+| `capesolo_upload_file` | Write a file into the VM. Args: `filename`, `data_base64`, `destination`, `append`, `sha256`. Returns the guest `path`, `size` and `sha256`. |
+| `capesolo_list_uploads` | List both destinations with sizes and SHA-256 hashes. |
+
+### 4.1. Destinations
+
+| `destination` | Directory | Accepts |
+|---------------|-----------|---------|
+| `desktop` (default) | `%USERPROFILE%\Desktop` | **any** extension, including none |
+| `custom` | `%USERPROFILE%\Desktop\custom` | only `.yar`, `.yara`, `.py` |
+
+There is no path argument - the destination is a fixed choice of those two, and the filename
+is reduced to a sanitized basename. `Desktop\custom` is created on first use.
+
+`desktop` is deliberately unrestricted because samples are arbitrary by nature: `.exe`,
+`.dll`, `.doc`, `.js`, extensionless, or mislabelled on purpose. `custom` is restricted to
+the three extensions CAPEsolo actually loads from there.
+
+### 4.2. What `custom` is for
+
+`Desktop\custom` is the same directory the GUI already reads, so uploads and the GUI stay in
+step:
+
+* **`.yar` / `.yara`** - merged into the **CAPE** YARA category alongside the built-in rules.
+* **`.py`** - a config extractor, loaded **only when its filename matches the name of the YARA
+  rule that hit**, exposing either `extract_config(filedata)` or `config(filedata)`.
+
+  The triggering rule can be **any** rule CAPEsolo has, including a bundled one - so a `.py`
+  on its own is a valid upload and often the only file you need. `NitrogenLoader.py` pairs
+  with the shipped `NitrogenLoader` rule, for example. Upload a `.yar` alongside it only when
+  the rule itself is new.
+
+Both are picked up on the **next `capesolo_get_results` call** - no restart, and no reload
+tool to call.
+
+> **A `.py` here is executed inside the VM.** CAPEsolo imports and runs the extractor while
+> processing results, so uploading one is remote code execution in the guest by design. Keep
+> `CAPESOLO_MCP_TOKEN` set and the port on a host-only network (see 3.3).
+
+### 4.3. Size limits and chunking
+
+| Limit | Value |
+|-------|-------|
+| Request body | 32 MiB, so roughly **24 MiB of file** per call after base64 overhead |
+| Total per file | 256 MiB |
+
+For anything larger than one chunk, call repeatedly against the same `filename`:
+
+1. First chunk with `append=false` - creates or truncates the file.
+2. Each later chunk with `append=true`.
+3. Pass `sha256` of the **whole** file on the final call.
+
+A `sha256` mismatch deletes the file and returns an error, so a truncated or corrupted
+upload can never be analyzed by mistake. Chunk state is just the file on disk - an
+interrupted upload leaves a short file that the next `append=false` call overwrites.
+
+> **Chunking raises the transport limit, not the practical one.** When an assistant does the
+> upload, the base64 passes through its context twice - once reading the file, once re-emitting
+> it in the tool call - at about 2.7x the file size. Splitting a file into chunks moves the same
+> total through context, so it is not a way around that cost. Past roughly a few hundred KB,
+> copy the file into the VM by other means (shared folder, RDP, mapped drive) and pass the
+> guest path straight to `capesolo_analyze_sample`; `capesolo_list_uploads` reports the SHA-256
+> either way, so verification is identical. Chunking is for scripts driving the endpoint
+> directly, where nothing transits a context window.
+
+---
+
+## 5. Analysis Tools
 
 | Tool | Description |
 |------|-------------|
@@ -107,7 +236,7 @@ Drop the `headers` block if you are not using a token.
 
 ---
 
-## 5. Interactive Debugger Tools
+## 6. Interactive Debugger Tools
 
 Available only while a job submitted with `interactive_debug=True` is halted at a
 breakpoint. That flag adds `idbg=1` to the options and forces a 4 hour timeout, the same
@@ -116,7 +245,7 @@ as the GUI **Interactive Debugger** checkbox. Pair it with breakpoint options su
 
 Addresses are hex; the `0x` prefix is optional.
 
-### 5.1. Execution control
+### 6.1. Execution control
 
 | Tool | Description |
 |------|-------------|
@@ -128,7 +257,7 @@ Addresses are hex; the `0x` prefix is optional.
 These three return the new instruction pointer, the registers, and a short disassembly
 window in one response.
 
-### 5.2. Inspection
+### 6.2. Inspection
 
 | Tool | Description |
 |------|-------------|
@@ -141,7 +270,7 @@ window in one response.
 | `capesolo_dbg_list_threads` | Threads with start addresses; the current thread is flagged. |
 | `capesolo_dbg_list_breakpoints` | Hardware breakpoints with their debug register slots. |
 
-### 5.3. Modification
+### 6.3. Modification
 
 | Tool | Description |
 |------|-------------|
@@ -155,7 +284,7 @@ window in one response.
 
 ---
 
-## 6. Quick Connection Test
+## 7. Quick Connection Test
 
 1. Start your MCP-enabled client with the config above.
 2. Call `capesolo_get_job_status` with a fake id:
@@ -165,9 +294,9 @@ window in one response.
 
 ---
 
-## 7. Examples
+## 8. Examples
 
-### 7.1. Local stdio, no configuration
+### 8.1. Local stdio, no configuration
 
 Nothing in `cfg.ini`. The client launches the server itself:
 
@@ -185,7 +314,7 @@ Nothing in `cfg.ini`. The client launches the server itself:
 
 Equivalent for a client that resolves entry points: `"command": "CAPEsolo-mcp"`.
 
-### 7.2. Host-only network, no token
+### 8.2. Host-only network, no token
 
 Guest adapter is `192.168.56.10`. In the guest:
 
@@ -201,14 +330,17 @@ Start with `CAPEsolo-mcp`. On the host:
 ```json
 {
   "mcpServers": {
-    "capesolo": { "url": "http://192.168.56.10:8000/mcp" }
+    "capesolo": {
+      "type": "http",
+      "url": "http://192.168.56.10:8000/mcp"
+    }
   }
 }
 ```
 
 `allowed_hosts` is omitted, so it is derived as `192.168.56.10:8000` automatically.
 
-### 7.3. Host-only network with a token, config-free
+### 8.3. Host-only network with a token, config-free
 
 Leave `cfg.ini` alone and pass everything on the command line. In the guest:
 
@@ -223,6 +355,7 @@ On the host:
 {
   "mcpServers": {
     "capesolo": {
+      "type": "http",
       "url": "http://192.168.56.10:9000/capesolo",
       "headers": { "Authorization": "Bearer 8f3c1d9b0a7e4f26" }
     }
@@ -230,7 +363,7 @@ On the host:
 }
 ```
 
-### 7.4. Binding all interfaces
+### 8.4. Binding all interfaces
 
 `0.0.0.0` cannot derive a `Host` header, so `allowed_hosts` must be explicit or every
 request is rejected:
@@ -243,13 +376,35 @@ port = 8000
 allowed_hosts = 192.168.56.10:8000, capesolo-vm:*
 ```
 
-### 7.5. Typical analysis run
+### 8.5. Upload a sample from the host, then analyze it
+
+1. `capesolo_upload_file` with `{"filename": "evil.exe", "data_base64": "<...>", "sha256": "<digest>"}`
+   - returns `{"path": "C:\\Users\\analyst\\Desktop\\evil.exe", ...}`
+2. `capesolo_analyze_sample` with `{"sample_path": "C:\\Users\\analyst\\Desktop\\evil.exe"}`
+3. Poll `capesolo_get_job_status`, then `capesolo_get_results`
+
+For a file over ~24 MiB, step 1 becomes several calls against the same `filename`:
+`append=false` for the first, `append=true` for the rest, `sha256` on the last.
+
+A password-protected archive works the same way - upload the `.zip`, then pass the returned
+path to `capesolo_analyze_password_zip` instead.
+
+### 8.6. Ship a custom rule and its extractor
+
+1. `capesolo_upload_file` with `{"filename": "MyFamily.yar", "destination": "custom", ...}`
+2. `capesolo_upload_file` with `{"filename": "MyFamily.py", "destination": "custom", ...}`
+   - the names must match, or the extractor is never invoked
+3. `capesolo_list_uploads` to confirm both landed
+4. `capesolo_get_results` on an existing job - the new rule and extractor are applied on this
+   call, with no restart
+
+### 8.7. Typical analysis run
 
 1. `capesolo_analyze_sample` with `{"sample_path": "C:\\samples\\evil.exe"}`
 2. Poll `capesolo_get_job_status` until the state is `completed`
 3. `capesolo_get_results` (optionally `capesolo_render_html_report`)
 
-### 7.6. Typical interactive debugger run
+### 8.8. Typical interactive debugger run
 
 1. `capesolo_analyze_sample` with
    `{"sample_path": "C:\\samples\\packed.exe", "options": "bp0=ep", "interactive_debug": true}`
@@ -261,12 +416,27 @@ allowed_hosts = 192.168.56.10:8000, capesolo-vm:*
 
 ---
 
-## 8. Talking to the Assistant
+## 9. Talking to the Assistant
 
 Once the server is connected you drive everything in plain language - the assistant picks
 the tools. You never type tool names or JSON. These are phrasings that work well.
 
-### 8.1. Running an analysis
+### 9.1. Getting files into the VM
+
+| Say this | What it runs |
+|----------|--------------|
+| "Upload `C:\host\evil.exe` to the VM and analyze it." | upload to Desktop, then submit |
+| "Send this file over and stop at the entry point." | upload, then submit with `interactive_debug` |
+| "Install this YARA rule in the VM." | upload to `custom` |
+| "Add this extractor for the MyFamily rule." | upload `MyFamily.py` to `custom` |
+| "What custom rules and extractors are installed?" | list uploads |
+| "Did the upload finish?" | list uploads, compare size and hash |
+| "Re-run the config extraction with the new rule." | get results again (no restart needed) |
+
+The assistant reads the host-side file itself and chunks it if needed - you give it a host
+path, not base64.
+
+### 9.2. Running an analysis
 
 | Say this | What it runs |
 |----------|--------------|
@@ -283,7 +453,7 @@ the tools. You never type tool names or JSON. These are phrasings that work well
 | "What did it drop, and what payloads came out?" | dropped files + payloads |
 | "Update the YARA rules first." | update YARA |
 
-### 8.2. Starting a debugger session
+### 9.3. Starting a debugger session
 
 | Say this | What it runs |
 |----------|--------------|
@@ -295,7 +465,7 @@ the tools. You never type tool names or JSON. These are phrasings that work well
 Breakpoint placement comes from analyzer **options** at submit time (`bp0=ep`,
 `base-on-api=...`); the `capesolo_dbg_*` tools take over once the target is halted.
 
-### 8.3. Driving a halted target
+### 9.4. Driving a halted target
 
 | Say this | What it runs |
 |----------|--------------|
@@ -308,7 +478,7 @@ Breakpoint placement comes from analyzer **options** at submit time (`bp0=ep`,
 | "Keep going." | continue |
 | "What breakpoints are set?" | list breakpoints |
 
-### 8.4. Inspecting state
+### 9.5. Inspecting state
 
 | Say this | What it runs |
 |----------|--------------|
@@ -321,7 +491,7 @@ Breakpoint placement comes from analyzer **options** at submit time (`bp0=ep`,
 | "Which DLLs are loaded?" | list modules |
 | "How many threads, and where did they start?" | list threads |
 
-### 8.5. Changing execution
+### 9.6. Changing execution
 
 | Say this | What it runs |
 |----------|--------------|
@@ -332,7 +502,7 @@ Breakpoint placement comes from analyzer **options** at submit time (`bp0=ep`,
 | "Skip that call, move RIP past it." | set CIP |
 | "Force the anti-debug check to fail." | typically flag or register change, then continue |
 
-### 8.6. Longer requests that chain tools
+### 9.7. Longer requests that chain tools
 
 These read like one instruction but drive many calls. They work well because each
 execution tool returns the new instruction pointer, registers, and nearby disassembly in a
@@ -350,7 +520,7 @@ single response.
 * "Analyze `evil.exe`, and when it finishes summarize the signatures and configs, but skip
   the strings."
 
-### 8.7. Phrasing that helps
+### 9.8. Phrasing that helps
 
 * **Name the address or register** - "dump 64 bytes at RSP" beats "dump the stack area".
 * **Give a stopping condition** - "step until the call returns" or "step at most 20 times";

@@ -1,4 +1,5 @@
 import argparse
+import base64
 import configparser
 import hashlib
 import hmac
@@ -36,6 +37,7 @@ from CAPEsolo.capelib.cmdconsts import (
     CMD_STEP_OVER,
     CMD_THREADS,
 )
+from CAPEsolo.capelib.config_paths import config_paths
 from CAPEsolo.capelib.resultserver import ResultServer
 from CAPEsolo.capelib.utils import sanitize_filename
 from CAPEsolo.capelib.utils import LoadFilesJson
@@ -56,7 +58,6 @@ log = logging.getLogger(__name__)
 
 CAPESOLO_ROOT = Path(__file__).resolve().parent
 ANALYSIS_CONF = CAPESOLO_ROOT / "analysis.conf"
-CFG_INI = CAPESOLO_ROOT / "cfg.ini"
 MCP_STAGING_DIR = "mcp_staging"
 DEFAULT_ANALYSIS_ID = 2
 MIN_TIMEOUT_SECONDS = 1
@@ -88,6 +89,14 @@ DEFAULT_MCP_PORT = 8000
 DEFAULT_MCP_PATH = "/mcp"
 MCP_TOKEN_ENV = "CAPESOLO_MCP_TOKEN"
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+MAX_REQUEST_BODY_SIZE = 32 * 1024 * 1024
+MAX_UPLOAD_BYTES = 256 * 1024 * 1024
+# Same expression as capelib/yaralib.py and classes/configs_panel.py; uploads must land
+# where those loaders look.
+DESKTOP_DIR = Path(os.path.expanduser("~")) / "Desktop"
+CUSTOM_DIR = DESKTOP_DIR / "custom"
+UPLOAD_DESTINATIONS = {"desktop": DESKTOP_DIR, "custom": CUSTOM_DIR}
+CUSTOM_EXTENSIONS = (".yar", ".yara", ".py")
 SANDBOXPACKAGES = (
     "Shellcode",
     "Shellcode_trace",
@@ -130,7 +139,7 @@ if not log.handlers:
 
 def _read_analysis_dir() -> Path:
     config = configparser.ConfigParser()
-    config.read(CFG_INI)
+    config.read(config_paths())
     path = config.get("analysis_directory", "analysis", fallback=r"C:\Users\Public\CAPEsolo\analysis")
     return Path(path)
 
@@ -141,13 +150,14 @@ def _split_csv(value: str) -> list[str]:
 
 def _read_mcp_settings() -> dict[str, Any]:
     """Read the optional [mcp_server] section; fallbacks apply even when it is absent."""
+    paths = config_paths()
     config = configparser.ConfigParser()
-    config.read(CFG_INI)
+    read = config.read(paths)
     section = "mcp_server"
     try:
         port = config.getint(section, "port", fallback=DEFAULT_MCP_PORT)
     except ValueError:
-        log.warning("Invalid [mcp_server] port in %s, using %s", CFG_INI, DEFAULT_MCP_PORT)
+        log.warning("Invalid [mcp_server] port in %s, using %s", read or paths, DEFAULT_MCP_PORT)
         port = DEFAULT_MCP_PORT
 
     return {
@@ -872,6 +882,104 @@ class AnalysisJobManager:
         completed, msg = report.run(analysis_dir, str(CAPESOLO_ROOT), results)
         return {"found": True, "ready": True, "state": state, "completed": completed, "message": str(msg) if msg else ""}
 
+    def _resolve_upload_path(self, filename: Any, destination: Any) -> tuple[Path | None, dict[str, Any] | None]:
+        if not isinstance(destination, str) or destination.strip().lower() not in UPLOAD_DESTINATIONS:
+            return None, {"ok": False, "error": f"destination must be one of {', '.join(UPLOAD_DESTINATIONS)}."}
+
+        destination = destination.strip().lower()
+        target_dir = UPLOAD_DESTINATIONS[destination]
+
+        if not isinstance(filename, str) or not filename.strip():
+            return None, {"ok": False, "error": "filename must be a non-empty string."}
+
+        name = sanitize_filename(Path(filename.strip()).name).strip()
+        if not name or name in (".", ".."):
+            return None, {"ok": False, "error": f"filename is not usable after sanitizing: {filename}"}
+
+        if destination == "custom" and not name.lower().endswith(CUSTOM_EXTENSIONS):
+            return None, {
+                "ok": False,
+                "error": f"custom uploads must be one of {', '.join(CUSTOM_EXTENSIONS)}; got '{name}'.",
+            }
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        path = (target_dir / name).resolve()
+        if not path.is_relative_to(target_dir.resolve()):
+            return None, {"ok": False, "error": f"filename escapes the {destination} directory: {filename}"}
+
+        return path, None
+
+    def upload_file(
+        self,
+        filename: str,
+        data_base64: str,
+        destination: str = "desktop",
+        append: bool = False,
+        sha256: str = "",
+    ) -> dict[str, Any]:
+        if not isinstance(append, bool):
+            return {"ok": False, "error": "append must be true or false."}
+        if not isinstance(data_base64, str):
+            return {"ok": False, "error": "data_base64 must be a base64 string."}
+        if sha256 is None:
+            sha256 = ""
+        if not isinstance(sha256, str):
+            return {"ok": False, "error": "sha256 must be a hex string."}
+
+        path, error = self._resolve_upload_path(filename, destination)
+        if error:
+            return error
+
+        try:
+            chunk = base64.b64decode(data_base64, validate=True)
+        except ValueError:
+            return {"ok": False, "error": "data_base64 is not valid base64."}
+
+        existing = path.stat().st_size if append and path.exists() else 0
+        if existing + len(chunk) > MAX_UPLOAD_BYTES:
+            return {
+                "ok": False,
+                "error": f"upload would exceed {MAX_UPLOAD_BYTES} bytes (have {existing}, adding {len(chunk)}).",
+            }
+
+        try:
+            with path.open("ab" if append else "wb") as out:
+                out.write(chunk)
+        except OSError as e:
+            return {"ok": False, "error": f"Failed writing {path}: {e}"}
+
+        digest = hash_file(hashlib.sha256, str(path))
+        size = path.stat().st_size
+
+        if sha256.strip() and sha256.strip().lower() != digest.lower():
+            path.unlink(missing_ok=True)
+            return {
+                "ok": False,
+                "error": f"sha256 mismatch: expected {sha256.strip().lower()}, got {digest.lower()}. Upload discarded.",
+            }
+
+        log.info("Uploaded %s bytes to %s (append=%s)", len(chunk), path, append)
+        return {"ok": True, "path": str(path), "size": size, "sha256": digest, "destination": destination}
+
+    def list_uploads(self) -> dict[str, Any]:
+        listings: dict[str, Any] = {}
+        for name, directory in UPLOAD_DESTINATIONS.items():
+            entries = []
+            if directory.exists():
+                for item in sorted(directory.iterdir()):
+                    if not item.is_file():
+                        continue
+                    entries.append(
+                        {
+                            "name": item.name,
+                            "path": str(item),
+                            "size": item.stat().st_size,
+                            "sha256": hash_file(hashlib.sha256, str(item)),
+                        }
+                    )
+            listings[name] = {"directory": str(directory), "exists": directory.exists(), "files": entries}
+        return {"ok": True, **listings}
+
     @property
     def _dbg(self):
         return _import_debug_session()
@@ -1312,6 +1420,46 @@ if mcp:
 
 
     @mcp.tool()
+    def capesolo_upload_file(
+        filename: str,
+        data_base64: str,
+        destination: str = "desktop",
+        append: bool = False,
+        sha256: str = "",
+    ) -> dict[str, Any]:
+        """Upload a file into the analysis VM and return its guest path.
+
+        destination "desktop" (default) takes samples and accepts any extension.
+        destination "custom" writes to Desktop/custom, where CAPEsolo loads custom YARA
+        rules (.yar/.yara) and config extractors (.py, named after the YARA rule that hits);
+        only those extensions are accepted there.
+
+        For files larger than about 24 MB, split them: call once with append=False, then
+        again with append=True for each remaining chunk. Pass sha256 on the final call to
+        verify the assembled file; a mismatch discards it.
+
+        Pass the returned path to capesolo_analyze_sample to detonate an uploaded sample.
+        """
+        return manager.upload_file(
+            filename=filename,
+            data_base64=data_base64,
+            destination=destination,
+            append=append,
+            sha256=sha256,
+        )
+
+
+    @mcp.tool()
+    def capesolo_list_uploads() -> dict[str, Any]:
+        """List files on the VM Desktop and in Desktop/custom with sizes and SHA-256 hashes.
+
+        Use it to confirm a chunked upload assembled correctly, or to see which custom YARA
+        rules and extractors are currently installed.
+        """
+        return manager.list_uploads()
+
+
+    @mcp.tool()
     def capesolo_dbg_status() -> dict[str, Any]:
         """Report whether an interactive debug session is active and where it is halted."""
         return manager.debugger_status()
@@ -1488,6 +1636,7 @@ def _run_streamable_http(host: str, port: int, path: str, allowed_hosts: list[st
 
     app = mcp.streamable_http_app(
         streamable_http_path=path,
+        max_request_body_size=MAX_REQUEST_BODY_SIZE,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=allowed_hosts,
@@ -1499,7 +1648,10 @@ def _run_streamable_http(host: str, port: int, path: str, allowed_hosts: list[st
         app = BearerTokenMiddleware(app, token)
 
     log.info("MCP server listening on http://%s:%s%s (auth: %s)", host, port, path, "bearer token" if token else "none")
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    # log_config=None keeps uvicorn from installing its own colorizing formatter, which emits
+    # raw ANSI escapes on consoles without VT processing. Its loggers then propagate to the
+    # root handler and match the CAPEsolo log format.
+    uvicorn.run(app, host=host, port=port, log_level="info", log_config=None)
 
 
 def main() -> None:

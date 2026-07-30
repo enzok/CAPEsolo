@@ -21,7 +21,10 @@ which will be in the Scripts subdirectory of same location as your python.exe fi
 * An icon file is available in the CAPEsolo install folder under site-packages.
 
 Analysis results are found in C:\Users\Public\CAPEsolo\analysis.
-* Can be configured in python-path\site-packages\CAPEsolo\cfg.ini
+* Can be configured in C:\Users\Public\CAPEsolo\cfg.ini
+* Settings there override the packaged defaults in python-path\site-packages\CAPEsolo\cfg.ini,
+  and survive `pip install --upgrade CAPEsolo`, which overwrites the packaged copy.
+* Only include the keys you want to change; the rest fall back to the packaged defaults.
 
 Revert the VM after each analysis.
 
