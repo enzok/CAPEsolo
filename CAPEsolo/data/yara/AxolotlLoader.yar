@@ -22,7 +22,7 @@ rule AxolotlScanner2
         $size = {48 83 EC ?? 5? 5? 48 C7 C2 [3] 00 [0-4] 49 C7 C0 40 00 00 00 4? 8D 4C 24 [0-1] 48}
         $payload = {49 8D 4D 10 49 8D 87 [3] 00 [0-30] FF}
         $loadlibrary = {4C 6F 61 64 4C 69 62 72 61 72 79 41}
-        $kernel32 = {6B 00 65 00 72 00 6E 00 65 00 6C 00 33 00 32 00 2E 00 64 00 6C 00 6C 00}}
+        $kernel32 = {6B 00 65 00 72 00 6E 00 65 00 6C 00 33 00 32 00 2E 00 64 00 6C 00 6C 00}
     condition:
         all of them
 }
