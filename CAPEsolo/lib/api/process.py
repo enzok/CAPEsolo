@@ -174,9 +174,16 @@ class Process:
 
     def __del__(self):
         """Close open handles."""
-        if hasattr(self, "h_process") and self.h_process.value != KERNEL32.GetCurrentProcess().value:
-            KERNEL32.CloseHandle(self.h_process)
-        if hasattr(self, "h_thread") and self.h_thread:
+        # h_process is a HANDLE from __init__ but a plain int from OpenProcess/
+        # GetCurrentProcess, and None once close() has run, so read the numeric value
+        # from either form. GetCurrentProcess returns the pseudo-handle, which must
+        # never be closed.
+        current = KERNEL32.GetCurrentProcess()
+        current = getattr(current, "value", current)
+        h_process = getattr(self, "h_process", None)
+        if h_process and getattr(h_process, "value", h_process) != current:
+            KERNEL32.CloseHandle(h_process)
+        if getattr(self, "h_thread", None):
             KERNEL32.CloseHandle(self.h_thread)
 
     def fill_system_info(self):

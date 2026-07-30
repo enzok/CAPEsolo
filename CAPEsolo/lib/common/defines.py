@@ -58,6 +58,12 @@ DOUBLE = c_double
 EnumWindowsProc = WINFUNCTYPE(BOOL, HWND, LPARAM)
 EnumChildProc = WINFUNCTYPE(BOOL, HWND, LPARAM)
 
+# Without this, ctypes marshals a handle as c_int and any value above 2**31 raises
+# "OverflowError: int too long to convert" instead of being passed through. Handles
+# reach CloseHandle as plain ints from OpenProcess/GetCurrentProcess.
+KERNEL32.CloseHandle.argtypes = [HANDLE]
+KERNEL32.CloseHandle.restype = BOOL
+
 DEBUG_PROCESS = 0x00000001
 CREATE_NEW_CONSOLE = 0x00000010
 CREATE_SUSPENDED = 0x00000004
