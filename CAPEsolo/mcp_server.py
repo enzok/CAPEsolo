@@ -89,6 +89,7 @@ DEFAULT_MCP_PORT = 8000
 DEFAULT_MCP_PATH = "/mcp"
 MCP_TOKEN_ENV = "CAPESOLO_MCP_TOKEN"
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+ANALYSIS_LOG_FORMAT = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
 MAX_REQUEST_BODY_SIZE = 32 * 1024 * 1024
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 # Same expression as capelib/yaralib.py and classes/configs_panel.py; uploads must land
@@ -177,6 +178,46 @@ def _read_default_analysis_id() -> int:
         return config.getint("analysis", "id", fallback=DEFAULT_ANALYSIS_ID)
     except Exception:
         return DEFAULT_ANALYSIS_ID
+
+
+def _install_analysis_log_handler(analysis_dir: Path) -> tuple[Any, Any] | tuple[None, None]:
+    """Write analysis.log for headless runs.
+
+    In the GUI this handler is installed by LoggerWindow (classes/logger_window.py), so a
+    headless or MCP run produced no analysis.log at all. Same level and format, so the file
+    means the same thing however the analysis was started.
+    """
+    try:
+        handler = logging.FileHandler(analysis_dir / "analysis.log", encoding="utf-8")
+    except OSError:
+        log.exception("Could not open analysis.log for writing in %s", analysis_dir)
+        return None, None
+
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(logging.Formatter(ANALYSIS_LOG_FORMAT))
+
+    root = logging.getLogger()
+    # A logger filters before its handlers, so root has to pass DEBUG through for the file
+    # to receive it. Pin the existing handlers so console output keeps its current level.
+    restore = [(root, root.level)] + [(h, h.level) for h in root.handlers]
+    for existing in root.handlers:
+        if existing.level == logging.NOTSET:
+            existing.setLevel(root.level or logging.INFO)
+
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG)
+    return handler, restore
+
+
+def _remove_analysis_log_handler(handler: Any, restore: Any) -> None:
+    if not handler:
+        return
+
+    root = logging.getLogger()
+    root.removeHandler(handler)
+    for target, level in restore or []:
+        target.setLevel(level)
+    handler.close()
 
 
 def _import_debug_session():
@@ -510,6 +551,7 @@ class AnalysisJobManager:
         analyzer = None
         resultserver = None
         staged_target = None
+        log_handler, log_restore = _install_analysis_log_handler(self.analysis_dir)
         try:
             self._set_job(job_id, state="running", started_at=datetime.utcnow().isoformat())
             os.chdir(CAPESOLO_ROOT)
@@ -581,6 +623,7 @@ class AnalysisJobManager:
                 self._debugger = None
 
             _cleanup_analyzer(analyzer, resultserver)
+            _remove_analysis_log_handler(log_handler, log_restore)
 
     def wait_for_completion(self, job_id: str, timeout: int = 0, poll_interval: float = 1.0) -> dict[str, Any]:
         start = datetime.utcnow().timestamp()
