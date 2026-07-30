@@ -21,6 +21,8 @@ that did `from .theme import BG_INPUT` see the change without being reimported.
 
 import configparser
 import logging
+import os
+import sys
 
 import wx
 import wx.grid as gridlib
@@ -329,6 +331,29 @@ def apply_theme(widget):
         apply_theme(child)
 
 
+def _log_style_change(w):
+    """Trace the one call that can raise wxMSW's 'SetFocus failed with error 0x57'.
+
+    SetWindowStyleFlag makes wxMSW recreate the native control and then restore focus,
+    which fails for a control that is not currently on screen. This is the only call site
+    in the codebase that does that, so if a 0x57 follows one of these lines, the widget
+    named here is the one responsible - and if no line precedes it, the cause is elsewhere.
+
+    Written to stderr so it interleaves with wx's own message, which does not go through
+    the Python logging module or the active wx.Log target. Off unless CAPESOLO_THEME_DEBUG
+    is set.
+    """
+    # The caller already wraps this in try/except, so no guard is needed here.
+    if not os.environ.get("CAPESOLO_THEME_DEBUG"):
+        return
+    print(
+        f"[theme] SetWindowStyleFlag {type(w).__name__} name={w.GetName()!r} "
+        f"shown={w.IsShown()} onscreen={w.IsShownOnScreen()}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _style_widget(w):
     """Apply colours / font to a single widget based on its runtime type."""
     # Native Windows subtheme for scrollbars, borders, native arrows, etc.
@@ -348,6 +373,7 @@ def _style_widget(w):
             # times - the frame walks everything and each panel walks itself - so only touch
             # the style when it actually changes.
             if wanted != style:
+                _log_style_change(w)
                 w.SetWindowStyleFlag(wanted)
         except Exception:
             pass

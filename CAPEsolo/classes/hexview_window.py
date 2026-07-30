@@ -2,6 +2,7 @@ import wx
 import wx.lib.scrolledpanel as scrolled
 
 from .key_event import KeyEventHandlerMixin
+from .theme import FONT_CODE, apply_theme
 
 
 class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
@@ -33,10 +34,14 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
         hex_data = self.ReadHexData(self.filepath)
         self.DisplayHexData(hex_data)
         self.panel.SetSizer(self.vbox)
-        self.mainWindowPosition.x += self.mainWindowSize.x
-        self.SetPosition(self.mainWindowPosition)
+        # Offset a copy: the caller reuses the wx.Point it passed in, so mutating it here
+        # would silently move whatever it positions next.
+        position = wx.Point(self.mainWindowPosition)
+        position.x += self.mainWindowSize.x
+        self.SetPosition(position)
         self.panel.Layout()
         self.Layout()
+        apply_theme(self)
 
     def ReadHexData(self, filepath):
         try:
@@ -58,15 +63,19 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
         return "\n".join(lines)
 
     def DisplayHexData(self, hexdata):
-        font = wx.Font(
-            10, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL
-        )
+        # FONT_CODE rather than a locally built teletype font: apply_theme only leaves a
+        # TextCtrl's font alone when its face name is Consolas, so any other monospace font
+        # would be replaced with the proportional UI font and the columns would misalign.
+        font = FONT_CODE
+        # The dump goes in after construction. Passing it as value= makes wxMSW hand the
+        # whole string to CreateWindowEx as the window title, which fails outright for a
+        # multi-megabyte payload ("CreateWindowEx(\"EDIT\", ... title-len=10123774)").
         textCtrl = wx.TextCtrl(
             self.panel,
-            value=hexdata,
             style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL,
         )
         textCtrl.SetFont(font)
+        textCtrl.ChangeValue(hexdata)
 
         dc = wx.ClientDC(textCtrl)
         dc.SetFont(font)

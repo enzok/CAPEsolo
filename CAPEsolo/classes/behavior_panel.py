@@ -237,26 +237,22 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             self.behaviorButton.Disable()
 
     def GenerateBehavior(self, event):
-        popup = wx.ProgressDialog(
-            "Generating Behavior",
-            "Please wait...",
-            maximum=100,
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE,
-        )
-        popup.Update(0)
-        options = Options()
-        options.analysis_call_limit = 0
-        options.ram_boost = True
-        behavior = BehaviorAnalysis()
-        behavior.set_path(self.analysisDir)
-        behavior.set_options(options)
-        self.results["behavior"] = behavior.run()
-        self.LoadResultCategories()
-        self.LoadResultProcesses()
-        self.behaviorButton.Disable()
-        popup.Update(100)
-        popup.Destroy()
+        # A busy cursor rather than a PD_APP_MODAL wx.ProgressDialog. The dialog had no
+        # try/finally, so a failure in behavior.run() left an app-modal window on screen
+        # that could never be dismissed. It also only ever reported 0% and 100%, so no
+        # real progress information is lost. Matches PayloadsPanel.PayloadsReady.
+        with wx.BusyCursor():
+            options = Options()
+            options.analysis_call_limit = 0
+            options.ram_boost = True
+            behavior = BehaviorAnalysis()
+            behavior.set_path(self.analysisDir)
+            behavior.set_options(options)
+            self.results["behavior"] = behavior.run()
+            self.LoadResultCategories()
+            self.LoadResultProcesses()
+            self.behaviorButton.Disable()
+
         self.tidButton.Enable()
         self.apiFilterButton.Enable()
         self.behaviorComplete = True
@@ -281,7 +277,10 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
 
     def OnCatView(self, event):
         selectedCategory = self.categoryDropdown.GetValue()
-        if not selectedCategory or selectedCategory == "<Select process>":
+        # LoadResultCategories inserts "<Select category>"; comparing against the process
+        # placeholder meant this guard never fired and the placeholder was looked up as if
+        # it were a real category, silently displaying "No results".
+        if not selectedCategory or selectedCategory == "<Select category>":
             wx.MessageBox(
                 "Please select a category dropdown.",
                 "No Category Selected",

@@ -9,7 +9,7 @@ import wx.lib.scrolledpanel as scrolled
 from CAPEsolo.capelib.parse_pe import PortableExecutable
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
-from .theme import GRID_ROW_ALT
+from .theme import ACCENT_CYAN, FONT_BOLD, GRID_ROW_ALT, apply_theme
 
 
 class PeWindow(wx.Frame, KeyEventHandlerMixin):
@@ -27,6 +27,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         self.data = PortableExecutable(str(filepath)).run()
         self.filepath = filepath
         self.offset = []
+        self.gridTitles = []
         self.panel = scrolled.ScrolledPanel(
             self, -1, style=wx.TAB_TRAVERSAL | wx.SUNKEN_BORDER
         )
@@ -60,12 +61,20 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         self.vbox.Add(saveBtn, proportion=0, flag=wx.ALL | wx.LEFT, border=5)
 
         self.panel.SetSizer(self.vbox)
-        self.main_window_position.x += self.main_window_size.x
+        # Offset a copy: the caller reuses the wx.Point it passed in.
+        position = wx.Point(self.main_window_position)
+        position.x += self.main_window_size.x
         screenWidth, _ = wx.DisplaySize()
         self.SetSize(
             int(screenWidth * 0.98 - self.main_window_size.x), self.main_window_size.y
         )
-        self.SetPosition(self.main_window_position)
+        self.SetPosition(position)
+
+        apply_theme(self)
+        # After theming, because apply_theme resets every StaticText to the plain UI font.
+        for title in self.gridTitles:
+            title.SetFont(FONT_BOLD)
+            title.SetForegroundColour(ACCENT_CYAN)
 
     def CreateGrids(self, data):
         keyLabels = {
@@ -83,10 +92,8 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
                 continue
 
             gridTitle = wx.StaticText(self.panel, label=keyLabels[key])
-            font = wx.Font(
-                12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD
-            )
-            gridTitle.SetFont(font)
+            # Styled after apply_theme runs, which would otherwise flatten it.
+            self.gridTitles.append(gridTitle)
             self.vbox.Add(gridTitle, 0, wx.EXPAND | wx.ALL, 5)
             populate_func = getattr(self, "Populate" + key.capitalize(), None)
             if callable(populate_func):
