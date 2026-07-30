@@ -615,7 +615,14 @@ class StartPanel(wx.Panel):
             )
 
     def OnBrowse(self, event):
-        initialDir = Path(self.targetPath.GetValue()).parent if self.targetPath.GetValue() else "."
+        # Must be absolute and exist: wxFileDialog hands defaultDir to
+        # SHCreateItemFromParsingName, which rejects a relative path outright with
+        # 0x80070057. Path("sample.exe").parent is ".", so a bare filename hits this too.
+        value = self.targetPath.GetValue()
+        initialDir = Path(value).parent if value else Path(self.analysisDir)
+        initialDir = initialDir.absolute()
+        if not initialDir.is_dir():
+            initialDir = Path.cwd()
         with wx.FileDialog(
             self,
             "Choose a file",

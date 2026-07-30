@@ -13,11 +13,24 @@ class SearchDialog(wx.Dialog):
         )
         self.caseSensitive = False
         self.fullWord = False
-        if hasattr(parent, "grid"):
+        # Checked before resultsWindow: the hex view has both, and searching the whole
+        # file beats searching only the page that happens to be on screen.
+        if hasattr(parent, "FindInFile"):
+            self.hexView = parent
+            self.Finder = self.FindFile
+            self.FinderNext = self.FindFileNext
+            self.lastFileOffset = -1
+        elif hasattr(parent, "grid"):
             self.grid = parent.grid
             self.Finder = self.FindCell
             self.FinderNext = self.FindNextCell
             self.currentSearchPos = (0, 0)
+        elif hasattr(parent, "grids"):
+            self.grids = parent.grids
+            self.scrollHost = getattr(parent, "panel", None)
+            self.Finder = self.FindInGrids
+            self.FinderNext = self.FindInGridsNext
+            self.currentGridPos = (0, 0, 0)
         elif hasattr(parent, "listCtrl"):
             self.listCtrl = parent.listCtrl
             self.Finder = self.FindInList
@@ -118,6 +131,78 @@ class SearchDialog(wx.Dialog):
         textCtrl.SetSelection(self.lastFoundPos, self.lastFoundPos + searchTextLength)
         textCtrl.ShowPosition(self.lastFoundPos)
         textCtrl.Refresh()
+
+    def FindFile(self, event):
+        self.lastFileOffset = -1
+        self.SearchFile(0)
+
+    def FindFileNext(self, event):
+        self.SearchFile(self.lastFileOffset + 1)
+
+    def SearchFile(self, startOffset):
+        searchText = self.findWindow.GetValue()
+        offset = self.hexView.FindInFile(
+            searchText, self.caseSensitive, self.fullWord, startOffset
+        )
+        if offset < 0:
+            self.lastFileOffset = -1
+            wx.MessageBox(
+                "Text not found.", "Search Result", wx.OK | wx.ICON_INFORMATION
+            )
+            return
+
+        self.lastFileOffset = offset
+        self.hexView.GoToOffset(offset)
+
+    def FindInGrids(self, event):
+        self.currentGridPos = (0, 0, 0)
+        self.SearchGrids()
+
+    def FindInGridsNext(self, event):
+        self.SearchGrids()
+
+    def SearchGrids(self):
+        """Walk several grids in display order, so Find Next crosses from one to the next."""
+        searchText = self.findWindow.GetValue()
+        if not self.caseSensitive:
+            searchText = searchText.lower()
+
+        startGrid, startRow, startCol = self.currentGridPos
+        for gridIndex in range(startGrid, len(self.grids)):
+            grid = self.grids[gridIndex]
+            rows, cols = grid.GetNumberRows(), grid.GetNumberCols()
+            firstRow = startRow if gridIndex == startGrid else 0
+            for row in range(firstRow, rows):
+                firstCol = startCol if (gridIndex == startGrid and row == firstRow) else 0
+                for col in range(firstCol, cols):
+                    cellText = grid.GetCellValue(row, col)
+                    cmpText = cellText if self.caseSensitive else cellText.lower()
+                    if self.fullWord:
+                        match = searchText == cmpText
+                    else:
+                        match = searchText in cmpText
+
+                    if match:
+                        grid.SetGridCursor(row, col)
+                        grid.MakeCellVisible(row, col)
+                        grid.SelectBlock(row, col, row, col)
+                        if self.scrollHost is not None:
+                            self.scrollHost.ScrollChildIntoView(grid)
+                        nextCol = col + 1
+                        if nextCol >= cols:
+                            self.currentGridPos = (gridIndex, row + 1, 0)
+                        else:
+                            self.currentGridPos = (gridIndex, row, nextCol)
+                        if self.currentGridPos[1] >= rows:
+                            self.currentGridPos = (gridIndex + 1, 0, 0)
+                        return
+
+        wx.MessageBox(
+            f"'{self.findWindow.GetValue()}' not found.",
+            "Search Result",
+            wx.OK | wx.ICON_INFORMATION,
+        )
+        self.currentGridPos = (0, 0, 0)
 
     def SearchCells(self):
         match = False

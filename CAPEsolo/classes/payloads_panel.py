@@ -7,7 +7,7 @@ import wx.lib.scrolledpanel as scrolled
 from .custom_grid import CopyableGrid
 from .hexview_window import HexViewWindow
 from .pe_window import PeWindow
-from .theme import GRID_ROW_ALT
+from .theme import GRID_ROW_ALT, apply_theme
 from CAPEsolo.capelib.cape_utils import (
     get_cape_name_from_cape_type,
     metadata_processing,
@@ -148,6 +148,11 @@ class PayloadsPanel(wx.Panel):
                 self.panelsizer.Add(
                     grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=5
                 )
+                # These grids are built after the panel is constructed, so the usual
+                # one-shot apply_theme never reached them: they kept black default text
+                # while ApplyAlternateRowShading painted rows GRID_ROW_ALT, which is
+                # near-black. Theme first, then shade - row attributes survive it.
+                apply_theme(grid)
                 self.ApplyAlternateRowShading(grid)
 
                 buttonBox = wx.BoxSizer(wx.HORIZONTAL)
@@ -156,7 +161,13 @@ class PayloadsPanel(wx.Panel):
                 self.button_to_path[hexBtn.GetId()] = path
                 buttonBox.Add(hexBtn, 0, wx.ALIGN_LEFT | wx.ALL, 5)
 
-                if IsPEImage(path.read_bytes()[:1024], 1024):
+                # Read only the header. read_bytes()[:1024] loaded the entire payload
+                # first, so opening this tab cost a full read per file; IsPEImage never
+                # looks past PE_HEADER_LIMIT + 256 bytes. Size comes from the buffer so
+                # its "too short to be a PE" guard still works on tiny files.
+                with path.open("rb") as hfile:
+                    head = hfile.read(1024)
+                if IsPEImage(head):
                     peBtn = wx.Button(self.panel, label="PE")
                     peBtn.Bind(wx.EVT_BUTTON, self.OnShowPe)
                     self.button_to_path[peBtn.GetId()] = path
@@ -169,6 +180,9 @@ class PayloadsPanel(wx.Panel):
         self.panel.Layout()
         self.panel.Show()
         self.Layout()
+        # Covers the Hex View / PE buttons and the panel background, which were also
+        # rendering in default system colours.
+        apply_theme(self)
         self.payloadsLoaded = True
 
     def ApplyAlternateRowShading(self, grid):

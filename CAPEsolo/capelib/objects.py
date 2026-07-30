@@ -283,7 +283,11 @@ class File:
             return self.file_type
         if self.file_path:
             try:
-                if IsPEImage(self.file_data):
+                # Sniff the header only. self.file_data loads the entire artifact, and
+                # IsPEImage never looks past PE_HEADER_LIMIT + 256 bytes, so every file
+                # this ran on - PE or not - was being read in full just to answer this.
+                # A PE still loads fully below, because pefile needs the buffer.
+                if IsPEImage(next(self.get_chunks(size=1), b"")):
                     self._pefile = True
                     try:
                         self.pe = pefile.PE(data=self.file_data, fast_load=True)

@@ -28,6 +28,9 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         self.filepath = filepath
         self.offset = []
         self.gridTitles = []
+        # SearchDialog dispatches on this: without it Ctrl+F fell through to the missing
+        # resultsWindow attribute and raised AttributeError.
+        self.grids = []
         self.panel = scrolled.ScrolledPanel(
             self, -1, style=wx.TAB_TRAVERSAL | wx.SUNKEN_BORDER
         )
@@ -421,6 +424,11 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         self.ApplyAlternateRowShading(grid)
 
     def ApplyAlternateRowShading(self, grid):
+        # Every Populate* method ends here, so this is the one place that sees all seven
+        # grids; registering here keeps them in display order for Ctrl+F.
+        if grid not in self.grids:
+            self.grids.append(grid)
+
         numRows = grid.GetNumberRows()
 
         for row in range(numRows):
