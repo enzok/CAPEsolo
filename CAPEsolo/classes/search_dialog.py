@@ -2,6 +2,8 @@ import re
 
 import wx
 
+from .theme import BG_INPUT, BG_SELECT, FG_PRIMARY, FG_RED_ALERT
+
 
 class SearchDialog(wx.Dialog):
     def __init__(self, parent):
@@ -13,6 +15,7 @@ class SearchDialog(wx.Dialog):
         )
         self.caseSensitive = False
         self.fullWord = False
+        grid = getattr(parent, "grid", None)
         # Checked before resultsWindow: the hex view has both, and searching the whole
         # file beats searching only the page that happens to be on screen.
         if hasattr(parent, "FindInFile"):
@@ -20,8 +23,14 @@ class SearchDialog(wx.Dialog):
             self.Finder = self.FindFile
             self.FinderNext = self.FindFileNext
             self.lastFileOffset = -1
-        elif hasattr(parent, "grid"):
-            self.grid = parent.grid
+        # Only search the grid when it is the view actually on screen. BehaviorPanel owns
+        # both a grid and a text control and hides the grid unless a process is being
+        # shown, so preferring it unconditionally made Ctrl+F report "not found" for text
+        # plainly visible in resultsWindow. Panels with only a grid are unaffected.
+        elif grid is not None and (
+            grid.IsShown() or not hasattr(parent, "resultsWindow")
+        ):
+            self.grid = grid
             self.Finder = self.FindCell
             self.FinderNext = self.FindNextCell
             self.currentSearchPos = (0, 0)
@@ -102,34 +111,55 @@ class SearchDialog(wx.Dialog):
 
         self.HighlightText()
 
+    def ControlPos(self, index):
+        """Map an index into GetValue() to a position the control understands.
+
+        GetValue() returns "\\n"-separated text while a plain TE_MULTILINE control counts
+        "\\r\\n", so a raw string index lands one character early per preceding line and
+        highlights the wrong text. TE_RICH2 controls happen to agree, but the panels do not
+        all use it.
+        """
+        content = self.resultsWindow.GetValue()
+        line = content.count("\n", 0, index)
+        col = index - (content.rfind("\n", 0, index) + 1)
+        pos = self.resultsWindow.XYToPosition(col, line)
+        return index if pos < 0 else pos
+
     def HighlightText(self):
         if self.lastFoundPos != -1:
             searchText = self.findWindow.GetValue()
             searchTextLength = len(searchText)
             textCtrl = self.resultsWindow
-            backgroundColor = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW)
-            textCtrl.SetStyle(self.lastFoundPos, self.lastFoundPos + searchTextLength, wx.TextAttr("red", backgroundColor))
-            textCtrl.ShowPosition(self.lastFoundPos)
-            wx.CallLater(5000, self.ResetHighlight, textCtrl, self.lastFoundPos, searchTextLength)
-            textCtrl.SetInsertionPoint(self.lastFoundPos)
+            start = self.ControlPos(self.lastFoundPos)
+            # Theme tokens, not wx.SystemSettings: those return the OS colours (#FFFFFF /
+            # #000000) whatever palette is active, so a match used to be painted as a white
+            # block inside a dark control and the reset below left it black on white.
+            textCtrl.SetStyle(
+                start,
+                start + searchTextLength,
+                wx.TextAttr(FG_RED_ALERT, BG_SELECT),
+            )
+            textCtrl.ShowPosition(start)
+            wx.CallLater(5000, self.ResetHighlight, textCtrl, start, searchTextLength)
+            textCtrl.SetInsertionPoint(start)
             textCtrl.SetFocus()
         else:
             wx.MessageBox("Text not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
 
     def ResetHighlight(self, textCtrl, start, length):
-        textColor = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT)
-        backgroundColor = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW)
+        # start is already a control position, converted by HighlightText.
         textCtrl.SetStyle(
             start,
             start + length,
-            wx.TextAttr(textColor, backgroundColor),
+            wx.TextAttr(FG_PRIMARY, BG_INPUT),
         )
         textCtrl.Refresh()
         textCtrl.Update()
 
     def SetSelection(self, textCtrl, searchTextLength):
-        textCtrl.SetSelection(self.lastFoundPos, self.lastFoundPos + searchTextLength)
-        textCtrl.ShowPosition(self.lastFoundPos)
+        start = self.ControlPos(self.lastFoundPos)
+        textCtrl.SetSelection(start, start + searchTextLength)
+        textCtrl.ShowPosition(start)
         textCtrl.Refresh()
 
     def FindFile(self, event):
@@ -186,7 +216,7 @@ class SearchDialog(wx.Dialog):
                         grid.SetGridCursor(row, col)
                         grid.MakeCellVisible(row, col)
                         grid.SelectBlock(row, col, row, col)
-                        if self.scrollHost is not None:
+                        if hasattr(self.scrollHost, "ScrollChildIntoView"):
                             self.scrollHost.ScrollChildIntoView(grid)
                         nextCol = col + 1
                         if nextCol >= cols:
