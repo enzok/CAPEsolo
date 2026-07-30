@@ -54,28 +54,30 @@ class PayloadsPanel(wx.Panel):
         grid.EnableEditing(False)
 
     def AddNewRow(self, grid, value0, value1):
+        # Values come straight from the analysis JSON, where pid, target_pid,
+        # virtual_address and most fileinfo entries are numbers rather than strings.
+        # SetCellValue only accepts strings and raises TypeError otherwise.
         current_row = grid.GetNumberRows()
         grid.AppendRows(1)
-        grid.SetCellValue(current_row, 0, value0)
-        grid.SetCellValue(current_row, 1, value1)
+        grid.SetCellValue(current_row, 0, "" if value0 is None else str(value0))
+        grid.SetCellValue(current_row, 1, "" if value1 is None else str(value1))
 
     def PayloadsReady(self):
         if JsonPathExists(self.analysisDir):
             self.jsonFileExists = True
-            self.LoadAndDisplayContent()
+            # A busy cursor rather than the previous wx.ProgressDialog: that dialog was
+            # PD_APP_MODAL, so it took focus and, being destroyed during the notebook page
+            # change, left wx restoring focus to a window that was no longer valid - which
+            # is where the 'SetFocus' failed with error 0x00000057 messages came from. It
+            # also only ever reported 0% and 100%, so it showed no real progress, and the
+            # "error" path below returned without ever destroying it.
+            with wx.BusyCursor():
+                self.LoadAndDisplayContent()
 
     def LoadAndDisplayContent(self):
         if self.payloadsLoaded or not self.jsonFileExists:
             return
 
-        popup = wx.ProgressDialog(
-            "Loading payloads",
-            "Please wait...",
-            maximum=100,
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE,
-        )
-        popup.Update(0)
         data = LoadFilesJson(self.analysisDir)
         if "error" in data:
             return
@@ -165,8 +167,6 @@ class PayloadsPanel(wx.Panel):
                 self.panelsizer.AddSpacer(5)
 
         self.panel.Layout()
-        popup.Update(100)
-        popup.Destroy()
         self.panel.Show()
         self.Layout()
         self.payloadsLoaded = True

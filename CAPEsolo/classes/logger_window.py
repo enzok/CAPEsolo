@@ -41,7 +41,9 @@ class LoggerWindow(wx.Frame, KeyEventHandlerMixin):
         copyPathBtn.Bind(wx.EVT_BUTTON, self.OnCopyPath)
         vbox.Add(copyPathBtn, proportion=0, flag=wx.ALL | wx.CENTER, border=5)
         panel.SetSizer(vbox)
-        apply_theme(panel)
+        # Theme the frame, not just the panel: apply_window_theme only fires for a wx.Frame,
+        # so themeing the panel alone left the title bar light while the app was dark.
+        apply_theme(self)
 
         fileHandler = logging.FileHandler(self.analysisLogPath)
         wxHandler = WxTextCtrlHandler(self.resultsWindow)
@@ -51,12 +53,15 @@ class LoggerWindow(wx.Frame, KeyEventHandlerMixin):
             format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         )
 
-        self.mainWindowPosition.x += self.mainWindowSize.x
+        # Offset a copy rather than the caller's wx.Point: the caller reuses the object it
+        # passed in, so mutating it here would silently move whatever it positions next.
+        position = wx.Point(self.mainWindowPosition)
+        position.x += self.mainWindowSize.x
         screenWidth, _ = wx.DisplaySize()
         self.SetSize(
             int(screenWidth * 0.98 - self.mainWindowSize.x), self.mainWindowSize.y
         )
-        self.SetPosition(self.mainWindowPosition)
+        self.SetPosition(position)
 
     def OnCopyPath(self, event):
         if wx.TheClipboard.Open():

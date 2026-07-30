@@ -13,7 +13,7 @@ from CAPEsolo.capelib.cmdconsts import *
 from .patch_dialog import ConfirmPatchDialog, PatchDialog, PatchHistoryDialog
 from .patch_models import PatchEntry
 from .search_dialog import SearchDialog
-from .theme import ACCENT_ERROR, ACCENT_GREEN, ACCENT_ORANGE, BG_INPUT
+from .theme import ACCENT_CALL, ACCENT_ERROR, ACCENT_GREEN, ACCENT_JUMP, ACCENT_ORANGE, BG_INPUT
 
 log = logging.getLogger(__name__)
 
@@ -122,9 +122,9 @@ class DisassemblyListCtrl(wx.ListCtrl):
                     self.SetItem(row, 2, inst.text)
                     mnemonic = inst.text.split()[0].lower()
                     if mnemonic == "call":
-                        self.SetItemTextColour(row, wx.BLUE)
+                        self.SetItemTextColour(row, ACCENT_CALL)
                     elif mnemonic in ("jmp", "je", "jne", "jg", "jl"):
-                        self.SetItemTextColour(row, wx.GREEN)
+                        self.SetItemTextColour(row, ACCENT_JUMP)
 
                     if inst.address in self.parent.patchHistoryByAddr:
                         self.SetItemFont(row, fontItalic)

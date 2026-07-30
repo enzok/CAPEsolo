@@ -78,7 +78,15 @@ class LogServerThread(Thread):
 
             # got an entire message, send it off to the resultserver
             if data:
-                self.resultserver_socket.sendall(data)
+                try:
+                    self.resultserver_socket.sendall(data)
+                except OSError as e:
+                    # The result server closes at the end of the analysis while monitored
+                    # processes can still be logging, so losing this socket is an expected
+                    # end-of-run condition rather than a failure worth a traceback.
+                    log.debug("Log forwarding stopped, result server closed: %s", e)
+                    self.do_run = False
+                    return
 
     def run(self):
         """Create and run Log Server.

@@ -26,5 +26,9 @@ pre_script = False
 during_script = False
 filecollector = True
 windows_static_route = False
+; Largest file the analyzer will send to the ResultServer. Bigger files are trimmed when
+; enable_trim is set and they are PE images, otherwise skipped with a warning.
 upload_max_size = 300000000
+; Set to 1 to ignore upload_max_size and send everything.
+;do_upload_max_size = 0
 syscall = 1

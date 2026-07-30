@@ -11,6 +11,7 @@ from .debugger_panel import DebuggerPanel
 from .payloads_panel import PayloadsPanel
 from .process_yara import ProcessYara
 from .start_panel import StartPanel
+from .status_bar import AnalysisStatusBar
 from .strings_panel import StringsPanel
 from .target_info import TargetInfoPanel
 from .yara_panel import YaraPanel
@@ -97,9 +98,12 @@ class MainFrame(wx.Frame):
         self.notebook.AddPage(self.debuggerTab, "Debugger")
         self.notebook.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.OnNotebookPageChanged)
 
-        # Layout
-        sizer = wx.BoxSizer()
+        # Layout. Vertical so the status bar can dock beneath the notebook; with a single
+        # proportion-1 EXPAND child this lays out identically to the previous default.
+        sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(self.notebook, 1, wx.EXPAND)
+        self.statusBar = AnalysisStatusBar(self.panel)
+        sizer.Add(self.statusBar, 0, wx.EXPAND)
 
         self.panel.SetSizer(sizer)
         self.SetBackgroundColour(BG_MAIN)

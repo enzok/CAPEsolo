@@ -17,15 +17,20 @@ log = logging.getLogger(__name__)
 
 BUFSIZE = 1024 * 1024
 
+# Config only sets attributes for keys present in analysis.conf and defines no __getattr__,
+# so reading this directly raised AttributeError for every file over upload_max_size - the
+# one case the guard exists to handle. Resolved once here, defaulting to enforcing the cap.
+DO_UPLOAD_MAX_SIZE = bool(getattr(config, "do_upload_max_size", False))
+
 
 def get_upload_size(path):
     size = Path(path).stat().st_size
-    if int(config.upload_max_size) < size and not config.do_upload_max_size:
+    if int(config.upload_max_size) < size and not DO_UPLOAD_MAX_SIZE:
         if config.enable_trim and is_pe_image(path):
             new_size = pe_trimmed_size(path)
             if new_size:
                 size = new_size
-                if int(config.upload_max_size) < size and not config.do_upload_max_size:
+                if int(config.upload_max_size) < size and not DO_UPLOAD_MAX_SIZE:
                     log.warning(
                         "PE File %s size is too big: %d, trim failed to bring size down",
                         path,
@@ -94,7 +99,7 @@ def upload_buffer_to_host(
 ):
     size = len(buffer)
     log.info("Uploading buffer to %s; Size: %d", dump_path, size)
-    if int(config.upload_max_size) < size and not config.do_upload_max_size:
+    if int(config.upload_max_size) < size and not DO_UPLOAD_MAX_SIZE:
         log.warning("Buffer is too big: %d; max size: %d", size, config.upload_max_size)
         return
     try:

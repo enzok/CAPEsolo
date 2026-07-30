@@ -73,17 +73,31 @@ class YaraProcessor(object):
         if not isinstance(yara_string, bytes):
             return yara_string
 
+        def as_hex(raw):
+            # yara_string = binascii.hexlify(yara_string.lstrip("uU")).upper()
+            raw = binascii.hexlify(raw).upper()
+            raw = b" ".join(raw[i : i + 2] for i in range(0, len(raw), 2))
+            return f"{{ {raw.decode()} }}"
+
         try:
             new = yara_string.decode()
         except UnicodeDecodeError:
-            # yara_string = binascii.hexlify(yara_string.lstrip("uU")).upper()
-            yara_string = binascii.hexlify(yara_string).upper()
-            yara_string = b" ".join(
-                yara_string[i : i + 2] for i in range(0, len(yara_string), 2)
-            )
-            new = f"{{ {yara_string.decode()} }}"
+            return as_hex(yara_string)
 
-        return new
+        if "\x00" not in new:
+            return new
+
+        # A `wide` match hands back UTF-16LE, and for ASCII text every one of those bytes is
+        # below 0x80, so the UTF-8 decode above *succeeds* and yields embedded NULs instead
+        # of raising. Those NULs terminate the native text control the results are shown in,
+        # silently truncating the rest of the report, so they must never reach a caller.
+        try:
+            wide = yara_string.decode("utf-16-le")
+        except UnicodeDecodeError:
+            return as_hex(yara_string)
+
+        # Not actually UTF-16LE text, just binary that happened to decode - keep it as hex.
+        return wide if "\x00" not in wide else as_hex(yara_string)
 
     def add_rules(self, directory, category):
         """

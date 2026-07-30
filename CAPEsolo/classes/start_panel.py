@@ -21,7 +21,6 @@ from .html_report import ReportHTML
 from .key_event import EVT_ANALYZER_COMPLETE, EVT_ANALYZER_COMPLETE_ID
 from .logger_window import LoggerWindow
 from .theme import apply_theme
-from .timer_window import CountdownTimer
 
 log = logging.getLogger(__name__)
 
@@ -117,7 +116,6 @@ class StartPanel(wx.Panel):
         self.capesoloRoot = parent.capesoloRoot
         self.targetFile = GetPreviousTarget(self.analysisDir)
         self.parent.targetFile = self.targetFile
-        self.timer = None
         self.idbg = False
         self.dbgConsole = None
         self.InitUi()
@@ -508,7 +506,7 @@ class StartPanel(wx.Panel):
         files.dump_files()
         upload_files("debugger")
         upload_files("tlsdump")
-        self.timer.Stop()
+        self.GetMainFrame().statusBar.Finish("Analysis complete")
         self.log("Shutting down")
         try:
             if hasattr(self.analyzer, "command_pipe"):
@@ -659,8 +657,7 @@ class StartPanel(wx.Panel):
             if self.idbg:
                 self.dbgConsole = DebugConsole(self, "Debug Console", position, size)
                 self.dbgConsole.launch()
-            timerWindow = CountdownTimer(self, self.countdown, position, size)
-            timerWindow.Show()
+            mainFrame.statusBar.StartCountdown(self.countdown)
             self.StartAnalyzerThread(self.analyzer)
             self.terminateAnalyzerBtn.Enable()
             # os.unlink(ANALYSIS_CONF)

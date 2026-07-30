@@ -71,7 +71,10 @@ class YaraPanel(wx.Panel):
 
         self.yara.ScanPayloads()
         content = self.PrintResults()
-        self.resultsWindow.SetValue(content)
+        # A NUL terminates the native text control, dropping everything after it with no
+        # error anywhere. _yara_encode_string should already prevent this; the guard stays
+        # because losing the rest of the report is silent when it does happen.
+        self.resultsWindow.SetValue(content.replace("\x00", ""))
         self.yaraButton.Disable()
         self.yaraComplete = True
 
