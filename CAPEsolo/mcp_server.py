@@ -1,6 +1,7 @@
 import argparse
 import base64
 import configparser
+import copy
 import hashlib
 import hmac
 import logging
@@ -42,7 +43,7 @@ from CAPEsolo.capelib.resultserver import ResultServer
 from CAPEsolo.capelib.utils import sanitize_filename
 from CAPEsolo.capelib.utils import LoadFilesJson
 from CAPEsolo.classes.html_report import ReportHTML
-from CAPEsolo.classes.json_report import GetResults
+from CAPEsolo.classes.json_report import GetResults, WriteJsonFile
 from CAPEsolo.lib.common.hashing import hash_file
 from CAPEsolo.utils.update_yara import UpdateYara
 
@@ -287,8 +288,55 @@ def _build_analysis_conf(
     return conf
 
 
+def _option_keys(options: str) -> set[str]:
+    """Option names from a comma-separated 'key=value' analyzer option string."""
+    keys = set()
+    for item in (options or "").split(","):
+        name = item.split("=", 1)[0].strip().lower()
+        if name:
+            keys.add(name)
+    return keys
+
+
+def _check_undrivable_options(options: str, interactive_debug: bool) -> str:
+    """Reject options that halt the analyzer with nothing able to release it.
+
+    idbg puts the sample under the CAPEsolo debugger, but only the interactive_debug flag
+    makes _run_job attach a DebuggerSession for the capesolo_dbg_* tools to drive. Passing
+    the option alone leaves the sample stopped at its first breakpoint until the timeout,
+    so the flag and the option are not allowed to disagree.
+    """
+    if "idbg" in _option_keys(options) and not interactive_debug:
+        return (
+            "idbg in options starts the debugger with nothing attached to drive it. "
+            "Pass interactive_debug=true instead, which wires up the capesolo_dbg_* tools."
+        )
+    return ""
+
+
+def _warn_unattended_options(options: str) -> None:
+    """manual/interactive wait for a human to launch the sample.
+
+    Not refused - an operator can still drive the guest desktop - but a caller that expects
+    an unattended run would otherwise just see it stall until the timeout.
+    """
+    waiting = _option_keys(options) & {"manual", "interactive"}
+    if waiting:
+        log.warning(
+            "Options %s wait for someone to launch the sample in the guest; an unattended "
+            "run will stall until the timeout expires.",
+            ", ".join(sorted(waiting)),
+        )
+
+
 def _cleanup_analyzer(analyzer: Any, resultserver: ResultServer | None) -> None:
-    from CAPEsolo.analyzer import Files, disconnect_logger, disconnect_pipes, upload_files
+    from CAPEsolo.analyzer import (
+        INJECT_LIST,
+        Files,
+        disconnect_logger,
+        disconnect_pipes,
+        upload_files,
+    )
 
     try:
         files = Files()
@@ -315,6 +363,11 @@ def _cleanup_analyzer(analyzer: Any, resultserver: ResultServer | None) -> None:
         disconnect_logger()
     except Exception:
         log.exception("Failed disconnecting analyzer pipes/logger")
+
+    # The GUI reports these (start_panel.OnAnalyzerComplete); without them a headless run
+    # that failed to hook its processes is indistinguishable from a clean one.
+    for pid in INJECT_LIST:
+        log.warning("Monitor injection attempted but failed for process %s", pid)
 
     if resultserver:
         try:
@@ -430,6 +483,11 @@ class AnalysisJobManager:
         )
         if not valid:
             return {"accepted": False, "error": error}
+
+        conflict = _check_undrivable_options(options, interactive_debug)
+        if conflict:
+            return {"accepted": False, "error": conflict}
+        _warn_unattended_options(options)
 
         if interactive_debug:
             options = f"{options},idbg=1" if options else "idbg=1"
@@ -646,6 +704,19 @@ class AnalysisJobManager:
         enforce_timeout: bool = False,
         run_from_current_directory: bool = True,
     ) -> dict[str, Any]:
+        # Fire-and-wait, used by `capesolo --headless-analyze`. There is no channel back to
+        # a debugger client here, so interactive debugging is refused rather than exposed:
+        # deliberately no interactive_debug parameter, and idbg in options is rejected.
+        if "idbg" in _option_keys(options):
+            return {
+                "accepted": False,
+                "error": (
+                    "Interactive debugging is not available in headless mode - nothing can "
+                    "drive the debugger, so the sample would stall at its first breakpoint. "
+                    "Use the MCP server with interactive_debug=true instead."
+                ),
+            }
+
         submitted = self.submit(
             sample_path=sample_path,
             package=package,
@@ -877,7 +948,48 @@ class AnalysisJobManager:
             logs.append({"path": str(analysis_log), "size": analysis_log.stat().st_size})
         return {"found": True, "ready": True, "debug_logs": logs}
 
-    def get_results(self, job_id: str, include_strings: bool = True) -> dict[str, Any]:
+    @staticmethod
+    def _strip_strings(results: dict[str, Any]) -> dict[str, Any]:
+        stripped = copy.deepcopy(results)
+        if "target" in stripped:
+            stripped["target"].pop("strings", None)
+        for payload in stripped.get("payloads", []):
+            for data in payload.values():
+                data.pop("strings", None)
+        return stripped
+
+    def _compute_results(self, job_id: str, include_strings: bool) -> Any:
+        """Build the report once per job and reuse it.
+
+        GetResults re-runs the full YARA scan and string extraction over the target and
+        every payload, so asking for JSON and HTML used to pay that cost twice. The
+        analysis directory no longer changes once a job completes, so the report cannot go
+        stale and is safe to cache.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            full = job.get("_results_full")
+            lean = job.get("_results_nostrings")
+            target_file = job.get("target_file")
+            analysis_dir = job.get("analysis_dir")
+
+        if full is not None:
+            return full if include_strings else self._strip_strings(full)
+        if not include_strings and lean is not None:
+            return lean
+
+        results = GetResults(
+            Path(target_file), analysis_dir, False, includeStrings=include_strings
+        )
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is not None:
+                job["_results_full" if include_strings else "_results_nostrings"] = results
+        return results
+
+    def get_results(
+        self, job_id: str, include_strings: bool = True, write_file: bool = False
+    ) -> dict[str, Any]:
         valid, job_id, error = self._validate_job_id(job_id)
         if not valid:
             return {"found": False, "error": error}
@@ -887,21 +999,24 @@ class AnalysisJobManager:
                 return {"found": False, "error": f"Job not found: {job_id}"}
             state = job.get("state")
             target_file = job.get("target_file")
-            analysis_dir = job.get("analysis_dir")
 
         if state != "completed":
             return {"found": True, "ready": False, "state": state}
         if not target_file:
             return {"found": True, "ready": False, "state": state, "error": "No target_file recorded for job"}
 
-        results = GetResults(Path(target_file), analysis_dir, False)
-        if not include_strings:
-            if "target" in results:
-                results["target"].pop("strings", None)
-            for payload in results.get("payloads", []):
-                for data in payload.values():
-                    data.pop("strings", None)
-        return {"found": True, "ready": True, "state": state, "results": results}
+        results = self._compute_results(job_id, include_strings)
+        payload = {"found": True, "ready": True, "state": state, "results": results}
+
+        if write_file:
+            # Same writer the GUI's JSON button uses, so the artifact lands in the same
+            # place (~/Desktop/report.json) rather than somewhere headless-specific.
+            written, err = WriteJsonFile(results)
+            payload["written"] = bool(written)
+            payload["report_path"] = str(Path(os.path.expanduser("~/Desktop")) / "report.json")
+            if not written:
+                payload["write_error"] = str(err)
+        return payload
 
     def render_html_report(self, job_id: str) -> dict[str, Any]:
         valid, job_id, error = self._validate_job_id(job_id)
@@ -920,7 +1035,9 @@ class AnalysisJobManager:
         if not target_file:
             return {"found": True, "ready": False, "state": state, "error": "No target_file recorded for job"}
 
-        results = GetResults(Path(target_file), analysis_dir, False)
+        # Shares the cache with get_results, so requesting both no longer runs YARA and
+        # string extraction over every payload twice.
+        results = self._compute_results(job_id, include_strings=True)
         report = ReportHTML()
         completed, msg = report.run(analysis_dir, str(CAPESOLO_ROOT), results)
         return {"found": True, "ready": True, "state": state, "completed": completed, "message": str(msg) if msg else ""}
@@ -1427,8 +1544,19 @@ if mcp:
 
 
     @mcp.tool()
-    def capesolo_get_results(job_id: str, include_strings: bool = True) -> dict[str, Any]:
-        return manager.get_results(job_id, include_strings=include_strings)
+    def capesolo_get_results(
+        job_id: str, include_strings: bool = True, write_file: bool = False
+    ) -> dict[str, Any]:
+        """Full analysis report: target, behavior, signatures, payloads, yara, configs.
+
+        Computed once per job and cached, so calling this and capesolo_render_html_report
+        does not rescan. include_strings=False skips string extraction rather than
+        discarding it afterwards. write_file also saves the report the way the GUI's JSON
+        button does.
+        """
+        return manager.get_results(
+            job_id, include_strings=include_strings, write_file=write_file
+        )
 
 
     @mcp.tool()

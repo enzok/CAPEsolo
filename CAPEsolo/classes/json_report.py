@@ -120,7 +120,12 @@ def GetYara(yara, path):
     return None
 
 
-def GetResults(targetFile, analysisDir, writeFile=True):
+def GetResults(targetFile, analysisDir, writeFile=True, includeStrings=True):
+    """Build the full analysis report.
+
+    includeStrings=False skips string extraction entirely rather than extracting and then
+    discarding: it is the expensive part on an analysis with many payloads.
+    """
     results = {}
     results["target"] = TargetInfo(targetFile)
     results["behavior"] = BehaviorResults(analysisDir)
@@ -134,9 +139,10 @@ def GetResults(targetFile, analysisDir, writeFile=True):
     if yaraData:
         results["target"]["yara"] = yaraData
 
-    extracted = extract_strings(str(targetFile), dedup=True, minchars=4)
-    if extracted:
-        results["target"]["strings"] = sorted(list(set(extracted)), key=lambda x: (len(x), x))
+    if includeStrings:
+        extracted = extract_strings(str(targetFile), dedup=True, minchars=4)
+        if extracted:
+            results["target"]["strings"] = sorted(list(set(extracted)), key=lambda x: (len(x), x))
 
     for payload in results.get("payloads", []):
         for path in payload.keys():
@@ -146,9 +152,10 @@ def GetResults(targetFile, analysisDir, writeFile=True):
             if yaraData:
                 payload[path]["yara"] = yaraData
 
-            extracted = extract_strings(path, dedup=True, minchars=4)
-            if extracted:
-                payload[path]["strings"] = sorted(list(set(extracted)), key=lambda x: (len(x), x))
+            if includeStrings:
+                extracted = extract_strings(path, dedup=True, minchars=4)
+                if extracted:
+                    payload[path]["strings"] = sorted(list(set(extracted)), key=lambda x: (len(x), x))
 
     results["configs"], results["detections"] = Configs(yara.yara_results, analysisDir)
     if writeFile:

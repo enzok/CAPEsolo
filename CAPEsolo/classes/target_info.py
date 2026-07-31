@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import wx
 import wx.grid as gridlib
 
@@ -13,6 +15,9 @@ class TargetInfoPanel(wx.Panel):
         self.parent = parent
         self.infoLoaded = False
         self.peData = {}
+        # Whatever the grid is currently describing, which the PE button acts on. Not
+        # necessarily the analysis target: Get Info can show an arbitrary file.
+        self.displayedFile = None
         self.InitUI()
 
     def InitUI(self):
@@ -36,10 +41,20 @@ class TargetInfoPanel(wx.Panel):
         self.grid.SetColAttr(1, leftAttr1)
         self.grid.EnableEditing(False)
         vbox.Add(self.grid, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
+
+        hboxButtons = wx.BoxSizer(wx.HORIZONTAL)
+        self.getInfoButton = wx.Button(self, label="Get Info")
+        self.getInfoButton.SetToolTip(
+            "Inspect the file currently selected on the Start tab. Display only - the "
+            "file is not copied, analysed or recorded."
+        )
+        self.getInfoButton.Bind(wx.EVT_BUTTON, self.OnGetInfo)
+        hboxButtons.Add(self.getInfoButton, proportion=0, flag=wx.RIGHT, border=5)
         self.peButton = wx.Button(self, label="PE")
         self.peButton.Bind(wx.EVT_BUTTON, self.OnShowPe)
         self.peButton.Hide()
-        vbox.Add(self.peButton, proportion=0, flag=wx.LEFT, border=5)
+        hboxButtons.Add(self.peButton, proportion=0)
+        vbox.Add(hboxButtons, proportion=0, flag=wx.LEFT | wx.BOTTOM, border=5)
 
         self.SetSizer(vbox)
         apply_theme(self)
@@ -50,13 +65,17 @@ class TargetInfoPanel(wx.Panel):
         self.grid.SetCellValue(current_row, 0, value0)
         self.grid.SetCellValue(current_row, 1, value1)
 
-    def LoadAndDisplayContent(self):
-        self.targetFile = self.parent.targetFile
-        if self.infoLoaded or not self.targetFile:
-            return
-        fileObj = File(str(self.targetFile))
+    def ClearGrid(self):
+        rows = self.grid.GetNumberRows()
+        if rows:
+            self.grid.DeleteRows(0, rows)
+
+    def PopulateGrid(self, path):
+        """Render file info for *path*. Nothing is written anywhere."""
+        self.ClearGrid()
+        fileObj = File(str(path))
         fileinfo = fileObj.get_all()[0]
-        self.AddNewRow("Path", str(self.targetFile))
+        self.AddNewRow("Path", str(path))
         for key, value in fileinfo.items():
             if key not in "path" and value:
                 if not isinstance(value, str):
@@ -68,9 +87,49 @@ class TargetInfoPanel(wx.Panel):
         self.grid.SetColSize(0, 120)
         self.grid.AutoSizeRows()
         self.ApplyAlternateRowShading()
+        self.displayedFile = Path(path)
         self.peButton.Show()
         self.Layout()
+
+    def LoadAndDisplayContent(self):
+        self.targetFile = self.parent.targetFile
+        if self.infoLoaded or not self.targetFile:
+            return
+        self.PopulateGrid(self.targetFile)
         self.infoLoaded = True
+
+    def OnGetInfo(self, event):
+        """Show info for the file selected on the Start tab, without touching it.
+
+        Deliberately does not set parent.targetFile, copy the file into the analysis
+        directory or record anything: this is a look, not a submission. infoLoaded is
+        left alone so a later analysis still replaces this with the real target's info.
+        """
+        startTab = getattr(self.GetMainFrame(), "startTab", None)
+        selected = startTab.targetPath.GetValue().strip() if startTab else ""
+        if not selected:
+            wx.MessageBox(
+                "No target file selected. Choose one on the Start tab first.",
+                "No Target",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            return
+
+        path = Path(selected)
+        if not path.is_file():
+            wx.MessageBox(
+                f"Not a readable file:\n{path}", "Error", wx.OK | wx.ICON_ERROR
+            )
+            return
+
+        try:
+            # get_all() hashes the whole file, so a large sample takes a moment.
+            with wx.BusyCursor():
+                self.PopulateGrid(path)
+        except Exception as e:
+            wx.MessageBox(
+                f"Failed to read file info: {e}", "Error", wx.OK | wx.ICON_ERROR
+            )
 
     def ApplyAlternateRowShading(self):
         numRows = self.grid.GetNumberRows()
@@ -87,8 +146,9 @@ class TargetInfoPanel(wx.Panel):
             main_frame = self.GetMainFrame()
             size = main_frame.GetSize()
             position = main_frame.GetPosition()
+            # displayedFile, not targetFile: the grid may be showing an ad-hoc file.
             viewer_window = PeWindow(
-                self, f"{str(self.targetFile)}", self.targetFile, position, size
+                self, f"{str(self.displayedFile)}", self.displayedFile, position, size
             )
             viewer_window.Show()
         except Exception as e:

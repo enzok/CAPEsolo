@@ -112,7 +112,10 @@ def main():
         parser.add_argument(
             "--options",
             default="",
-            help="Comma-separated analyzer options for headless mode",
+            help=(
+                "Comma-separated analyzer options for headless mode. "
+                "idbg is rejected: interactive debugging needs the MCP server."
+            ),
         )
         parser.add_argument(
             "--timeout",
@@ -133,7 +136,12 @@ def main():
         parser.add_argument(
             "--headless-json",
             action="store_true",
-            help="Print JSON analysis results on successful headless completion",
+            help="Also print the JSON report to stdout (it is written to disk regardless)",
+        )
+        parser.add_argument(
+            "--no-report",
+            action="store_true",
+            help="Skip report generation entirely on headless completion",
         )
 
         args = parser.parse_args()
@@ -150,6 +158,20 @@ def main():
                 return 1
 
             manager = AnalysisJobManager()
+            # Refuse before anything is staged or detonated, so the operator gets the
+            # reason immediately rather than watching a job stall to its timeout.
+            if "idbg" in {
+                opt.split("=", 1)[0].strip().lower()
+                for opt in (args.options or "").split(",")
+                if opt.strip()
+            }:
+                print(
+                    "Interactive debugging is not available in headless mode - there is no "
+                    "channel to drive the debugger, so the sample would stall at its first "
+                    "breakpoint. Use the MCP server with interactive_debug=true instead."
+                )
+                return 1
+
             run = manager.run_single(
                 sample_path=args.headless_analyze,
                 package=args.package,
@@ -172,9 +194,20 @@ def main():
                     print(status["error"])
                 return 1
 
-            if args.headless_json:
-                results = manager.get_results(job_id=job_id, include_strings=True)
-                print(json.dumps(results, indent=2))
+            # Report by default: the VM is reverted after a run, so finishing with nothing
+            # but a job id throws the analysis away. stdout stays quiet unless asked,
+            # because the report embeds strings for the target and every payload.
+            if not args.no_report:
+                results = manager.get_results(
+                    job_id=job_id, include_strings=True, write_file=True
+                )
+                if results.get("written"):
+                    print(f"report={results.get('report_path')}")
+                else:
+                    print(f"report write failed: {results.get('write_error', 'unknown error')}")
+
+                if args.headless_json:
+                    print(json.dumps(results.get("results", {}), indent=2))
 
             if args.headless_html_report:
                 report = manager.render_html_report(job_id=job_id)

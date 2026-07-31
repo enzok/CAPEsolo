@@ -189,15 +189,109 @@ class StartPanel(wx.Panel):
         )
         hboxTimeout.Add(self.timeoutInput, flag=wx.ALIGN_CENTER_VERTICAL)
         hboxTimeout.Add(msLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
-        self.minhook = wx.CheckBox(self, label="minhook")
-        self.minhook.Bind(wx.EVT_CHECKBOX, self.OnMinhookChecked)
+        # Hooking mode. Grouped under a label rather than trailing the timeout controls,
+        # so it is clear these two select how much of the monitor is installed. Note that
+        # minhook is a capemon option while free is handled analyzer-side
+        # (lib/common/abstracts.py), despite sitting together here.
+        hboxHooking = wx.BoxSizer(wx.HORIZONTAL)
+        hboxHooking.Add(
+            wx.StaticText(self, label="Hooking:"),
+            flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL,
+            border=5,
+        )
+        # capemon picks the hook set with a single else-if chain (hooks.c), so these are
+        # mutually exclusive: minhook wins over zerohook, which wins over native, and
+        # ticking two would silently ignore one. Radio buttons rather than checkboxes so
+        # the UI cannot express a combination the monitor will not honour. "full" is
+        # capemon's default and emits no option at all.
+        self.hookSets = []
+        for index, (label, option, tip) in enumerate(
+            (
+                ("full", "", "Full hook set (capemon default)"),
+                ("minhook", "minhook", "Minimal hook set"),
+                ("zerohook", "zerohook", "All hooks disabled except the essential ones"),
+                ("native", "native", "Native hooks only (ntdll)"),
+            )
+        ):
+            style = wx.RB_GROUP if index == 0 else 0
+            radio = wx.RadioButton(self, label=label, style=style)
+            radio.SetToolTip(tip)
+            self.hookSets.append((radio, option))
+            hboxHooking.Add(radio, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10)
+
+        hboxHooking.AddSpacer(10)
         self.free = wx.CheckBox(self, label="free")
-        self.free.Bind(wx.EVT_CHECKBOX, self.OnZerohookChecked)
+        self.free.SetToolTip(
+            "Run without the monitor at all (handled by the analyzer, not capemon)"
+        )
+        self.free.Bind(wx.EVT_CHECKBOX, self.OnFreeChecked)
+        hboxHooking.Add(self.free, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+
+        # Monitor logging switches. Laid out as a fixed two-row grid rather than a
+        # WrapSizer: wrapping gave no vertical gap between the lines it created (so they
+        # collided), stretched whichever control landed last on a line, and left the level
+        # dropdowns vertically offset from their checkboxes. The label sits in its own
+        # grid column so the second row aligns under the first without measuring fonts.
+        # log-bps is an alias of log-breakpoints, so only one of the pair is offered.
+        gridLogging = wx.FlexGridSizer(rows=2, cols=2, hgap=12, vgap=6)
+        # capemon reads log-exceptions and force-flush with atoi() and tests them against
+        # more than one threshold, so both take a level rather than just on/off. The rest
+        # are read as value[0] == '1' and are strictly boolean. See capemon config.c.
         self.logExceptions = wx.CheckBox(self, label="log-exceptions")
-        hboxTimeout.AddSpacer(30)
-        hboxTimeout.Add(self.minhook, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
-        hboxTimeout.Add(self.free, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
-        hboxTimeout.Add(self.logExceptions, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        self.logExceptions.SetToolTip("Exception logging")
+        self.logExceptionsLevel = self._LevelChoice(
+            ["1 - error codes only", "2 - all exceptions"],
+            "1: only codes >= 0x80000000\n"
+            "2: every exception, plus extra detail on access violations",
+        )
+        self.logVexcept = wx.CheckBox(self, label="log-vexcept")
+        self.logVexcept.SetToolTip("Vectored Exception logging")
+        self.logBreakpoints = wx.CheckBox(self, label="log-breakpoints")
+        self.logBreakpoints.SetToolTip("Breakpoint logging to behavior log")
+        self.fullLogs = wx.CheckBox(self, label="full-logs")
+        self.fullLogs.SetToolTip("Disable log suppression before network/file access")
+        self.forceFlush = wx.CheckBox(self, label="force-flush")
+        self.forceFlush.SetToolTip("Flush buffered logs instead of relying on batching")
+        self.forceFlushLevel = self._LevelChoice(
+            ["1 - after each new API", "2 - after every log"],
+            "1: flush after any non-duplicate API call\n2: flush after every log entry",
+        )
+        self.traceTimes = wx.CheckBox(self, label="trace-times")
+        self.traceTimes.SetToolTip("Trace timing")
+
+        # (checkbox, option name, level selector or None) drives emission.
+        self.loggingOptions = (
+            (self.logExceptions, "log-exceptions", self.logExceptionsLevel),
+            (self.logVexcept, "log-vexcept", None),
+            (self.logBreakpoints, "log-breakpoints", None),
+            (self.fullLogs, "full-logs", None),
+            (self.forceFlush, "force-flush", self.forceFlushLevel),
+            (self.traceTimes, "trace-times", None),
+        )
+
+        # Row one: the plain toggles. Row two: the two that carry a level, each kept next
+        # to its dropdown in a pair sizer so the two can never be separated.
+        toggleRow = wx.BoxSizer(wx.HORIZONTAL)
+        for box in (self.logVexcept, self.logBreakpoints, self.fullLogs, self.traceTimes):
+            toggleRow.Add(box, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=12)
+
+        levelRow = wx.BoxSizer(wx.HORIZONTAL)
+        for box, level in (
+            (self.logExceptions, self.logExceptionsLevel),
+            (self.forceFlush, self.forceFlushLevel),
+        ):
+            box.Bind(wx.EVT_CHECKBOX, self.OnLoggingLevelToggle)
+            pair = wx.BoxSizer(wx.HORIZONTAL)
+            pair.Add(box, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=6)
+            pair.Add(level, flag=wx.ALIGN_CENTER_VERTICAL)
+            levelRow.Add(pair, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=24)
+
+        gridLogging.Add(
+            wx.StaticText(self, label="Monitor logging:"), flag=wx.ALIGN_CENTER_VERTICAL
+        )
+        gridLogging.Add(toggleRow, flag=wx.ALIGN_CENTER_VERTICAL)
+        gridLogging.AddSpacer(1)
+        gridLogging.Add(levelRow, flag=wx.ALIGN_CENTER_VERTICAL)
 
         # analysis.conf editor
         analysisConfSizer = wx.BoxSizer(wx.VERTICAL)
@@ -339,6 +433,8 @@ class StartPanel(wx.Panel):
         vbox.Add(hbox3, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(hboxHelp, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(hboxTimeout, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+        vbox.Add(hboxHooking, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+        vbox.Add(gridLogging, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(
             self.debuggerCollapsePane,
             flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
@@ -475,8 +571,44 @@ class StartPanel(wx.Panel):
 
     def OnCollapsiblePaneChanged(self, event):
         self.Layout()
+        self.GrowFrameToFitContent()
         if event:
             event.Skip()
+
+    def GrowFrameToFitContent(self):
+        """Widen the frame when an expanded pane needs more room than the window has.
+
+        A wx.CollapsiblePane clips rather than pushing its frame wider, so expanding
+        "Debugger options" left the rightmost controls cut off at the default width: the
+        debugger grid needs the panel's full client width, but the pane sits inside a
+        10px left/right border and so gets 20px less.
+
+        Only ever grows, and never past the display, so it cannot fight a user who has
+        deliberately sized or maximised the window.
+        """
+        # InitUi calls the handler for the analysis.conf pane before the debugger pane is
+        # built, so this can run before the attribute exists.
+        pane = getattr(self, "debuggerCollapsePane", None)
+        if pane is None or not pane.IsExpanded():
+            return
+
+        frame = self.GetMainFrame()
+        if not frame or frame.IsMaximized():
+            return
+
+        # Measure the debugger grid against the pane that holds it. The panel's own
+        # GetBestSize is no use here: the analysis.conf editor is built with
+        # size=self.GetSize(), so the panel always reports a best width far larger than
+        # anything is actually asking for.
+        deficit = self.flexDebuggerSizer.CalcMin().x - self.debuggerPane.GetClientSize().x
+        if deficit <= 0:
+            return
+
+        screenWidth, _ = wx.DisplaySize()
+        width = min(frame.GetSize().x + deficit, screenWidth)
+        if width > frame.GetSize().x:
+            frame.SetSize(wx.Size(width, frame.GetSize().y))
+            frame.Layout()
 
     def OnCurrentDirCheckboxClick(self, event):
         self.curDir = self.runFromCurrentDirCheckbox.GetValue()
@@ -691,15 +823,21 @@ class StartPanel(wx.Panel):
         if self.manualExecution:
             userOptions += f"{sep}manual=True, interactive=True"
             sep = ","
-        if self.minhook.GetValue():
-            userOptions += f"{sep}minhook=1"
-            sep = ","
+        # Exactly one hook set is selected; "full" is capemon's default and needs no option.
+        for radio, option in self.hookSets:
+            if option and radio.GetValue():
+                userOptions += f"{sep}{option}=1"
+                sep = ","
         if self.free.GetValue():
             userOptions += f"{sep}free=1"
             sep = ","
-        if self.logExceptions.GetValue():
-            userOptions += f"{sep}log-exceptions=1"
-            sep = ","
+        for box, name, level in self.loggingOptions:
+            if box.GetValue():
+                # Levelled options take the number leading their selected label; the
+                # rest are booleans capemon tests with value[0] == '1'.
+                value = level.GetStringSelection().split(" ", 1)[0] if level else "1"
+                userOptions += f"{sep}{name}={value}"
+                sep = ","
         if self.curDir:
             curdir = Path(filename).parent
             userOptions += f"{sep}curdir={curdir}"
@@ -857,17 +995,35 @@ class StartPanel(wx.Panel):
     def OnOpenDirectory(self, event):
         os.startfile(self.analysisDir)
 
-    def OnMinhookChecked(self, event):
-        if self.minhook.GetValue():
-            self.free.Disable()
-        else:
-            self.free.Enable()
+    def _LevelChoice(self, labels, tooltip):
+        """Read-only selector for an option whose value is a level, not a flag.
 
-    def OnZerohookChecked(self, event):
-        if self.free.GetValue():
-            self.minhook.Disable()
-        else:
-            self.minhook.Enable()
+        Labels start with the numeric value capemon expects, which is what gets emitted.
+        Disabled until its checkbox is ticked, so it cannot show a level that is not
+        being sent.
+        """
+        choice = wx.Choice(self, choices=labels)
+        choice.SetSelection(0)
+        choice.SetToolTip(tooltip)
+        choice.Enable(False)
+        return choice
+
+    def OnLoggingLevelToggle(self, event):
+        for box, _name, level in self.loggingOptions:
+            if level is not None:
+                level.Enable(box.GetValue())
+        event.Skip()
+
+    def OnFreeChecked(self, event):
+        """free runs without the monitor, so no hook set applies.
+
+        Replaces the old minhook/free interlock: the choice is now a radio group, and
+        disabling it as a whole says "no hooks are installed at all" more clearly than
+        greying out a single checkbox.
+        """
+        enabled = not self.free.GetValue()
+        for radio, _option in self.hookSets:
+            radio.Enable(enabled)
 
     def OnIdbgChecked(self, event):
         self.idbg = self.idbgCheckbox.GetValue()

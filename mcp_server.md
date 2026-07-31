@@ -226,7 +226,7 @@ interrupted upload leaves a short file that the next `append=false` call overwri
 | `capesolo_analyze_password_zip` | Submit a password-protected ZIP. Key args: `zip_path`, `zip_password` (defaults to `infected`), `archive_member_path` (required when the ZIP holds multiple files), plus the args above. Extraction is handled by `SFlock2`. |
 | `capesolo_get_job_status` | Job state: `queued`, `running`, `completed`, `failed`. |
 | `capesolo_cancel_job` | Request termination of a running job (the same signal as the GUI Kill button). |
-| `capesolo_get_results` | CAPEsolo JSON results using existing keys (`target`, `behavior`, `signatures`, `payloads`, `configs`, `detections`). |
+| `capesolo_get_results` | CAPEsolo JSON results using existing keys (`target`, `behavior`, `signatures`, `payloads`, `configs`, `detections`). Behaviour analysis, YARA and config extraction all happen here — nothing is analysed at submit time. Computed once per job and cached, so this and `capesolo_render_html_report` do not rescan. `include_strings=False` skips string extraction; `write_file=True` also saves `report.json` the way the GUI's JSON button does. |
 | `capesolo_get_job_log_tail` | Last N lines of `analysis.log`. |
 | `capesolo_render_html_report` | Generate an HTML report from a completed analysis. |
 | `capesolo_list_payloads` | Payload artifacts from analysis output. |
@@ -242,6 +242,13 @@ Available only while a job submitted with `interactive_debug=True` is halted at 
 breakpoint. That flag adds `idbg=1` to the options and forces a 4 hour timeout, the same
 as the GUI **Interactive Debugger** checkbox. Pair it with breakpoint options such as
 `bp0=ep`. See [interactive_debugger.md](interactive_debugger.md) for the GUI equivalent.
+
+**Use the flag, not the option.** Passing `idbg=1` in `options` without
+`interactive_debug=True` is rejected: only the flag attaches the debugger session these
+tools drive, so the option on its own would leave the sample stopped at its first
+breakpoint until the timeout expired. For the same reason interactive debugging is
+unavailable in headless mode (`capesolo --headless-analyze`), which has no channel to
+drive the debugger and rejects `idbg` outright.
 
 Addresses are hex; the `0x` prefix is optional.
 

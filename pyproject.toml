@@ -1,6 +1,6 @@
 [project]
 name = "CAPEsolo"
-version = "0.5.26"
+version = "0.5.27"
 description = "Standalone CAPEMON"
 authors = [{name = "enzok", email = "<7831008+enzok@users.noreply.github.com>"}]
 readme = "README.md"
@@ -13,6 +13,7 @@ dependencies = [
     "cryptography>=49.0.0",
     "requests>=2.33.0",
     "SFlock2>=0.3.87",
+    "python-magic-bin>=0.4.14",
     "greenlet>=3.5.4",
     "gevent>=26.7.0",
     "dnspython>=2.8.0",

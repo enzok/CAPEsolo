@@ -440,8 +440,10 @@ def _style_widget(w):
         w.SetFont(FONT_UI)
         return
 
-    # --- CheckBoxes ---
-    if isinstance(w, wx.CheckBox):
+    # --- CheckBoxes and RadioButtons ---
+    # RadioButton is not a CheckBox subclass, so it needs naming explicitly or it falls
+    # through this walk entirely and renders in system colours.
+    if isinstance(w, (wx.CheckBox, wx.RadioButton)):
         w.SetForegroundColour(FG_PRIMARY)
         w.SetFont(FONT_UI)
         return
