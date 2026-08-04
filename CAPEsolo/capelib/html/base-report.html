@@ -45,6 +45,12 @@
                aria-selected="false">Debugger</a>
         </li>
         {% endif %}
+        {% if results.js_log and results.js_log.exists %}
+        <li class="nav-item">
+            <a class="nav-link" id="js_log-tab" data-bs-toggle="tab" href="#js_log" role="tab" aria-controls="js_log"
+               aria-selected="false">JS Log</a>
+        </li>
+        {% endif %}
     </ul>
     {% endif %}
     {% block content %}{% endblock %}

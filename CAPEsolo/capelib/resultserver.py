@@ -73,6 +73,7 @@ RESULT_UPLOADABLE = (
     b"CAPE",
     b"aux_",
     b"aux_/amsi",
+    b"aux_/js_console",
     b"curtain",
     b"debugger",
     b"tlsdump",

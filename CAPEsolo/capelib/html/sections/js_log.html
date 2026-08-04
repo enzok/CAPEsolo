@@ -1,0 +1,191 @@
+<div class="mt-4">
+    <div class="section-title">
+        <h4>JS Console Log</h4>
+    </div>
+    {% set js_log = results.js_log %}
+    {% if js_log and js_log.exists %}
+        <table class="table table-striped table-bordered" style="table-layout: fixed;">
+            <tr>
+                <th style="width: 20%;">Path</th>
+                <td>{{js_log.path}}</td>
+            </tr>
+            <tr>
+                <th>Lines</th>
+                <td>{{js_log.total_lines}}</td>
+            </tr>
+            <tr>
+                <th>Events</th>
+                <td>{{js_log.parsed_lines}}</td>
+            </tr>
+            {% if js_log.malformed_lines %}
+            <tr>
+                <th>Malformed lines</th>
+                <td>{{js_log.malformed_lines}}</td>
+            </tr>
+            {% endif %}
+            {% if js_log.truncated %}
+            <tr>
+                <th>Truncated</th>
+                <td>Event limit reached, later events were not parsed.</td>
+            </tr>
+            {% endif %}
+        </table>
+
+        {% if js_log.init %}
+            <h5 class="mt-4">Interpreter</h5>
+            <table class="table table-striped table-bordered">
+            <tr>
+                <th>Time</th>
+                <th>Pid</th>
+                <th>Ppid</th>
+                <th>Executable</th>
+                <th>Working Directory</th>
+            </tr>
+            {% for event in js_log.init %}
+            <tr>
+                <td>{{event.ts}}</td>
+                <td>{{event.pid}}</td>
+                <td>{{event.ppid}}</td>
+                <td>{{event.exec_path}}</td>
+                <td>{{event.cwd}}</td>
+            </tr>
+            {% endfor %}
+            </table>
+        {% endif %}
+
+        {% if js_log.http_requests %}
+            <h5 class="mt-4">HTTP Requests</h5>
+            <table class="table table-striped table-bordered">
+            <tr>
+                <th>Time</th>
+                <th>Method</th>
+                <th>URL</th>
+                <th>Transport</th>
+                <th>Request</th>
+            </tr>
+            {% for event in js_log.http_requests %}
+            <tr>
+                <td>{{event.ts}}</td>
+                <td>{{event.method}}</td>
+                <td>{{event.url}}</td>
+                <td>{{event.transport}}</td>
+                <td>{{event.request_id}}</td>
+            </tr>
+            {% endfor %}
+            </table>
+        {% endif %}
+
+        {% if js_log.http_responses %}
+            <h5 class="mt-4">HTTP Responses</h5>
+            <table class="table table-striped table-bordered">
+            <tr>
+                <th>Time</th>
+                <th>Status</th>
+                <th>Elapsed (ms)</th>
+                <th>Request</th>
+                <th>Body</th>
+            </tr>
+            {% for event in js_log.http_responses %}
+            <tr>
+                <td>{{event.ts}}</td>
+                <td>{{event.status}} {{event.status_text}}</td>
+                <td>{{event.elapsed_ms}}</td>
+                <td>{{event.request_id}}</td>
+                <td><pre class="mb-0">{{event.body.text}}</pre></td>
+            </tr>
+            {% endfor %}
+            </table>
+        {% endif %}
+
+        {% if js_log.http_errors %}
+            <h5 class="mt-4">HTTP Errors</h5>
+            <table class="table table-striped table-bordered">
+            <tr>
+                <th>Time</th>
+                <th>Request</th>
+                <th>Error</th>
+            </tr>
+            {% for event in js_log.http_errors %}
+            <tr>
+                <td>{{event.ts}}</td>
+                <td>{{event.request_id}}</td>
+                <td>{{event.error}}</td>
+            </tr>
+            {% endfor %}
+            </table>
+        {% endif %}
+
+        {% if js_log.console or js_log.warnings %}
+            <h5 class="mt-4">Console</h5>
+            <table class="table table-striped table-bordered">
+            <tr>
+                <th>Time</th>
+                <th>Level</th>
+                <th>Message</th>
+            </tr>
+            {% for event in js_log.console %}
+            <tr>
+                <td>{{event.ts}}</td>
+                <td>{{event.level}}</td>
+                <td>{{event.message}}</td>
+            </tr>
+            {% endfor %}
+            {% for event in js_log.warnings %}
+            <tr>
+                <td>{{event.ts}}</td>
+                <td>warning</td>
+                <td>{{event.message}}</td>
+            </tr>
+            {% endfor %}
+            </table>
+        {% endif %}
+
+        {# Everything the buckets above do not cover: dns_*, tcp_*, socket_*, eval,
+           module_intercept*, and anything the interceptor gains later. #}
+        {% set bucketed = ["http_request", "http_response", "http_error", "console", "warning", "init"] %}
+        <h5 class="mt-4">Other Events</h5>
+        {% set other = js_log.events | rejectattr("event", "in", bucketed) | list %}
+        {% if other %}
+            <table class="table table-striped table-bordered">
+            <tr>
+                <th style="width: 15%;">Time</th>
+                <th style="width: 20%;">Event</th>
+                <th>Details</th>
+            </tr>
+            {% for event in other %}
+            <tr>
+                <td>{{event.ts}}</td>
+                <td>{{event.event}}</td>
+                <td>
+                    {% for key, value in event.items() %}
+                        {% if key not in ("ts", "event", "source") %}
+                            {{key}}: {{value}}<br />
+                        {% endif %}
+                    {% endfor %}
+                </td>
+            </tr>
+            {% endfor %}
+            </table>
+        {% else %}
+            <p>Nothing to display.</p>
+        {% endif %}
+
+        <h5 class="mt-4">Raw Log</h5>
+        <div class="accordion" id="accordionJsLog">
+            <div class="accordion-item">
+                <h2 class="accordion-header" id="headingJsLogRaw">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseJsLogRaw" aria-expanded="false" aria-controls="collapseJsLogRaw">
+                        js_console.log
+                    </button>
+                </h2>
+                <div id="collapseJsLogRaw" class="accordion-collapse collapse" aria-labelledby="headingJsLogRaw" data-bs-parent="#accordionJsLog">
+                    <div class="accordion-body">
+                        <pre>{{js_log.log}}</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    {% else %}
+        <p>No JS console log available.</p>
+    {% endif %}
+</div>

@@ -8,6 +8,7 @@ import wx
 from .behavior_panel import BehaviorPanel
 from .configs_panel import ConfigsPanel
 from .debugger_panel import DebuggerPanel
+from .js_console_panel import JsConsolePanel
 from .payloads_panel import PayloadsPanel
 from .process_yara import ProcessYara
 from .start_panel import StartPanel
@@ -96,6 +97,8 @@ class MainFrame(wx.Frame):
         self.notebook.AddPage(self.stringsTab, "Strings")
         self.debuggerTab = DebuggerPanel(self.notebook)
         self.notebook.AddPage(self.debuggerTab, "Debugger")
+        self.jsConsoleTab = JsConsolePanel(self.notebook)
+        self.notebook.AddPage(self.jsConsoleTab, "JS Log")
         self.notebook.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.OnNotebookPageChanged)
 
         # Layout. Vertical so the status bar can dock beneath the notebook; with a single
@@ -129,6 +132,8 @@ class MainFrame(wx.Frame):
             selectedPage.PopulateFileDropdown()
         elif selectedPage == self.debuggerTab:
             selectedPage.PopulateLogFileDropdown()
+        elif selectedPage == self.jsConsoleTab:
+            selectedPage.UpdateProcessButtonState()
 
         event.Skip()
 

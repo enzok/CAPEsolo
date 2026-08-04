@@ -4,6 +4,7 @@ from pathlib import Path
 
 from CAPEsolo.capelib.behavior import BehaviorAnalysis
 from CAPEsolo.capelib.cape_utils import get_cape_name_from_yara_hit, metadata_processing
+from CAPEsolo.capelib.js_log import JsLog
 from CAPEsolo.capelib.objects import File
 from CAPEsolo.capelib.parse_pe import PortableExecutable
 from CAPEsolo.capelib.signatures import RunSignatures
@@ -131,6 +132,7 @@ def GetResults(targetFile, analysisDir, writeFile=True, includeStrings=True):
     results["behavior"] = BehaviorResults(analysisDir)
     results["signatures"] = Signatures(results, analysisDir)
     results["payloads"] = Payloads(analysisDir)
+    results["js_log"] = JsLog(analysisDir)
 
     yara = ProcessYara(analysisDir)
     yara.Scan(str(targetFile))
