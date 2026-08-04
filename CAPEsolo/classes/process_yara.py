@@ -16,6 +16,12 @@ class ProcessYara:
         hits[target] = self.yara.get_yara(target)
         self.yara_results.append({target: hits[target]})
 
+    def ScanPayload(self, relPath):
+        path = os.path.join(self.analysisDir, relPath)
+        hits = self.yara.get_yara(path)
+        self.yara_results.append({relPath: hits})
+        return hits
+
     def ScanPayloads(self):
         hits = {}
         content = LoadFilesJson(self.analysisDir)

@@ -33,30 +33,35 @@ class YaraPanel(wx.Panel):
         self.SetSizer(vbox)
         apply_theme(self)
 
+    def FormatHits(self, file, hits):
+        content = f"\u2022 {file}:\n"
+        if len(hits) < 1:
+            return content + "\tNo yara hits.\n"
+
+        for hit in hits:
+            capename = get_cape_name_from_yara_hit(hit)
+            if capename:
+                content += f"\tCAPE Name: {capename}\n"
+                self.parent.configHits.append({file: capename})
+            content += f'\tName: {hit.get("name")}\n'
+            content += "\tStrings:\n"
+            for strval in hit.get("strings", []):
+                content += f"\t\t{strval}\n"
+            content += "\tAddresses:\n"
+            addrs = hit.get("addresses", {})
+            for key in addrs.keys():
+                content += f"\t\t{key}: {addrs[key]}\n"
+        content += "\n"
+
+        return content
+
     def PrintResults(self):
         yaras = self.yara.yara_results
         content = ""
         for filehits in yaras:
             paths = filehits.keys()
             for file in paths:
-                content += f"\u2022 {file}:\n"
-                if len(filehits[file]) < 1:
-                    content += "\tNo yara hits.\n"
-                    continue
-                for hit in filehits[file]:
-                    capename = get_cape_name_from_yara_hit(hit)
-                    if capename:
-                        content += f"\tCAPE Name: {capename}\n"
-                        self.parent.configHits.append({file: capename})
-                    content += f'\tName: {hit.get("name")}\n'
-                    content += "\tStrings:\n"
-                    for strval in hit.get("strings", []):
-                        content += f"\t\t{strval}\n"
-                    content += "\tAddresses:\n"
-                    addrs = hit.get("addresses", {})
-                    for key in addrs.keys():
-                        content += f"\t\t{key}: {addrs[key]}\n"
-                content += "\n"
+                content += self.FormatHits(file, filehits[file])
         if not content:
             content = "No yara hits."
 
@@ -77,6 +82,19 @@ class YaraPanel(wx.Panel):
         self.resultsWindow.SetValue(content.replace("\x00", ""))
         self.yaraButton.Disable()
         self.yaraComplete = True
+
+    def AddPayload(self, relPath):
+        """Scan a payload a config parser produced and append its hits to the report.
+
+        Yara is a one-shot run, so a payload that only exists once configs have been
+        extracted is scanned on its own rather than by re-running ScanPayloads. If yara
+        has not run yet, ScanPayloads will pick the file up from files.json.
+        """
+        if not self.yaraComplete:
+            return
+
+        hits = self.yara.ScanPayload(relPath)
+        self.resultsWindow.AppendText(self.FormatHits(relPath, hits).replace("\x00", ""))
 
     def UpdateYaraButtonState(self):
         if not self.yaraComplete and self.parent.targetFile:
