@@ -1,27 +1,22 @@
-import re
-
 import wx
 import wx.lib.scrolledpanel as scrolled
 
-from .disasm_window import ARCH_CHOICES, DisasmWindow
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, apply_theme
-from CAPEsolo.capelib.parse_pe import IsPEImage, PortableExecutable
+# MAX_INSTRUCTION_LEN is read past the end of a page so the last instruction decodes
+# whole instead of being cut mid-encoding.
+from CAPEsolo.capelib.debug_session import MAX_INSTRUCTION_LEN, Disassemble
 
-# Read size for the file-wide search. Chunks overlap by the pattern length so a match
-# straddling a boundary is still found.
-SEARCH_CHUNK = 1024 * 1024
-
-BYTES_PER_LINE = 16
-# Page sizes in KB. 64 KB is 4096 lines / ~315 KB of text, which fills instantly; the whole
-# file used to be formatted at once, which is ~5 bytes of text per file byte.
-PAGE_SIZE_CHOICES = [16, 64, 256, 1024]
-DEFAULT_PAGE_SIZE = 64
-# 8 offset digits + 2 spaces + 48 hex columns + 2 spaces + 16 ascii characters.
-LINE_WIDTH = 76
+# Page sizes in KB. Disassembly text runs several times the size of the bytes it
+# describes, so these are smaller than the hex view's.
+PAGE_SIZE_CHOICES = [4, 16, 64, 256]
+DEFAULT_PAGE_SIZE = 16
+ARCH_CHOICES = ["x86", "x64"]
+# 8 offset digits + 2 spaces + 24 byte columns + 2 spaces + mnemonic.
+LINE_WIDTH = 80
 
 
-class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
+class DisasmWindow(wx.Frame, KeyEventHandlerMixin):
     def __init__(
         self,
         parent,
@@ -29,10 +24,12 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
         filepath,
         main_window_position,
         main_window_size,
+        bits=32,
+        startOffset=0,
         *args,
         **kwargs,
     ):
-        super(HexViewWindow, self).__init__(parent, title=title, *args, **kwargs)
+        super(DisasmWindow, self).__init__(parent, title=title, *args, **kwargs)
         self.panel = scrolled.ScrolledPanel(
             self, -1, style=wx.TAB_TRAVERSAL | wx.SUNKEN_BORDER
         )
@@ -44,10 +41,9 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
             self.fileSize = filepath.stat().st_size
         except OSError:
             self.fileSize = 0
+        self.bits = 64 if bits == 64 else 32
         self.bytesPerPage = DEFAULT_PAGE_SIZE * 1024
-        self.currentPage = 1
-        self.disasmWindow = None
-        self.defaultBits = self.DetectBits()
+        self.currentPage = max(0, startOffset) // self.bytesPerPage + 1
         self.BindKeyEvents()
         self.mainWindowPosition = main_window_position
         self.mainWindowSize = main_window_size
@@ -56,7 +52,7 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
     def InitUI(self):
         self.vbox.AddSpacer(10)
         self.CreateTextCtrl()
-        self.CreatePaginationControls()
+        self.CreateControls()
         self.LoadPage()
         self.panel.SetSizer(self.vbox)
         # Offset a copy: the caller reuses the wx.Point it passed in, so mutating it here
@@ -68,55 +64,49 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
         self.Layout()
         apply_theme(self)
 
-    def DetectBits(self):
-        """Pick the disassembly default from the payload's own PE header.
-
-        Sniffs the first 1024 bytes first, the same cheap check PayloadsPanel uses to
-        decide whether to offer its PE button, so a large payload is not fully parsed
-        just to open the hex view. Anything that is not a PE - shellcode, a dropped
-        document - falls back to x86, which the viewer's Arch dropdown can override.
-        """
-        try:
-            with open(self.filepath, "rb") as hfile:
-                head = hfile.read(1024)
-        except OSError:
-            return 32
-
-        if not IsPEImage(head):
-            return 32
-
-        # is_64bit returns None when pefile could not parse the file at all.
-        return 64 if PortableExecutable(str(self.filepath)).is_64bit() else 32
-
     def TotalPages(self):
         if self.fileSize <= 0:
             return 1
         return max(1, -(-self.fileSize // self.bytesPerPage))
 
     def ReadPage(self, page):
-        """Read and format only the requested slice, so nothing scales with file size."""
+        """Decode only the requested slice, so nothing scales with file size."""
         start = (page - 1) * self.bytesPerPage
         try:
             with open(self.filepath, "rb") as hfile:
                 hfile.seek(start)
-                data = hfile.read(self.bytesPerPage)
+                data = hfile.read(self.bytesPerPage + MAX_INSTRUCTION_LEN)
         except OSError as e:
             wx.LogError(f"Cannot open file '{self.filepath}'. Error: {e}")
             return ""
 
-        return self.FormatHexData(data, start)
+        return self.FormatDisasm(data, start)
 
-    def FormatHexData(self, data, offset=0):
+    def FormatDisasm(self, data, offset=0):
+        """Format a linear sweep of *data* starting at file offset *offset*.
+
+        Addresses are file offsets rather than a synthesised virtual address, so a line
+        here refers to the same byte as the matching line in the hex view.
+
+        A sweep that begins at an arbitrary offset can start part way through an
+        instruction, so the first instruction or two of a page may be nonsense until the
+        stream re-synchronises. That is inherent to disassembling from a fixed offset, not
+        a decoding failure - the offset label above shows where the sweep began.
+        """
+        # No instruction is shorter than one byte, so this cannot truncate the page.
+        instructions = Disassemble(offset, data, self.bits, len(data))
+        pageEnd = offset + self.bytesPerPage
         lines = []
-        for i in range(0, len(data), BYTES_PER_LINE):
-            chunk = data[i : i + BYTES_PER_LINE]
-            hexChunk = " ".join(f"{byte:02x}" for byte in chunk)
-            asciiChunk = "".join(
-                chr(byte) if 32 <= byte <= 126 else "." for byte in chunk
+        for instruction in instructions:
+            address = int(instruction["address"], 16)
+            # The read ran past the page so the final instruction decodes whole; anything
+            # actually starting beyond the page belongs to the next one.
+            if address >= pageEnd:
+                break
+            lines.append(
+                f'{address:08x}  {instruction["bytes"]:<24}  {instruction["text"]}'
             )
-            # offset is the page's base, so the address column keeps showing the true file
-            # offset instead of restarting at zero on every page.
-            lines.append(f"{offset + i:08x}  {hexChunk:<48}  {asciiChunk}")
+
         return "\n".join(lines)
 
     def CreateTextCtrl(self):
@@ -124,19 +114,16 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
         # TextCtrl's font alone when its face name is Consolas, so any other monospace font
         # would be replaced with the proportional UI font and the columns would misalign.
         font = FONT_CODE
-        # Named resultsWindow because SearchDialog looks that attribute up on its parent;
-        # while the control was a local, Ctrl+F in this window raised AttributeError.
+        # Named resultsWindow because SearchDialog looks that attribute up on its parent.
         # Content goes in via ChangeValue, never the constructor: passing it as value= makes
         # wxMSW hand the whole string to CreateWindowEx as the window title, which fails on
-        # a large payload ("CreateWindowEx("EDIT", ... title-len=10123774)").
+        # a large payload.
         self.resultsWindow = wx.TextCtrl(
             self.panel,
             style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL,
         )
         self.resultsWindow.SetFont(font)
 
-        # Measure a canonical full-width line rather than page content, so the window sizes
-        # the same regardless of which page loads first and on an empty file.
         dc = wx.ClientDC(self.resultsWindow)
         dc.SetFont(font)
         textWidth, _ = dc.GetTextExtent("0" * LINE_WIDTH)
@@ -144,7 +131,7 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
         self.SetSize(textWidth + 80, self.mainWindowSize.y)
         self.vbox.Add(self.resultsWindow, 1, wx.EXPAND | wx.ALL, 10)
 
-    def CreatePaginationControls(self):
+    def CreateControls(self):
         self.offsetLabel = wx.StaticText(self.panel, label="")
         self.vbox.Add(self.offsetLabel, 0, wx.LEFT | wx.RIGHT, 10)
 
@@ -191,17 +178,17 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
         self.pageSizeDropdown.Bind(wx.EVT_COMBOBOX, self.OnPageSizeChange)
         self.paginationSizer.Add(self.pageSizeDropdown, 0, wx.ALL, 5)
 
+        self.paginationSizer.Add(
+            wx.StaticText(self.panel, label="Arch:"), 0, wx.ALL | wx.CENTER, 5
+        )
         self.archDropdown = wx.ComboBox(
             self.panel,
-            value="x64" if self.defaultBits == 64 else "x86",
+            value="x64" if self.bits == 64 else "x86",
             choices=ARCH_CHOICES,
             style=wx.CB_READONLY,
         )
+        self.archDropdown.Bind(wx.EVT_COMBOBOX, self.OnArchChange)
         self.paginationSizer.Add(self.archDropdown, 0, wx.ALL, 5)
-
-        self.disasmButton = wx.Button(self.panel, label="Disassemble")
-        self.disasmButton.Bind(wx.EVT_BUTTON, self.OnDisassemble)
-        self.paginationSizer.Add(self.disasmButton, 0, wx.ALL, 5)
 
         self.vbox.Add(self.paginationSizer, 0, wx.CENTER | wx.BOTTOM, 5)
 
@@ -223,8 +210,9 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
         end = min(start + self.bytesPerPage, self.fileSize)
         last = max(start, end - 1)
         self.offsetLabel.SetLabel(
-            f"Offset 0x{start:08x} - 0x{last:08x} of 0x{max(0, self.fileSize - 1):08x}"
-            f"  ({self.fileSize:,} bytes)"
+            f"Sweep from offset 0x{start:08x} - 0x{last:08x} of "
+            f"0x{max(0, self.fileSize - 1):08x}  ({self.fileSize:,} bytes)  "
+            f"{'x64' if self.bits == 64 else 'x86'}"
         )
         self.panel.Layout()
 
@@ -270,111 +258,6 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
             )
             self.pageInput.SetValue(str(self.currentPage))
 
-    def FindInFile(self, text, caseSensitive=False, fullWord=False, startOffset=0):
-        """Search the whole file, not just the page on screen.
-
-        Matches the file's bytes rather than the rendered dump, so the hex column's
-        spacing never interferes. Returns the absolute file offset, or -1.
-        """
-        if not text:
-            return -1
-
-        try:
-            needle = text.encode("latin-1")
-        except UnicodeEncodeError:
-            # Nothing outside latin-1 can appear in a byte-oriented search.
-            return -1
-
-        pattern = re.escape(needle)
-        if fullWord:
-            pattern = rb"\b" + pattern + rb"\b"
-        regex = re.compile(pattern, 0 if caseSensitive else re.IGNORECASE)
-
-        # Overlap so a match spanning two reads is not missed. \b needs one byte of
-        # context on each side, hence the +1.
-        overlap = len(needle) + 1
-        start = max(0, startOffset)
-        try:
-            with open(self.filepath, "rb") as hfile:
-                hfile.seek(start)
-                base = start
-                carry = b""
-                while True:
-                    chunk = hfile.read(SEARCH_CHUNK)
-                    if not chunk:
-                        return -1
-                    window = carry + chunk
-                    match = regex.search(window)
-                    if match:
-                        found = base - len(carry) + match.start()
-                        if found >= startOffset:
-                            return found
-                    carry = window[-overlap:] if overlap else b""
-                    base += len(chunk)
-        except OSError as e:
-            wx.LogError(f"Cannot search file '{self.filepath}'. Error: {e}")
-            return -1
-
-    def GoToOffset(self, offset):
-        """Bring the page holding *offset* on screen and select that line."""
-        if offset < 0 or offset >= max(1, self.fileSize):
-            return
-
-        page = offset // self.bytesPerPage + 1
-        if page != self.currentPage:
-            self.currentPage = page
-            self.LoadPage()
-
-        pageStart = (self.currentPage - 1) * self.bytesPerPage
-        lineIndex = (offset - pageStart) // BYTES_PER_LINE
-        lines = self.resultsWindow.GetValue().split("\n")
-        if lineIndex >= len(lines):
-            return
-
-        # XYToPosition rather than summing Python string lengths: GetValue() hands back
-        # "\n"-separated text while the native control counts "\r\n", so a manual sum
-        # lands progressively further into the wrong line the further down the page it is.
-        pos = self.resultsWindow.XYToPosition(0, lineIndex)
-        if pos < 0:
-            return
-
-        self.resultsWindow.ShowPosition(pos)
-        self.resultsWindow.SetSelection(pos, pos + len(lines[lineIndex]))
-        self.resultsWindow.SetFocus()
-
-    def OnDisassemble(self, event):
-        """Open the disassembly viewer at the offset currently on screen."""
-        # Raise the existing window rather than stacking a second one; OnDisasmClose
-        # clears the reference when the user closes it.
-        if self.disasmWindow:
-            self.disasmWindow.Raise()
-            return
-
-        bits = 64 if self.archDropdown.GetValue() == "x64" else 32
-        try:
-            # Title differs from this window's so PayloadsPanel.IsWindowOpen, which
-            # matches on title, cannot confuse the two.
-            self.disasmWindow = DisasmWindow(
-                self,
-                f"{self.filepath} - Disassembly",
-                self.filepath,
-                self.GetPosition(),
-                self.GetSize(),
-                bits=bits,
-                startOffset=(self.currentPage - 1) * self.bytesPerPage,
-            )
-            self.disasmWindow.Bind(wx.EVT_CLOSE, self.OnDisasmClose)
-            self.disasmWindow.Show()
-        except Exception as e:
-            self.disasmWindow = None
-            wx.MessageBox(
-                f"Failed to disassemble: {e}", "Error", wx.OK | wx.ICON_ERROR
-            )
-
-    def OnDisasmClose(self, event):
-        self.disasmWindow = None
-        event.Skip()
-
     def OnPageSizeChange(self, event):
         newSize = int(self.pageSizeDropdown.GetValue()) * 1024
         if newSize == self.bytesPerPage:
@@ -384,4 +267,12 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
         currentOffset = (self.currentPage - 1) * self.bytesPerPage
         self.bytesPerPage = newSize
         self.currentPage = min(currentOffset // newSize + 1, self.TotalPages())
+        self.LoadPage()
+
+    def OnArchChange(self, event):
+        bits = 64 if self.archDropdown.GetValue() == "x64" else 32
+        if bits == self.bits:
+            return
+
+        self.bits = bits
         self.LoadPage()
