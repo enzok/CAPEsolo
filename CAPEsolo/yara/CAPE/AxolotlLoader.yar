@@ -40,30 +40,13 @@ rule AxolotlLoaderDll
         cape_type = "AxolotlLoader Payload"
 
 strings:
-        // call next; "LoadLibraryA"; pop rdx; call [r15+GetProcAddress]; save LoadLibraryA/GetProcAddress
-        $resolver_loadlibrary = {
-            E8 0D 00 00 00
-            4C 6F 61 64 4C 69 62 72 61 72 79 41 00
-            5A
-            41 FF 97 ?? ?? ?? ??
-            49 89 45 10
-            49 8B 87 ?? ?? ?? ??
-            49 89 45 18
-        }
-
-        // Final indirect call into decoded .bss-like output buffer
-        $call_decoded_buffer = {
-            49 8D 4D 10
-            49 8D 87 ?? ?? ?? ??
-            FF D0
-        }
-
+        $resolver_loadlibrary = {E8 0D 00 00 00 4C 6F 61 64 4C 69 62 72 61 72 79 41 00 [1-10] 41 FF 97 ?? ?? ?? 00}
+        $call_decoded_buffer = {49 8D 4D 10 49 8D 87 ?? ?? ?? ?? FF D0}
         $alloc = {4? 83 EC ?? 4? 89 ?? 4? C7 ?? [4] 4? C7 ?? [4] 4? 8D ?? 24 ?? 4? FF ?? [4] 4? 83 C4 ?? 85 C0}
 
     condition:
         uint16(0) == 0x5A4D and all of them
 }
-
 
 rule AxolotlLoaderShellCode
 {
