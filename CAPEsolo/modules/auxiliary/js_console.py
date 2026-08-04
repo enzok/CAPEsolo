@@ -863,9 +863,7 @@ class JsConsole(Auxiliary):
 
             # Substitute log path in interceptor script dynamically
             templated_log_path = self.log_path.replace("\\", "\\\\")
-            templated_script = INTERCEPTOR_TEMPLATE.replace(
-                "@LOG_PATH@", templated_log_path
-            )
+            templated_script = INTERCEPTOR_TEMPLATE.replace( "@LOG_PATH@", templated_log_path )
 
             with open(self.interceptor_path, "w", encoding="utf-8") as f:
                 f.write(templated_script)
