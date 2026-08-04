@@ -123,8 +123,10 @@ class NodeJS(Package):
             _set_windows_env_var("NODE_OPTIONS", f'--require "{preload_path}"')
             log.info("Node interceptor found at %s. Setting NODE_OPTIONS env var with --require.", interceptor_path)
         else:
-            _set_windows_env_var("NODE_OPTIONS", "")
-            log.warning("Node interceptor not found at %s. Running without --require.", interceptor_path)
+            # Deliberately not clearing NODE_OPTIONS: the js_console auxiliary module runs
+            # before the package and may already have set a valid absolute --require, so
+            # wiping it here would disable interception for every node.exe in this run.
+            log.warning("Node interceptor not found at %s. Leaving NODE_OPTIONS as set.", interceptor_path)
 
         node_args = ""
         if args:

@@ -4,6 +4,7 @@ import subprocess
 
 from lib.common.abstracts import Auxiliary
 from lib.common.constants import OPT_CURDIR, PATHS
+from lib.common.defines import SHELL32
 from lib.common.results import upload_to_host
 
 log = logging.getLogger(__name__)
@@ -795,10 +796,11 @@ class JsConsole(Auxiliary):
         self.interceptor_path = os.path.join(
             self._target_directory(), self.interceptor_name
         )
-        # Only the nodejs package consumes the interceptor: it sets NODE_OPTIONS from
-        # js_interceptor.js at package start and clears it when the file is absent, so
-        # writing the script and the env vars for any other package achieves nothing.
-        self.enabled = getattr(self.config, "package", "") == "nodejs"
+        # Any package can end up spawning node.exe - a .bat that shells out, an exe that
+        # drops a script - and CreateProcessW inherits the environment block all the way
+        # down the chain, so the interceptor is installed for the whole analysis rather
+        # than for one package. The js_console key in analysis.conf is the on/off switch.
+        self.enabled = True
         self.do_run = self.enabled
 
     def _target_directory(self):
@@ -810,6 +812,48 @@ class JsConsole(Auxiliary):
             "TEMP", r"C:\Windows\Temp"
         )
         return os.path.expandvars(curdir)
+
+    def _persist_env(self, name, value):
+        """Set an environment variable for this process and for later-launched ones.
+
+        The in-process assignment reaches the Win32 environment block, and the analyzer
+        launches the package with CreateProcessW(lpEnvironment=NULL), so every descendant
+        inherits it - a .bat that shells out to node.exe included. setx additionally
+        writes HKCU\\Environment and broadcasts WM_SETTINGCHANGE, which is the only thing
+        that reaches a node.exe started through ShellExecute by an explorer.exe that was
+        already running when the analysis began.
+        """
+        os.environ[name] = value
+        commands = [["setx", name, value]]
+        if SHELL32.IsUserAnAdmin():
+            # Machine scope, so processes running as another user or as a service see it.
+            commands.append(["setx", name, value, "/M"])
+
+        for command in commands:
+            scope = "machine" if "/M" in command else "user"
+            try:
+                result = subprocess.run(
+                    command,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+            except Exception as e:
+                log.debug("js_console: failed to persist %s (%s): %s", name, scope, e)
+                continue
+
+            if result.returncode:
+                # Previously discarded, so a failure to persist looked identical to
+                # success while silently leaving later processes uninstrumented.
+                log.warning(
+                    "js_console: setx %s (%s) failed with %s: %s",
+                    name,
+                    scope,
+                    result.returncode,
+                    result.stderr.decode("utf-8", "replace").strip(),
+                )
+            else:
+                log.info("js_console: set %s (%s) to %s", name, scope, value)
 
     def start(self):
         if not self.do_run:
@@ -829,40 +873,13 @@ class JsConsole(Auxiliary):
                 "js_console: wrote interceptor script to %s", self.interceptor_path
             )
 
-            # Set NODE_OPTIONS environment variable system-wide and for current process
+            # Absolute: NODE_OPTIONS is read by every node.exe wherever it starts, and a
+            # relative path would resolve against the child's working directory. Forward
+            # slashes because node splits the value on whitespace honouring double quotes
+            # and passes backslashes through literally.
             preload_path = os.path.abspath(self.interceptor_path).replace("\\", "/")
-            node_options_val = f'--require "{preload_path}"'
-
-            os.environ["NODE_OPTIONS"] = node_options_val
-            try:
-                subprocess.run(
-                    ["setx", "NODE_OPTIONS", node_options_val],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                )
-                log.info(
-                    "js_console: set NODE_OPTIONS system env var to %s",
-                    node_options_val,
-                )
-            except Exception as e:
-                log.debug("js_console: failed to set persistent NODE_OPTIONS: %s", e)
-
-            # Set BUN_OPTIONS environment variable system-wide and for current process
-            bun_options_val = f'--preload "{preload_path}"'
-            os.environ["BUN_OPTIONS"] = bun_options_val
-            try:
-                subprocess.run(
-                    ["setx", "BUN_OPTIONS", bun_options_val],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                )
-                log.info(
-                    "js_console: set BUN_OPTIONS system env var to %s", bun_options_val
-                )
-            except Exception as e:
-                log.debug("js_console: failed to set persistent BUN_OPTIONS: %s", e)
+            self._persist_env("NODE_OPTIONS", f'--require "{preload_path}"')
+            self._persist_env("BUN_OPTIONS", f'--preload "{preload_path}"')
         except Exception as e:
             log.warning("js_console: failed to prepare js artifacts: %s", e)
 
