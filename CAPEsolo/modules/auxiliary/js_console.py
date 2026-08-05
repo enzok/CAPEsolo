@@ -26,16 +26,30 @@ INTERCEPTOR_TEMPLATE = """ (() => {
   const originalSetTimeout = global.setTimeout;
   const originalSetInterval = global.setInterval;
 
-  // Override setTimeout
-  global.setTimeout = (callback, delay, ...args) => {
-      // Force all delays to 1ms regardless of what the script asks for
-      return originalSetTimeout(callback, 1, ...args);
-  };
+  // NODE_OPTIONS reaches every node process, npm and friends included, and overriding
+  // global.setTimeout reaches a bare setTimeout inside any required module. A package
+  // manager races its request timeout against the HTTP response, so a 1ms delay makes
+  // the timer always win and every registry fetch dies as "network timeout" in
+  // milliseconds. A delay threshold cannot separate the two cases - npm's default
+  // fetch-timeout is 300000ms, squarely inside the range of sleeps worth skipping - so
+  // exempt the package managers by name and leave their timers alone. Everything else
+  // in this interceptor still applies to them.
+  const isPackageManager = /(npm-cli|npx-cli|yarn|pnpm)\\.[cm]?js$/i.test(
+    (typeof process !== "undefined" && process.argv && process.argv[1]) || ""
+  );
 
-  // Override setInterval
-  global.setInterval = (callback, delay, ...args) => {
-      return originalSetInterval(callback, 1, ...args);
-  };
+  if (!isPackageManager) {
+    // Override setTimeout
+    global.setTimeout = (callback, delay, ...args) => {
+        // Force all delays to 1ms regardless of what the script asks for
+        return originalSetTimeout(callback, 1, ...args);
+    };
+
+    // Override setInterval
+    global.setInterval = (callback, delay, ...args) => {
+        return originalSetInterval(callback, 1, ...args);
+    };
+  }
   const logPath = "@LOG_PATH@";
 
   function safeAppendJson(obj) {
@@ -695,6 +709,9 @@ INTERCEPTOR_TEMPLATE = """ (() => {
     bun_version: safeCall(() => (typeof Bun !== "undefined" ? Bun.version : null), null),
     has_fetch: typeof globalThis.fetch === "function",
     fetch_type: safeCall(() => typeof globalThis.fetch, null),
+    // Whether setTimeout/setInterval were forced to 1ms in this process. Without it the
+    // log gives no way to tell whether the timings in it are the sample's own.
+    timers_accelerated: !isPackageManager,
   });
 
   installEvalHook();
