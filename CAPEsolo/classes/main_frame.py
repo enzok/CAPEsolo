@@ -9,6 +9,7 @@ from .behavior_panel import BehaviorPanel
 from .configs_panel import ConfigsPanel
 from .debugger_panel import DebuggerPanel
 from .js_console_panel import JsConsolePanel
+from .network_panel import NetworkPanel
 from .payloads_panel import PayloadsPanel
 from .process_yara import ProcessYara
 from .start_panel import StartPanel
@@ -99,6 +100,8 @@ class MainFrame(wx.Frame):
         self.notebook.AddPage(self.debuggerTab, "Debugger")
         self.jsConsoleTab = JsConsolePanel(self.notebook)
         self.notebook.AddPage(self.jsConsoleTab, "JS Log")
+        self.networkTab = NetworkPanel(self.notebook)
+        self.notebook.AddPage(self.networkTab, "Network")
         self.notebook.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.OnNotebookPageChanged)
 
         # Layout. Vertical so the status bar can dock beneath the notebook; with a single
@@ -133,6 +136,8 @@ class MainFrame(wx.Frame):
         elif selectedPage == self.debuggerTab:
             selectedPage.PopulateLogFileDropdown()
         elif selectedPage == self.jsConsoleTab:
+            selectedPage.UpdateProcessButtonState()
+        elif selectedPage == self.networkTab:
             selectedPage.UpdateProcessButtonState()
 
         event.Skip()

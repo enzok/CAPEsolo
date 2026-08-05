@@ -1,3 +1,4 @@
+import logging
 import os
 from json import dump
 from pathlib import Path
@@ -5,8 +6,12 @@ from pathlib import Path
 from CAPEsolo.capelib.behavior import BehaviorAnalysis
 from CAPEsolo.capelib.cape_utils import get_cape_name_from_yara_hit, metadata_processing
 from CAPEsolo.capelib.js_log import JsLog
+from CAPEsolo.capelib.network import NetworkData
+from CAPEsolo.capelib.network_decrypt import DecryptStreams
+from CAPEsolo.capelib.network_summary import NetworkSummary
 from CAPEsolo.capelib.objects import File
 from CAPEsolo.capelib.parse_pe import PortableExecutable
+from CAPEsolo.capelib.path_utils import path_exists
 from CAPEsolo.capelib.signatures import RunSignatures
 from CAPEsolo.capelib.utils import LoadFilesJson, extract_strings
 
@@ -14,12 +19,19 @@ from .behavior_panel import Options
 from .configs_panel import Extract
 from .process_yara import ProcessYara
 
+log = logging.getLogger(__name__)
+
 
 def TargetInfo(targetFile):
     fileObj = File(str(targetFile))
     fileinfo = fileObj.get_all()[0]
     peData = PortableExecutable(str(targetFile)).run()
     fileinfo["pe"] = peData
+    # The signature runner skips any signature declaring filter_analysistypes unless this
+    # matches (signatures.py:1263). Nothing set it, so 8 of the 29 community signatures -
+    # including network_http and network_cnc_http - were never even evaluated. CAPEsolo
+    # always analyses a file.
+    fileinfo["category"] = "file"
     return fileinfo
 
 
@@ -121,18 +133,52 @@ def GetYara(yara, path):
     return None
 
 
-def GetResults(targetFile, analysisDir, writeFile=True, includeStrings=True):
+def Network(analysisDir, results, pcapPath=""):
+    """Build the network summary the signatures and reports read.
+
+    Works with no capture at all - the behaviour log and the JS console log are enough for
+    hosts, DNS lookups and HTTP requests. A capture adds the wire view, and TLS secrets from
+    the analysis add the decrypted plaintext on top of that.
+    """
+    capture = None
+    decrypted = None
+    if pcapPath and path_exists(str(pcapPath)):
+        try:
+            capture = NetworkData(analysisDir, pcapPath)
+        except Exception as e:
+            log.warning("Could not parse the capture %s: %s", pcapPath, e)
+
+        try:
+            decrypted = DecryptStreams(analysisDir, pcapPath)
+        except Exception as e:
+            log.warning("Could not decrypt streams in %s: %s", pcapPath, e)
+
+    return NetworkSummary(
+        behavior=results.get("behavior"),
+        jsLog=results.get("js_log"),
+        capture=capture,
+        decrypted=decrypted,
+    )
+
+
+def GetResults(targetFile, analysisDir, writeFile=True, includeStrings=True, pcapPath=""):
     """Build the full analysis report.
 
     includeStrings=False skips string extraction entirely rather than extracting and then
     discarding: it is the expensive part on an analysis with many payloads.
+
+    pcapPath is the capture the user supplied on the Network tab, if any.
     """
     results = {}
     results["target"] = TargetInfo(targetFile)
     results["behavior"] = BehaviorResults(analysisDir)
+    # js_log and network are built before the signatures, which read both: 14 of the shipped
+    # network signatures look up results["network"], and previously js_log was populated
+    # after they had already run.
+    results["js_log"] = JsLog(analysisDir)
+    results["network"] = Network(analysisDir, results, pcapPath)
     results["signatures"] = Signatures(results, analysisDir)
     results["payloads"] = Payloads(analysisDir)
-    results["js_log"] = JsLog(analysisDir)
 
     yara = ProcessYara(analysisDir)
     yara.Scan(str(targetFile))

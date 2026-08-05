@@ -19,6 +19,11 @@ js_console = True
 procmon = False
 recentfiles = False
 screenshots_windows = False
+; TLS secrets for decrypting a capture taken outside the guest, read by the Network tab.
+; tlsdump injects capemon into lsass for Schannel; sslkeylogfile covers anything honouring
+; the SSLKEYLOGFILE variable. The analyzer only imports an auxiliary module whose name it
+; finds here, so sslkeylogfile never loaded while this key was absent.
+sslkeylogfile = False
 sysmon_windows = False
 tlsdump = False
 usage = False

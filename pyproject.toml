@@ -31,6 +31,8 @@ dependencies = [
     "pymongo>=4.17.0",
     "tlsh-python>=0.1.0",
     "mcp>=2.0.0",
+    "dpkt==1.9.6",
+    "httpreplay",
 ]
 
 [project.scripts]
@@ -40,6 +42,9 @@ CAPEsolo-mcp = "CAPEsolo.mcp_server:main"
 [tool.uv.build-backend]
 module-name = "CAPEsolo"
 module-root = "."
+
+[tool.uv.sources]
+httpreplay = { git = "https://github.com/CAPESandbox/httpreplay.git" }
 
 [tool.poetry]
 requires-poetry = ">=2.0"

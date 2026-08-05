@@ -976,6 +976,18 @@ class StartPanel(wx.Panel):
             parent = parent.GetParent()
         return parent
 
+    def GetCapturePath(self):
+        """The capture chosen on the Network tab, so a report can include the wire view.
+
+        Optional by design: the network summary is built from the behaviour and JS logs
+        either way, and only the pcap-derived parts and the decrypted streams need this.
+        """
+        networkTab = getattr(self.GetMainFrame(), "networkTab", None)
+        if networkTab is None:
+            return ""
+
+        return networkTab.GetPcapPath()
+
     def log(self, message):
         log.info(message)
 
@@ -1124,7 +1136,9 @@ class StartPanel(wx.Panel):
             busy = wx.BusyInfo("Please wait... Creating JSON report.", parent=self)
             wx.Yield()
             self.jsonReportBtn.Disable()
-            completed, msg = GetResults(self.targetFile, self.analysisDir)
+            completed, msg = GetResults(
+                self.targetFile, self.analysisDir, pcapPath=self.GetCapturePath()
+            )
             del busy
             if completed:
                 wx.MessageBox(f"JSON report completed successfully.", "JSON Report", wx.OK | wx.ICON_INFORMATION)
@@ -1149,7 +1163,9 @@ class StartPanel(wx.Panel):
             busy = wx.BusyInfo("Please wait... Creating HTML report.", parent=self)
             wx.Yield()
             self.htmlReportBtn.Disable()
-            results = GetResults(self.targetFile, self.analysisDir, False)
+            results = GetResults(
+                self.targetFile, self.analysisDir, False, pcapPath=self.GetCapturePath()
+            )
             report = ReportHTML()
             completed, msg = report.run(self.analysisDir, self.capesoloRoot, results)
             del busy
