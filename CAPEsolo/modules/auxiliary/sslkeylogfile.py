@@ -31,10 +31,26 @@ class SslKeyLogFile(Auxiliary):
     def upload_sslkeylogfile(self):
         """Upload SSLKEYLOGFILE log to the host if present."""
         try:
-            if self.log_path and os.path.isfile(self.log_path):
-                log.debug('Attemping to upload SSLKEYLOGFILE from "%s"', self.log_path)
-                upload_to_host(self.log_path, f"{self.upload_prefix}/{self.upload_file}")
-                log.debug("SSLKEYLOGFILE uploaded")
+            if not self.log_path or not os.path.isfile(self.log_path):
+                log.info("SSLKEYLOGFILE was never created at '%s'", self.log_path)
+                return
+
+            # upload_to_host skips a zero byte file without uploading anything, and this used
+            # to log "uploaded" straight afterwards regardless - so an empty key log looked
+            # like a successful upload and the missing file on the host had no explanation.
+            # Empty is the normal outcome when nothing in the guest honoured the variable.
+            size = os.path.getsize(self.log_path)
+            if not size:
+                log.warning(
+                    "SSLKEYLOGFILE at '%s' is empty - nothing in the guest wrote TLS secrets "
+                    "to it, so there is nothing to upload",
+                    self.log_path,
+                )
+                return
+
+            log.debug('Attemping to upload SSLKEYLOGFILE from "%s"', self.log_path)
+            upload_to_host(self.log_path, f"{self.upload_prefix}/{self.upload_file}")
+            log.info("SSLKEYLOGFILE uploaded (%d bytes)", size)
         except Exception:
             log.exception("SslKeyLogFile encountered an exception while uploading '%s'", self.log_path)
             raise

@@ -636,8 +636,18 @@ class StartPanel(wx.Panel):
 
         files = Files()
         files.dump_files()
-        upload_files("debugger")
-        upload_files("tlsdump")
+
+        # Independently guarded, and logged where the analyst will see it. These two calls sat
+        # outside the try below, and upload_files only catches IOError and socket.error - so
+        # anything else raised while uploading the debugger logs skipped the tlsdump upload
+        # entirely. Being a wx event handler, the traceback went to stderr rather than the
+        # analysis log, so an artifact could go missing with nothing recorded anywhere.
+        for folder in ("debugger", "tlsdump"):
+            try:
+                upload_files(folder)
+            except Exception:
+                self.log(f"Failed to upload {folder} files:\n{traceback.format_exc()}")
+
         self.GetMainFrame().statusBar.Finish("Analysis complete")
         self.log("Shutting down")
         try:

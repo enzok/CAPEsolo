@@ -59,6 +59,10 @@ def upload_to_host(
 
     size = get_upload_size(file_path)
     if not size:
+        # Silent before, which made an empty or oversized artifact indistinguishable from a
+        # successful upload: the caller carries on and logs success, and the file simply never
+        # appears on the host. get_upload_size already explains an oversized file.
+        log.warning("Not uploading %s to %s: nothing to send (empty file)", file_path, dump_path)
         return
 
     log.info(
