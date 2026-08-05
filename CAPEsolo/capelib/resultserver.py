@@ -74,6 +74,10 @@ RESULT_UPLOADABLE = (
     b"aux_",
     b"aux_/amsi",
     b"aux_/js_console",
+    # sslkeylogfile uploads to "aux/sslkeylogfile/sslkeys.log". Every aux_ subdirectory has to
+    # be listed individually - the check is an exact match on the directory, not a prefix - so
+    # without this the TLS secrets were refused and the client disconnected.
+    b"aux_/sslkeylogfile",
     b"curtain",
     b"debugger",
     b"tlsdump",
