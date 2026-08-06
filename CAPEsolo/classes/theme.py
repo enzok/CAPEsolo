@@ -472,6 +472,13 @@ def _style_widget(w):
         if any(x in label for x in ["kill", "terminate", "delete", "cancel", "stop"]):
             w.SetBackgroundColour(BG_RED_ALERT)
             w.SetForegroundColour(FG_RED_ALERT)
+        elif "launch" in label:
+            # The counterpart to Kill: the one control that starts a detonation. Shares
+            # ACCENT_GREEN with the debugger's CIP row rather than adding a token, because
+            # that colour is already defined as a fill sat underneath FG_PRIMARY and is
+            # tuned for both palettes - retune it there and this follows.
+            w.SetBackgroundColour(ACCENT_GREEN)
+            w.SetForegroundColour(FG_PRIMARY)
         else:
             w.SetBackgroundColour(BG_BUTTON)
             w.SetForegroundColour(FG_PRIMARY)
