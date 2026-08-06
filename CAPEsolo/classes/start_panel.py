@@ -15,6 +15,7 @@ from CAPEsolo.capelib.resultserver import ResultServer
 from CAPEsolo.capelib.utils import sanitize_filename
 from CAPEsolo.lib.common.hashing import hash_file
 from CAPEsolo.utils.update_yara import UpdateYara
+from .analysis_conf import AnalysisConfPanel
 from .debug_console import DebugConsole
 from .json_report import GetResults
 from .html_report import ReportHTML
@@ -299,7 +300,7 @@ class StartPanel(wx.Panel):
         self.analysisConfExpander.Bind(wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged)
         self.analysisConfExpander.GetPane().SetMinSize(self.GetSize())
         analysisConfPane = self.analysisConfExpander.GetPane()
-        self.analysisEditor = wx.TextCtrl(analysisConfPane, style=wx.TE_MULTILINE, size=self.GetSize())
+        self.analysisEditor = AnalysisConfPanel(analysisConfPane)
         analysisConfSizer.Add(self.analysisConfExpander, proportion=1, flag=wx.EXPAND | wx.ALL, border=0)
         analysisConfPaneSizer = wx.BoxSizer(wx.VERTICAL)
         analysisConfPaneSizer.Add(self.analysisEditor, proportion=1, flag=wx.EXPAND | wx.ALL, border=0)
@@ -694,16 +695,9 @@ class StartPanel(wx.Panel):
         return
 
     def LoadAnalysisConfFile(self):
-        try:
-            analysisConf = os.path.join(self.capesoloRoot, "analysis_conf.default")
-            with open(analysisConf, "r") as hfile:
-                self.analysisEditor.SetValue(hfile.read())
-        except IOError as e:
-            wx.MessageBox(
-                f"Failed to load analysis.conf: {str(e)}",
-                "Error",
-                wx.OK | wx.ICON_ERROR,
-            )
+        # The default file is the schema: its keys become the controls and its ";" comments
+        # become their tooltips, so it stays the one place a key is described.
+        self.analysisEditor.Load(os.path.join(self.capesoloRoot, "analysis_conf.default"))
 
     def OnOptionInputClick(self, event):
         if self.optionsCtrl.GetValue() == "option1=value, option2=value, etc...":
@@ -823,7 +817,6 @@ class StartPanel(wx.Panel):
         currentDatetime = datetime.now()
         formattedDatetime = currentDatetime.strftime("%Y%m%dT%H:%M:%S")
         filename = str(self.target)
-        conf = self.analysisEditor.GetValue()
         userOptions = self.optionsCtrl.GetValue()
         timeout = int(self.timeoutInput.GetValue())
         sep = ","
@@ -857,15 +850,19 @@ class StartPanel(wx.Panel):
             timeout = 60 * 60 * 4  # 4 hours
             sep = ","
 
-        conf += f"\nenforce_timeout = {self.enforceTimeout}"
         self.countdown = timeout
-        conf += f"\ntimeout = {timeout}"
         debuggerOptions = self.GetDebuggerOptions()
-        conf += f"\nfile_name = {filename}"
-        conf += f"\nclock = {formattedDatetime}"
-        conf += f"\npackage = {self.package}"
-        conf += f"\noptions = {userOptions},{debuggerOptions}"
-        self.analysisEditor.SetValue(conf)
+        # Returned rather than written back into the editor. Appending these to the editor's
+        # own text meant a second launch in the same session appended them a second time, and
+        # configparser rejects the duplicate keys outright - so the run failed before it began.
+        return {
+            "enforce_timeout": self.enforceTimeout,
+            "timeout": timeout,
+            "file_name": filename,
+            "clock": formattedDatetime,
+            "package": self.package,
+            "options": f"{userOptions},{debuggerOptions}",
+        }
 
     def GetDebuggerOptions(self):
         opts = []
@@ -948,8 +945,7 @@ class StartPanel(wx.Panel):
                     )
                     return
 
-            self.AddTargetOptions(event)
-            self.SaveAnalysisFile(event, False)
+            self.SaveAnalysisFile(event, False, self.AddTargetOptions(event))
             mainFrame = self.GetMainFrame()
             size = mainFrame.GetSize()
             position = mainFrame.GetPosition()
@@ -960,12 +956,22 @@ class StartPanel(wx.Panel):
         except Exception as e:
             wx.MessageBox(f"Failed to execute the command: {e}", "Error", wx.OK | wx.ICON_ERROR)
 
-    def SaveAnalysisFile(self, event, ack=True):
-        content = self.analysisEditor.GetValue()
+    def SaveAnalysisFile(self, event, ack=True, runtime=None):
+        # Generated from the form every time, so the file never accumulates keys across runs.
+        content = self.analysisEditor.GetText(runtime)
         path = os.path.join("analysis.conf")
         try:
             with open(path, "w") as hfile:
                 hfile.write(content)
+
+            # A second copy in the analysis folder. The analyzer reads the working-directory
+            # one, but everything that examines a finished analysis expects to find the
+            # config beside the results - RunSignatures builds conf_path that way
+            # (capelib/signatures.py), matching CAPEv2, and it resolved to a file that was
+            # never written. It also makes the folder self-describing: which options and
+            # which auxiliary modules produced these results.
+            with suppress(OSError):
+                Path(self.analysisDir, "analysis.conf").write_text(content)
 
             if ack:
                 wx.MessageBox(
