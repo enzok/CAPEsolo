@@ -41,6 +41,11 @@ KEY_GROUPS = (
 )
 OTHER_GROUP = "Auxiliary modules"
 
+# Auxiliary modules are bare checkbox labels, so more fit across a row than the label-plus-
+# field pairs in the other groups.
+AUX_COLUMNS = 5
+FIELD_COLUMNS = 4
+
 # Free-text keys wide enough for their content; everything else takes the narrow default.
 WIDE_KEYS = ("file_type", "exports", "upload_max_size", "ip")
 
@@ -233,7 +238,8 @@ class AnalysisConfPanel(wx.Panel):
                 continue
 
             box = wx.StaticBoxSizer(wx.VERTICAL, self, group)
-            grid = wx.FlexGridSizer(cols=4, hgap=12, vgap=6)
+            columns = AUX_COLUMNS if group == OTHER_GROUP else FIELD_COLUMNS
+            grid = wx.FlexGridSizer(cols=columns, hgap=12, vgap=6)
             for key in keys:
                 grid.Add(self.BuildControl(box.GetStaticBox(), key), flag=wx.ALIGN_CENTER_VERTICAL)
             box.Add(grid, flag=wx.ALL, border=5)
