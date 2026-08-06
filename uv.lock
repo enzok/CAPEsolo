@@ -71,7 +71,7 @@ wheels = [
 
 [[package]]
 name = "cape-parsers"
-version = "0.1.64"
+version = "0.1.66"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "capstone" },
@@ -85,9 +85,9 @@ dependencies = [
     { name = "unicorn" },
     { name = "yara-python" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f2/bf/baf5c07cccc16639561d8d0ccc21e97837f8477d42ed73a3da508aa11e0e/cape_parsers-0.1.64.tar.gz", hash = "sha256:ecd42b34244d9559f141f9d4ce9ac2887901a6df12f54440934113ef4e9639df", size = 149704, upload-time = "2026-06-05T16:13:25.183Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8b/41/2c6690d0a2ce85242a2023ef303115fed94adba705a0cc8f0e61c56e3f0c/cape_parsers-0.1.66.tar.gz", hash = "sha256:c4529945a7dfb148c34c5a9d353156b47dbceb98a9fb6816c72adb1083de8131", size = 160276, upload-time = "2026-08-06T12:08:11.677Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/23/e4/ec25082fcb085a73fbca7715335a68956d354532b6615ebdf25329b37a5e/cape_parsers-0.1.64-py3-none-any.whl", hash = "sha256:62d3541dfd0ba54e77d747d392a4dffd8e64b3a557fc67a2a667487b93f9adbd", size = 205730, upload-time = "2026-06-05T16:13:23.746Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/59/878dbd67d81d4cd6175b910d91441898dc06095ddac66fa9c6400c058c37/cape_parsers-0.1.66-py3-none-any.whl", hash = "sha256:59ac24369cad9bca66e06137526a77a2563d10bf3e8d98f707a78eea6b7dc783", size = 217802, upload-time = "2026-08-06T12:08:10.258Z" },
 ]
 
 [[package]]
@@ -127,7 +127,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bs2json", specifier = ">=0.3.0" },
-    { name = "cape-parsers", specifier = ">=0.1.64" },
+    { name = "cape-parsers", specifier = ">=0.1.66" },
     { name = "cryptography", specifier = ">=49.0.0" },
     { name = "distorm3s", specifier = "==3.5.5" },
     { name = "dnspython", specifier = ">=2.8.0" },

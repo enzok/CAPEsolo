@@ -19,7 +19,7 @@ dependencies = [
     "dnspython>=2.8.0",
     "tldextract>=5.3.1",
     "bs2json>=0.3.0",
-    "cape-parsers>=0.1.64",
+    "cape-parsers>=0.1.66",
     "pytest>=9.0.3",
     "setuptools>=83.0.0",
     "typing-extensions==4.16.0",
