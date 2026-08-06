@@ -32,7 +32,7 @@ dependencies = [
     "tlsh-python>=0.1.0",
     "mcp>=2.0.0",
     "dpkt>=1.9.8",
-    "httpreplay-ng>=0.4.1",
+    "httpreplay-ng>=0.4.2",
 ]
 
 [project.scripts]
