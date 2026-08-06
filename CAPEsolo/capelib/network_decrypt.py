@@ -4,9 +4,10 @@ This is CAPEv2's approach, from modules/processing/network.py (the Pcap2 class a
 get_tlsmaster): hand httpreplay a mapping of TLS randoms to master secrets and let it
 reassemble and decrypt the streams, producing the plaintext requests and responses.
 
-Kept apart from network.py because it is the only part of the network stack that needs
-dpkt and httpreplay. network.py stays importable - and the Network tab's summary keeps
-working - on an install where those are missing or fail to build.
+The engine is httpreplay-ng, which imports as "httpreplay" and is on PyPI, so it installs
+as an ordinary dependency. Kept apart from network.py all the same: network.py stays
+importable - and the Network tab's summary keeps working - on an install where dpkt or
+httpreplay are missing or broken.
 
 Both secret sources feed it. capemon's tlsdump.log carries the client random, the server
 random and the master secret together, which is the pair CAPEv2 keys on. httpreplay also
@@ -78,9 +79,7 @@ def _IsFresh(derived, source):
     )
 
 
-FORK_URL = "git+https://github.com/CAPESandbox/httpreplay.git"
-
-INSTALL_HINT = f'pip install "httpreplay @ {FORK_URL}"'
+INSTALL_HINT = "pip install httpreplay-ng"
 
 
 def Unavailable():
@@ -89,11 +88,11 @@ def Unavailable():
     Checked at call time rather than by a module-level import so a missing or wrong
     httpreplay degrades to "no decryption" instead of breaking the whole report.
 
-    The wrong one has to be detected, not just a missing one: PyPI carries an unrelated
-    project also called httpreplay - the one the CAPESandbox fork was taken from - so a plain
-    "pip install httpreplay" yields modules that import perfectly and then cannot decrypt.
-    Capabilities are probed rather than a version string, since that is what actually has to
-    hold, and a version number would not distinguish the two anyway.
+    The wrong one still has to be detected, not just a missing one: httpreplay-ng imports as
+    "httpreplay", and PyPI also carries the older project of that literal name, the one it was
+    forked from. Install that by mistake and the modules import perfectly and then cannot
+    decrypt. Capabilities are probed rather than a version string, since capability is what
+    actually has to hold and the two projects version independently.
     """
     try:
         import dpkt  # noqa: F401
@@ -106,7 +105,7 @@ def Unavailable():
         import httpreplay.reader
         import httpreplay.smegma
     except Exception as e:
-        return f"httpreplay is not installed ({e}); {INSTALL_HINT}"
+        return f"httpreplay-ng is not installed ({e}); {INSTALL_HINT}"
 
     required = (
         (httpreplay.cut, "https_handler"),
@@ -124,7 +123,7 @@ def Unavailable():
     ]
     if missing:
         return (
-            "the installed httpreplay is not the CAPESandbox fork - missing "
+            "the installed httpreplay is not httpreplay-ng - missing "
             + ", ".join(missing)
             + f". Replace it with: {INSTALL_HINT}"
         )

@@ -9,14 +9,6 @@ Python GUI to run capemon in standalone VM. Provides a subset of CAPE (Configura
   * https://aka.ms/vs/17/release/vc_redist.x64.exe
 * Install CAPEsolo.
   * pip install CAPEsolo
-* Optional, for decrypting TLS streams on the Network tab:
-  * pip install "httpreplay @ git+https://github.com/CAPESandbox/httpreplay.git"
-  * This is the CAPESandbox fork and is not on PyPI, so it cannot be a normal dependency -
-    PyPI rejects packages whose metadata points at a git URL. Do not `pip install httpreplay`
-    without the URL: PyPI carries an unrelated project of the same name, which imports fine
-    and then cannot decrypt anything.
-  * Without it the Network tab still parses the capture and matches TLS sessions against the
-    key log; only the decrypted request and response bodies are missing.
 * Snapshot your VM.
 
 Quick Start 

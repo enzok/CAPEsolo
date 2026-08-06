@@ -18,7 +18,7 @@ from .strings_panel import StringsPanel
 from .target_info import TargetInfoPanel
 from .yara_panel import YaraPanel
 from .signatures_panel import SignaturesPanel
-from .theme import BG_MAIN, _init as _init_theme, apply_theme
+from .theme import BG_MAIN, FONT_UI, ToggleTheme, _init as _init_theme, apply_theme, is_dark
 from CAPEsolo.capelib.config_paths import config_paths
 from CAPEsolo.capelib.path_utils import path_mkdir
 
@@ -108,13 +108,74 @@ class MainFrame(wx.Frame):
         # proportion-1 EXPAND child this lays out identically to the previous default.
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(self.notebook, 1, wx.EXPAND)
+
+        # The status bar paints itself through its own EVT_PAINT and is double buffered, so
+        # the theme toggle sits beside it rather than as a child of it.
+        bottom = wx.BoxSizer(wx.HORIZONTAL)
         self.statusBar = AnalysisStatusBar(self.panel)
-        sizer.Add(self.statusBar, 0, wx.EXPAND)
+        self.themeButton = wx.Button(self.panel, label=self.ThemeLabel(), style=wx.BU_EXACTFIT)
+        self.themeButton.SetToolTip("Switch between the light and dark palettes")
+        self.themeButton.Bind(wx.EVT_BUTTON, self.OnToggleTheme)
+        bottom.Add(self.statusBar, 1, wx.EXPAND)
+        bottom.Add(self.themeButton, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, 6)
+        sizer.Add(bottom, 0, wx.EXPAND)
 
         self.panel.SetSizer(sizer)
         self.SetBackgroundColour(BG_MAIN)
         self.panel.SetBackgroundColour(BG_MAIN)
         apply_theme(self)
+        self.StyleThemeButton()
+
+    def ThemeLabel(self):
+        return "Theme: Dark" if is_dark() else "Theme: Light"
+
+    def StyleThemeButton(self):
+        """Shrink the toggle a point below the rest of the UI.
+
+        Built from FONT_UI's properties rather than by mutating the font the button reports:
+        that object is the shared FONT_UI token, so changing it in place would shrink every
+        control in the app. Has to run after each apply_theme, which resets buttons to FONT_UI.
+        """
+        self.themeButton.SetFont(
+            wx.Font(
+                max(6, FONT_UI.GetPointSize() - 1),
+                FONT_UI.GetFamily(),
+                FONT_UI.GetStyle(),
+                FONT_UI.GetWeight(),
+                faceName=FONT_UI.GetFaceName(),
+            )
+        )
+        self.themeButton.SetMinSize(wx.DefaultSize)
+        self.themeButton.Fit()
+
+    def OnToggleTheme(self, event):
+        self.RefreshTheme()
+
+    def RefreshTheme(self):
+        """Switch palette and restyle everything already on screen."""
+        ToggleTheme()
+        apply_theme(self)
+
+        # apply_theme re-sets widget colours and the grids' defaults, but not a GridCellAttr
+        # already attached to a row: SetBackgroundColour copied the colour in when the attr
+        # was built, so mutating the token afterwards never reaches it. Every panel that
+        # shades rows already owns the method that rebuilds them, so reuse it rather than
+        # teaching this loop about each panel's grid.
+        for index in range(self.notebook.GetPageCount()):
+            shade = getattr(self.notebook.GetPage(index), "ApplyAlternateRowShading", None)
+            if shade is None:
+                continue
+
+            # One page failing to restyle must not abort the switch half way through.
+            with suppress(Exception):
+                shade()
+
+        self.themeButton.SetLabel(self.ThemeLabel())
+        self.StyleThemeButton()
+        # Reads TIMER_WARN at paint time, so a repaint is all it needs.
+        self.statusBar.Refresh()
+        self.Layout()
+        self.Refresh()
 
     def OnNotebookPageChanged(self, event):
         newSelection = event.GetSelection()

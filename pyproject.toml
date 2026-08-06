@@ -31,15 +31,8 @@ dependencies = [
     "pymongo>=4.17.0",
     "tlsh-python>=0.1.0",
     "mcp>=2.0.0",
-    "dpkt==1.9.6",
-]
-
-
-#   pip install "httpreplay @ git+https://github.com/CAPESandbox/httpreplay.git"
-[dependency-groups]
-dev = [
-
-    "httpreplay @ git+https://github.com/CAPESandbox/httpreplay.git@f2387a58562e6fb14bb2cd1811225c2823ee54e6",
+    "dpkt>=1.9.8",
+    "httpreplay-ng>=0.4.0",
 ]
 
 [project.scripts]

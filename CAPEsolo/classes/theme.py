@@ -23,11 +23,12 @@ import configparser
 import logging
 import os
 import sys
+from contextlib import suppress
 
 import wx
 import wx.grid as gridlib
 
-from CAPEsolo.capelib.config_paths import config_paths
+from CAPEsolo.capelib.config_paths import config_paths, user_config_path
 
 log = logging.getLogger(__name__)
 
@@ -243,6 +244,43 @@ def _read_theme_name() -> str:
         return DEFAULT_THEME
 
     return config.get("gui", "theme", fallback=DEFAULT_THEME).strip().lower()
+
+
+def _write_theme_name(mode: str) -> None:
+    """Persist the palette to the user cfg.ini, the copy pip upgrades never overwrite.
+
+    Read-modify-write so the rest of the user's settings survive, and best effort: a
+    read-only config directory must not stop the toggle working for the current session.
+    """
+    path = user_config_path()
+    config = configparser.ConfigParser()
+    with suppress(configparser.Error, OSError):
+        config.read(path)
+
+    if not config.has_section("gui"):
+        config.add_section("gui")
+    config.set("gui", "theme", mode)
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as handle:
+            config.write(handle)
+    except OSError as e:
+        log.warning("Could not save the theme setting to %s: %s", path, e)
+
+
+def ToggleTheme() -> str:
+    """Switch to the other palette and remember the choice. Returns the new mode.
+
+    Only the tokens change here. set_theme mutates them in place so anything that captured
+    one by value follows along, but widgets copied their colours when they were styled, so
+    the caller still has to re-walk its tree with apply_theme.
+    """
+    mode = LIGHT if is_dark() else DARK
+    set_theme(mode)
+    _write_theme_name(mode)
+
+    return mode
 
 
 def _init():
