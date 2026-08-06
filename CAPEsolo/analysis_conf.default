@@ -23,9 +23,9 @@ screenshots_windows = False
 ; tlsdump injects capemon into lsass for Schannel; sslkeylogfile covers anything honouring
 ; the SSLKEYLOGFILE variable. The analyzer only imports an auxiliary module whose name it
 ; finds here, so sslkeylogfile never loaded while this key was absent.
-sslkeylogfile = False
+sslkeylogfile = True
 sysmon_windows = False
-tlsdump = False
+tlsdump = True
 usage = False
 file_pickup = True
 permissions = False
