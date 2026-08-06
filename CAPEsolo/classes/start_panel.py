@@ -2,6 +2,7 @@ import hashlib
 import logging
 import os
 import shutil
+import time
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +25,11 @@ from .logger_window import LoggerWindow
 from .theme import apply_theme
 
 log = logging.getLogger(__name__)
+
+# How long to wait for the end-of-run uploads to appear in the analysis folder before the
+# result server is stopped. Generous because it only elapses in full when something is
+# genuinely wrong; the normal case returns within a couple of polls.
+UPLOAD_WAIT_SECONDS = 15.0
 
 SANDBOXPACKAGES = (
     "Shellcode",
@@ -643,12 +649,15 @@ class StartPanel(wx.Panel):
         # anything else raised while uploading the debugger logs skipped the tlsdump upload
         # entirely. Being a wx event handler, the traceback went to stderr rather than the
         # analysis log, so an artifact could go missing with nothing recorded anywhere.
-        for folder in ("debugger", "tlsdump"):
+        folders = ("debugger", "tlsdump")
+        pending = self.PendingUploads(folders)
+        for folder in folders:
             try:
                 upload_files(folder)
             except Exception:
                 self.log(f"Failed to upload {folder} files:\n{traceback.format_exc()}")
 
+        self.WaitForUploads(pending)
         self.GetMainFrame().statusBar.Finish("Analysis complete")
         self.log("Shutting down")
         try:
@@ -670,6 +679,53 @@ class StartPanel(wx.Panel):
         except Exception:
             self.log(traceback.format_exc())
         return True
+
+    def PendingUploads(self, folders):
+        """Destination paths the end-of-run uploads are expected to produce."""
+        from CAPEsolo.analyzer import PATHS
+
+        pending = []
+        for folder in folders:
+            source = Path(PATHS["root"], folder)
+            if not source.is_dir():
+                continue
+
+            for path in sorted(source.iterdir()):
+                if path.is_file():
+                    pending.append(Path(self.analysisDir, folder, path.name))
+
+        return pending
+
+    def WaitForUploads(self, pending, timeout=UPLOAD_WAIT_SECONDS):
+        """Wait for the end-of-run uploads to land before the result server is stopped.
+
+        upload_to_host returns once the bytes are in the socket buffer, not when the result
+        server has written them to disk. Shutting the server down straight afterwards closed
+        the listener while an upload was still waiting to be accepted, and anything not yet
+        accepted is dropped - the analysis log showed tlsdump.log handed over, then a
+        connection closed "unnegotiated" and the file never written.
+
+        Both ends are the same machine here, so the files themselves are the acknowledgement
+        the protocol does not provide. Sleeping also hands the CPU to the server's thread,
+        which is what lets it accept the connection at all: this handler otherwise runs from
+        upload straight into shutdown without ever yielding.
+        """
+        if not pending:
+            return
+
+        deadline = time.monotonic() + timeout
+        missing = [path for path in pending if not path.is_file()]
+        while missing and time.monotonic() < deadline:
+            time.sleep(0.1)
+            missing = [path for path in missing if not path.is_file()]
+
+        if missing:
+            self.log(
+                f"Uploads did not arrive within {timeout}s: "
+                + ", ".join(str(path) for path in missing)
+            )
+        else:
+            self.log(f"All {len(pending)} end-of-run upload(s) arrived")
 
     def MoveFiles(self, folder):
         logFolder = f"{self.analyzer.PATHS['root']}\\{folder}"
