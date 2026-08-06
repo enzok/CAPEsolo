@@ -78,22 +78,67 @@ def _IsFresh(derived, source):
     )
 
 
-def Available():
-    """Whether the optional decryption dependencies are importable.
+FORK_URL = "git+https://github.com/CAPESandbox/httpreplay.git"
 
-    Checked at call time rather than by a module-level import so a broken or absent
+INSTALL_HINT = f'pip install "httpreplay @ {FORK_URL}"'
+
+
+def Unavailable():
+    """Why decryption cannot run, or "" when it can.
+
+    Checked at call time rather than by a module-level import so a missing or wrong
     httpreplay degrades to "no decryption" instead of breaking the whole report.
+
+    The wrong one has to be detected, not just a missing one: PyPI carries an unrelated
+    project also called httpreplay - the one the CAPESandbox fork was taken from - so a plain
+    "pip install httpreplay" yields modules that import perfectly and then cannot decrypt.
+    Capabilities are probed rather than a version string, since that is what actually has to
+    hold, and a version number would not distinguish the two anyway.
     """
     try:
         import dpkt  # noqa: F401
-        import httpreplay.cut  # noqa: F401
-        import httpreplay.reader  # noqa: F401
-        import httpreplay.smegma  # noqa: F401
     except Exception as e:
-        log.debug("TLS decryption unavailable: %s", e)
-        return False
+        return f"dpkt is not installed ({e})"
 
-    return True
+    try:
+        import httpreplay.cut
+        import httpreplay.misc
+        import httpreplay.reader
+        import httpreplay.smegma
+    except Exception as e:
+        return f"httpreplay is not installed ({e}); {INSTALL_HINT}"
+
+    required = (
+        (httpreplay.cut, "https_handler"),
+        (httpreplay.cut, "smtp_handler"),
+        (httpreplay.reader, "PcapReader"),
+        (httpreplay.smegma, "TCPPacketStreamer"),
+        # Fork additions. Their absence means the PyPI project got installed instead.
+        (httpreplay.misc, "read_tlsmaster"),
+        (httpreplay.misc, "JA3"),
+    )
+    missing = [
+        f"{module.__name__}.{name}"
+        for module, name in required
+        if not hasattr(module, name)
+    ]
+    if missing:
+        return (
+            "the installed httpreplay is not the CAPESandbox fork - missing "
+            + ", ".join(missing)
+            + f". Replace it with: {INSTALL_HINT}"
+        )
+
+    return ""
+
+
+def Available():
+    """Whether TLS stream decryption can run."""
+    reason = Unavailable()
+    if reason:
+        log.debug("TLS decryption unavailable: %s", reason)
+
+    return not reason
 
 
 def GetTlsMaster(analysisDir):
@@ -222,10 +267,11 @@ def DecryptStreams(analysisDir, pcapPath, tlsmaster=None):
         "converted": {},
     }
 
-    if not Available():
-        output["error"] = (
-            "dpkt and httpreplay are needed to decrypt streams; install them to enable this"
-        )
+    reason = Unavailable()
+    if reason:
+        # Carries the specific reason, so the Network tab can say what to install rather than
+        # only that decryption did not happen.
+        output["error"] = f"cannot decrypt streams: {reason}"
         return output
 
     output["available"] = True

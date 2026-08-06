@@ -103,7 +103,6 @@ dependencies = [
     { name = "dpkt" },
     { name = "gevent" },
     { name = "greenlet" },
-    { name = "httpreplay" },
     { name = "jinja2" },
     { name = "keystone-engine" },
     { name = "mcp" },
@@ -124,6 +123,11 @@ dependencies = [
     { name = "yara-python" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "httpreplay" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "bs2json", specifier = ">=0.3.0" },
@@ -134,7 +138,6 @@ requires-dist = [
     { name = "dpkt", specifier = "==1.9.6" },
     { name = "gevent", specifier = ">=26.7.0" },
     { name = "greenlet", specifier = ">=3.5.4" },
-    { name = "httpreplay", git = "https://github.com/CAPESandbox/httpreplay.git" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "keystone-engine", specifier = ">=0.9.2" },
     { name = "mcp", specifier = ">=2.0.0" },
@@ -154,6 +157,9 @@ requires-dist = [
     { name = "wxpython", specifier = ">=4.3.0" },
     { name = "yara-python", specifier = ">=4.5.4" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "httpreplay", git = "https://github.com/CAPESandbox/httpreplay.git?rev=f2387a58562e6fb14bb2cd1811225c2823ee54e6" }]
 
 [[package]]
 name = "capstone"
@@ -587,7 +593,7 @@ wheels = [
 [[package]]
 name = "httpreplay"
 version = "0.3"
-source = { git = "https://github.com/CAPESandbox/httpreplay.git#f2387a58562e6fb14bb2cd1811225c2823ee54e6" }
+source = { git = "https://github.com/CAPESandbox/httpreplay.git?rev=f2387a58562e6fb14bb2cd1811225c2823ee54e6#f2387a58562e6fb14bb2cd1811225c2823ee54e6" }
 dependencies = [
     { name = "brotli" },
     { name = "click" },

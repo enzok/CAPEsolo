@@ -32,7 +32,14 @@ dependencies = [
     "tlsh-python>=0.1.0",
     "mcp>=2.0.0",
     "dpkt==1.9.6",
-    "httpreplay",
+]
+
+
+#   pip install "httpreplay @ git+https://github.com/CAPESandbox/httpreplay.git"
+[dependency-groups]
+dev = [
+
+    "httpreplay @ git+https://github.com/CAPESandbox/httpreplay.git@f2387a58562e6fb14bb2cd1811225c2823ee54e6",
 ]
 
 [project.scripts]
@@ -42,9 +49,6 @@ CAPEsolo-mcp = "CAPEsolo.mcp_server:main"
 [tool.uv.build-backend]
 module-name = "CAPEsolo"
 module-root = "."
-
-[tool.uv.sources]
-httpreplay = { git = "https://github.com/CAPESandbox/httpreplay.git" }
 
 [tool.poetry]
 requires-poetry = ">=2.0"
