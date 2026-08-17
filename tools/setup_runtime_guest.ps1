@@ -135,9 +135,21 @@ if (-not $SkipPython) {
     Write-Step 'Installing Python 3.13'
     $pyVer = ''
     if (Get-Command python -ErrorAction SilentlyContinue) { $pyVer = (& python --version) 2>&1 }
+    $doInstall = $true
     if ($pyVer -match '3\.13\.') {
         Write-Ok "python already present: $pyVer"
-    } else {
+        $doInstall = $false
+    } elseif ($pyVer -match '^Python ') {
+        # An older Python is on PATH. Installing 3.13 adds it side-by-side and prepends it to PATH;
+        # it does not remove the existing interpreter. Let the operator decide.
+        Write-Note "older Python detected: $pyVer"
+        $ans = Read-Host 'Install Python 3.13 alongside it (prepended to PATH)? [y = install / N = leave as is]'
+        if ($ans -notmatch '^(y|yes)$') {
+            Write-Ok "leaving existing Python as is ($pyVer)"
+            $doInstall = $false
+        }
+    }
+    if ($doInstall) {
         Install-ViaWingetOrExe -Name 'Python 3.13' -WingetId 'Python.Python.3.13' `
             -Url $PythonExeUrl `
             -SilentArgs @('/quiet', 'InstallAllUsers=1', 'PrependPath=1', 'Include_test=0')
