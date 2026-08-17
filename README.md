@@ -3,7 +3,7 @@ Python GUI to run capemon in standalone VM. Provides a subset of CAPE (Configura
 * Create a Windows 10 VM that's suitable for running malware.
   * Use the CAPEv2 guest guide for configuration details.
   * https://capev2.readthedocs.io/en/latest/installation/guest/index.html
-* Install Python in VM, tested on 64-bit Python versions 3.11 and 3.12, and add Python to path.
+* Install Python in VM, tested on 64-bit Python versions 3.11, 3.12, and 3.12. Add Python to path.
 * Download and install both Microsoft Visual C++ Redistributables:
   * https://aka.ms/vs/17/release/vc_redist.x86.exe
   * https://aka.ms/vs/17/release/vc_redist.x64.exe
