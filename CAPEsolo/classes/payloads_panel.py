@@ -17,6 +17,12 @@ from .custom_grid import CopyableGrid
 from .hexview_window import HexViewWindow
 from .pe_window import PeWindow
 from .theme import GRID_ROW_ALT, apply_theme
+from .vt_helper import (
+    confirm_vt_upload,
+    format_vt_rows,
+    run_vt_lookup_async,
+    run_vt_upload_async,
+)
 
 
 class PayloadsPanel(wx.Panel):
@@ -27,6 +33,9 @@ class PayloadsPanel(wx.Panel):
         self.payloadsLoaded = False
         self.jsonFileExists = False
         self.button_to_path = {}
+        # VT lookup button id -> (grid, sha256, path, uploadBtn); upload button id -> (path, sha256, grid).
+        self.vt_buttons = {}
+        self.vt_upload_buttons = {}
         self.panel = scrolled.ScrolledPanel(
             self, -1, style=wx.TAB_TRAVERSAL | wx.SUNKEN_BORDER
         )
@@ -148,6 +157,19 @@ class PayloadsPanel(wx.Panel):
         showBtn.Bind(wx.EVT_BUTTON, self.OnShowInExplorer)
         self.button_to_path[showBtn.GetId()] = path
         buttonBox.Add(showBtn, 0, wx.ALIGN_LEFT | wx.ALL, 5)
+
+        vtBtn = wx.Button(self.panel, label="VirusTotal")
+        vtBtn.Bind(wx.EVT_BUTTON, self.OnVirusTotalLookup)
+        buttonBox.Add(vtBtn, 0, wx.ALIGN_LEFT | wx.ALL, 5)
+
+        uploadBtn = wx.Button(self.panel, label="Upload to VT")
+        uploadBtn.Bind(wx.EVT_BUTTON, self.OnVtUpload)
+        uploadBtn.Hide()  # revealed only when a lookup finds the payload is not already on VT
+        buttonBox.Add(uploadBtn, 0, wx.ALIGN_LEFT | wx.ALL, 5)
+
+        sha256 = fileinfo.get("sha256")
+        self.vt_buttons[vtBtn.GetId()] = (grid, sha256, path, uploadBtn)
+        self.vt_upload_buttons[uploadBtn.GetId()] = (path, sha256, grid)
 
         self.panelsizer.Add(buttonBox, proportion=1, flag=wx.EXPAND)
 
@@ -284,3 +306,68 @@ class PayloadsPanel(wx.Panel):
             wx.MessageBox(
                 f"Failed to open Explorer: {e}", "Error", wx.OK | wx.ICON_ERROR
             )
+
+    def OnVirusTotalLookup(self, event):
+        buttonId = event.GetId()
+        grid, sha256, path, uploadBtn = self.vt_buttons.get(
+            buttonId, (None, None, None, None)
+        )
+        if not sha256:
+            return
+        button = event.GetEventObject()
+        # Disabled while in flight so a second click can't duplicate the rows; a successful
+        # lookup leaves it disabled, an error re-enables it so the user can retry.
+        button.Disable()
+        run_vt_lookup_async(sha256, lambda result: self._OnVtDone(grid, button, uploadBtn, result))
+
+    def _OnVtDone(self, grid, button, uploadBtn, result):
+        if result.get("error"):
+            button.Enable()
+            wx.MessageBox(
+                result.get("msg", "VirusTotal lookup failed"), "VirusTotal", wx.OK | wx.ICON_ERROR
+            )
+            return
+        for label, value in format_vt_rows(result):
+            self.AddNewRow(grid, label, value)
+        # Not on VT: offer to publish this payload.
+        if result.get("found") is False:
+            uploadBtn.Show()
+        grid.AutoSizeRows()
+        self.ApplyAlternateRowShading(grid)
+        # The scrolled panel caches its virtual size, so rows added after load need this to be reachable.
+        self.panel.Layout()
+        self.Layout()
+        self.panel.SetupScrolling(scroll_x=True, scroll_y=True, scrollToTop=False)
+
+    def OnVtUpload(self, event):
+        buttonId = event.GetId()
+        path, sha256, grid = self.vt_upload_buttons.get(buttonId, (None, None, None))
+        if not path or not confirm_vt_upload(self, path):
+            return
+        button = event.GetEventObject()
+        button.Disable()
+        self._SetStatus(f"Uploading {Path(path).name} to VirusTotal...")
+        run_vt_upload_async(path, sha256, lambda result: self._OnUploadDone(grid, button, result))
+
+    def _SetStatus(self, message):
+        mainFrame = self.GetMainFrame()
+        if mainFrame:
+            mainFrame.statusBar.SetMessage(message)
+
+    def _OnUploadDone(self, grid, button, result):
+        if result.get("error"):
+            button.Enable()
+            self._SetStatus("VirusTotal upload failed")
+            wx.MessageBox(result.get("msg", "Upload failed"), "VirusTotal", wx.OK | wx.ICON_ERROR)
+            return
+        self._SetStatus("Uploaded to VirusTotal - analysis queued")
+        # Submitted: retire the button and note the pending analysis on the payload's grid.
+        button.Hide()
+        self.AddNewRow(grid, "VT Upload", "Submitted - analysis pending")
+        if result.get("permalink"):
+            self.AddNewRow(grid, "VT Link", result["permalink"])
+        grid.AutoSizeRows()
+        self.ApplyAlternateRowShading(grid)
+        self.panel.Layout()
+        self.Layout()
+        self.panel.SetupScrolling(scroll_x=True, scroll_y=True, scrollToTop=False)
