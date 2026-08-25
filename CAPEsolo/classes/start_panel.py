@@ -186,6 +186,11 @@ class _DownloadCredentialsDialog(wx.Dialog):
             self.SetSize(wx.Size(440, self.GetSize().height))
         self.SetMinSize(self.GetSize())
 
+        # Focus the first field once the dialog is actually shown - CallAfter runs inside
+        # ShowModal's event loop - so the analyst can type straight away.
+        firstField = self.pwdCtrl or self.vtCtrl
+        wx.CallAfter(firstField.SetFocus)
+
     def _OnCharHook(self, event):
         if event.GetKeyCode() in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
             self.EndModal(wx.ID_OK)

@@ -17,7 +17,6 @@ import json
 import logging
 import os
 import sys
-import time
 from contextlib import suppress
 from ctypes import windll
 from pathlib import Path
@@ -75,11 +74,12 @@ class CapesoloApp(wx.App):
         super().__init__(*args, **kwargs)
 
     def OnInit(self):
-        hWnd = windll.kernel32.GetConsoleWindow()
-        windll.user32.ShowWindow(hWnd, 6)
+        # The splash closes itself after 2s (SPLASH_TIMEOUT); do not sleep here. A blocking sleep
+        # stalls the GUI thread so the message loop never runs, and Windows will not grant
+        # foreground to a process that has not pumped messages - which left every window, including
+        # the startup credentials dialog, stuck in the background.
         splash = SplashScreen(CAPESOLO_ROOT)
         splash.Show()
-        time.sleep(2)
         screenWidth, screenHeight = wx.DisplaySize()
         frameWidth = int(screenWidth * 0.37)
         frameHeight = int(screenHeight * 0.75)
@@ -102,6 +102,11 @@ class CapesoloApp(wx.App):
         needed = min(startTab.GetSizer().GetMinSize().width + chrome, screenWidth)
         if frame.GetSize().width < needed:
             frame.SetSize(wx.Size(needed, frameHeight))
+        # Minimise the launching console only now that the frame is up and holds the foreground.
+        # Doing it before frame.Show() (as before) handed foreground to whatever sat behind the
+        # console, so the frame came up backgrounded.
+        hWnd = windll.kernel32.GetConsoleWindow()
+        windll.user32.ShowWindow(hWnd, 6)
         return True
 
 
