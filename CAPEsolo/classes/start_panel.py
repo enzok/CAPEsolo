@@ -19,12 +19,18 @@ from sflock.ident import identify as sflock_identify
 from CAPEsolo.capelib.resultserver import ResultServer
 from CAPEsolo.capelib.utils import sanitize_filename
 from CAPEsolo.lib.common.hashing import hash_file
+from CAPEsolo.utils.download_sample import (
+    configured_sources,
+    desktop_dir,
+    download_dir,
+    download_enabled,
+)
 from CAPEsolo.utils.update_yara import UpdateYara
-from CAPEsolo.utils.download_sample import configured_sources, download_dir, download_enabled, desktop_dir
+
 from .analysis_conf import AnalysisConfPanel
 from .debug_console import DebugConsole
-from .json_report import GetResults
 from .html_report import ReportHTML
+from .json_report import GetResults
 from .key_event import EVT_ANALYZER_COMPLETE, EVT_ANALYZER_COMPLETE_ID
 from .logger_window import LoggerWindow
 from .process_tree_window import ProcessTreeWindow
@@ -111,7 +117,7 @@ def GetPreviousTarget(analysisDir):
 
 class AnalyzerCompleteEvent(wx.PyCommandEvent):
     def __init__(self, etype, eid, message=None):
-        super(AnalyzerCompleteEvent, self).__init__(etype, eid)
+        super().__init__(etype, eid)
         self.message = message
 
 
@@ -816,10 +822,10 @@ class StartPanel(scrolled.ScrolledPanel):
 
     def OnAnalyzerComplete(self, event):
         from CAPEsolo.analyzer import (
-            Files,
             INJECT_LIST,
-            disconnect_pipes,
+            Files,
             disconnect_logger,
+            disconnect_pipes,
             traceback,
             upload_files,
         )
@@ -960,7 +966,7 @@ class StartPanel(scrolled.ScrolledPanel):
             else:
                 self.log(f"Folder at path {logFolder} does not exist, skipping")
                 return
-        except IOError as e:
+        except OSError as e:
             self.log(f"Unable to access folder at path {logFolder}: {e}")
             return
 
@@ -1063,7 +1069,7 @@ class StartPanel(scrolled.ScrolledPanel):
             try:
                 self.targetPath.SetValue(pathname)
                 self.OnTargetSelection()
-            except IOError:
+            except OSError:
                 wx.LogError(f"Cannot open file '{pathname}'.")
 
     def _InitDownloadBroker(self):
@@ -1420,9 +1426,9 @@ class StartPanel(scrolled.ScrolledPanel):
                     "Success",
                     wx.OK | wx.ICON_INFORMATION,
                 )
-        except IOError as e:
+        except OSError as e:
             wx.MessageBox(
-                f"Failed to save analysis.conf: {str(e)}",
+                f"Failed to save analysis.conf: {e!s}",
                 "Error",
                 wx.OK | wx.ICON_ERROR,
             )
@@ -1554,7 +1560,7 @@ class StartPanel(scrolled.ScrolledPanel):
 
         except Exception as e:
             del busy  # noqa: F821
-            wx.MessageBox(f"Failed to update YARA rules:\n{str(e)}", "Error", wx.OK | wx.ICON_ERROR)
+            wx.MessageBox(f"Failed to update YARA rules:\n{e!s}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnYaraSave(self, event):
         yaraText = self.yaraRule.GetValue()
@@ -1562,7 +1568,7 @@ class StartPanel(scrolled.ScrolledPanel):
 
         try:
             savePath.write_text(yaraText)
-        except (OSError, IOError) as e:
+        except OSError as e:
             wx.MessageBox(
                 f"Failed to save Yara rule:\n{e}",
                 "Save Failed",
@@ -1571,7 +1577,7 @@ class StartPanel(scrolled.ScrolledPanel):
             return
 
         wx.MessageBox(
-            f"Yara rule saved to: {str(savePath)}",
+            f"Yara rule saved to: {savePath!s}",
             "Save Successful",
             wx.OK | wx.ICON_INFORMATION,
         )
@@ -1583,12 +1589,12 @@ class StartPanel(scrolled.ScrolledPanel):
             yaraPath.unlink()
         except FileNotFoundError:
             wx.MessageBox(
-                f"Yara rule file not found: {str(yaraPath)}",
+                f"Yara rule file not found: {yaraPath!s}",
                 "Delete Failed",
                 wx.OK | wx.ICON_ERROR,
             )
             return
-        except (OSError, IOError) as e:
+        except OSError as e:
             wx.MessageBox(
                 f"Failed to delete Yara rule:\n{e}",
                 "Delete Failed",
@@ -1597,7 +1603,7 @@ class StartPanel(scrolled.ScrolledPanel):
             return
 
         wx.MessageBox(
-            f"Yara rule deleted: {str(yaraPath)}",
+            f"Yara rule deleted: {yaraPath!s}",
             "Delete Successful",
             wx.OK | wx.ICON_INFORMATION,
         )
@@ -1630,13 +1636,13 @@ class StartPanel(scrolled.ScrolledPanel):
             )
             del busy
             if completed:
-                wx.MessageBox(f"JSON report completed successfully.", "JSON Report", wx.OK | wx.ICON_INFORMATION)
+                wx.MessageBox("JSON report completed successfully.", "JSON Report", wx.OK | wx.ICON_INFORMATION)
             else:
                 wx.MessageBox(f"JSON report was unsuccessful: {msg}", "JSON Report", wx.OK | wx.ICON_INFORMATION)
 
         except Exception as e:
             del busy  # noqa: F821
-            wx.MessageBox(f"Failed to create JSON report:\n{str(e)}", "Error", wx.OK | wx.ICON_ERROR)
+            wx.MessageBox(f"Failed to create JSON report:\n{e!s}", "Error", wx.OK | wx.ICON_ERROR)
 
     def HtmlReport(self, event):
         confirm = wx.MessageBox(
@@ -1659,10 +1665,10 @@ class StartPanel(scrolled.ScrolledPanel):
             completed, msg = report.run(self.analysisDir, self.capesoloRoot, results)
             del busy
             if completed:
-                wx.MessageBox(f"HTML report completed successfully.", "HTML Report", wx.OK | wx.ICON_INFORMATION)
+                wx.MessageBox("HTML report completed successfully.", "HTML Report", wx.OK | wx.ICON_INFORMATION)
             else:
                 wx.MessageBox(f"HTML report was unsuccessful: {msg}", "HTML Report", wx.OK | wx.ICON_INFORMATION)
 
         except Exception as e:
             del busy  # noqa: F821
-            wx.MessageBox(f"Failed to create HTML report:\n{str(e)}", "Error", wx.OK | wx.ICON_ERROR)
+            wx.MessageBox(f"Failed to create HTML report:\n{e!s}", "Error", wx.OK | wx.ICON_ERROR)

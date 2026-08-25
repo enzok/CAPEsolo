@@ -6,7 +6,6 @@ import zlib
 from collections import defaultdict
 from contextlib import suppress
 from threading import Condition, Lock, Thread
-from typing import Dict, List, Tuple
 
 import pywintypes
 import win32event
@@ -16,6 +15,7 @@ from distorm3 import Decode, Decode32Bits, Decode64Bits
 
 from CAPEsolo.capelib.cmdconsts import *
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
+
 from .debug_controls import (
     BreakpointsListCtrl,
     DecodedInstruction,
@@ -194,16 +194,16 @@ class ConsolePanel(wx.Panel):
         self.initMemDump = True
         self.cip = None
         self.bits = None
-        self.pageBuffers: Dict[int, bytes] = {}
+        self.pageBuffers: dict[int, bytes] = {}
         self.requestedPages = set()
         self.pageLock = Lock()
         self.pageHashes = {}
         self.idleDecodeQueue = []
-        self.exports: Dict[int, str] = {}
+        self.exports: dict[int, str] = {}
         self.exportModules = []
         self.export = None
-        self.resolvedExports: Dict[int, Dict[int, str]] = {}
-        self.resolvedStrings: Dict[int, str] = {}
+        self.resolvedExports: dict[int, dict[int, str]] = {}
+        self.resolvedStrings: dict[int, str] = {}
         self.currentExportsModule = None
         self.exportsPage = 0
         self.moduleRanges = []
@@ -488,7 +488,6 @@ class ConsolePanel(wx.Panel):
         except Exception as e:
             wx.MessageBox(f"Failed to dump memory: {e}", "Error", wx.OK | wx.ICON_ERROR)
 
-        return
 
     def AppendConsole(self, text: str):
         """Appends text to the output console."""
@@ -590,7 +589,7 @@ class ConsolePanel(wx.Panel):
             log.error("[DEBUG CONSOLE] Cannot send command: Not connected to pipe")
             return
 
-        fullCommand = f"{DBGCMD}:{command.upper()}:{data}".encode("utf-8") + b"\n"
+        fullCommand = f"{DBGCMD}:{command.upper()}:{data}".encode() + b"\n"
         Thread(target=self.BackgroundWrite, args=(fullCommand, 5000), daemon=True).start()
 
     def BackgroundWrite(self, buffer, timeout=win32event.INFINITE):
@@ -768,7 +767,7 @@ class ConsolePanel(wx.Panel):
                 hotData.extend(pageData[start - page : end - page])
 
         mode = Decode64Bits if self.bits == 64 else Decode32Bits
-        insts: List[DecodedInstruction] = []
+        insts: list[DecodedInstruction] = []
         for address, size, text, hexBytes in Decode(baseAddress, bytes(hotData), mode):
             patchText = self.PatchDisasmText(address, text)
             insts.append(DecodedInstruction(address, hexBytes, patchText))
@@ -797,7 +796,7 @@ class ConsolePanel(wx.Panel):
             wx.CallLater(1, self.ProcessNextIdlePage)
 
     def UpdateDisassemblyView(self):
-        insts: List[DecodedInstruction] = []
+        insts: list[DecodedInstruction] = []
         cache = getattr(self.disassemblyConsole, "decodeCache", [])
         for inst in cache:
             patchText = self.PatchDisasmText(inst.address, inst.text)
@@ -896,7 +895,7 @@ class ConsolePanel(wx.Panel):
 
         return disasmText
 
-    def GetAllExports(self, modules: List[Tuple[str, str, str, str]]):
+    def GetAllExports(self, modules: list[tuple[str, str, str, str]]):
         self.exportModules = list(modules)
         self.LoadNextModuleExports()
 
@@ -951,7 +950,7 @@ class ConsolePanel(wx.Panel):
 
         return False
 
-    def BuildModuleRanges(self, modules: List[Tuple[str, str, str, str]]):
+    def BuildModuleRanges(self, modules: list[tuple[str, str, str, str]]):
         for modBase, modSize, modName, modPath in modules:
             start = int(modBase, 16)
             end = start + int(modSize, 16)
@@ -1011,7 +1010,7 @@ class ConsolePanel(wx.Panel):
         if payload.startswith("Failed"):
             return
 
-        bps: List[Tuple[str, str]] = []
+        bps: list[tuple[str, str]] = []
         if "No" in payload:
             self.UpdateBreakpoints("")
             return
@@ -1030,8 +1029,8 @@ class ConsolePanel(wx.Panel):
             return
 
         curThread = None
-        tmpThreads: List[Tuple[str, str]] = []
-        threads: List[Tuple[str, str]] = []
+        tmpThreads: list[tuple[str, str]] = []
+        threads: list[tuple[str, str]] = []
         for line in payload.splitlines():
             parts = [p.strip() for p in line.split("|")]
             if len(parts) != 3:
@@ -1053,7 +1052,7 @@ class ConsolePanel(wx.Panel):
             log.warning("[DEBUG CONSOLE] Modules: %s", payload)
             return
 
-        modules: List[Tuple[str, str, str, str]] = []
+        modules: list[tuple[str, str, str, str]] = []
         if "|" not in payload:
             return
 
@@ -1240,7 +1239,7 @@ class ConsolePanel(wx.Panel):
                         if self.derefCount > 0:
                             self.derefCount -= 1
 
-            log.debug(f"[DEBUG] MemDump fault detected, refreshing PageMap + ModuleList")
+            log.debug("[DEBUG] MemDump fault detected, refreshing PageMap + ModuleList")
             self.RefreshPageMap()
             self.RefreshModuleList()
             return

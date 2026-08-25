@@ -10,13 +10,14 @@ import os
 import re
 import string
 import time
+from collections import deque
 from io import StringIO
 from pathlib import Path
-from collections import deque
 
 from markupsafe import Markup, escape
 
-from . import utils_dicts, utils_pretty_print_funcs as pp_funcs
+from . import utils_dicts
+from . import utils_pretty_print_funcs as pp_funcs
 from .path_utils import path_is_dir, path_mkdir
 
 log = logging.getLogger(__name__)

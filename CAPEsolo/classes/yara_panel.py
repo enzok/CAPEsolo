@@ -4,6 +4,7 @@ import wx
 import wx.grid as gridlib
 
 from CAPEsolo.capelib.cape_utils import get_cape_name_from_yara_hit
+
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
@@ -26,7 +27,7 @@ def FormatOffset(offset):
 
 class YaraPanel(wx.Panel, KeyEventHandlerMixin):
     def __init__(self, parent):
-        super(YaraPanel, self).__init__(parent)
+        super().__init__(parent)
         self.parent = parent
         self.yara = parent.yara
         self.analysisDir = parent.analysisDir

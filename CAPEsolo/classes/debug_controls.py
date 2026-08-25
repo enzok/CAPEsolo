@@ -5,15 +5,22 @@ import re
 import threading
 from collections import namedtuple
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 import wx
 
 from CAPEsolo.capelib.cmdconsts import *
+
 from .patch_dialog import ConfirmPatchDialog, PatchDialog, PatchHistoryDialog
 from .patch_models import PatchEntry
 from .search_dialog import SearchDialog
-from .theme import ACCENT_CALL, ACCENT_ERROR, ACCENT_GREEN, ACCENT_JUMP, ACCENT_ORANGE, BG_INPUT
+from .theme import (
+    ACCENT_CALL,
+    ACCENT_ERROR,
+    ACCENT_GREEN,
+    ACCENT_JUMP,
+    ACCENT_ORANGE,
+    BG_INPUT,
+)
 
 log = logging.getLogger(__name__)
 
@@ -67,10 +74,10 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.InsertColumn(0, "Address", width=150)
         self.InsertColumn(1, "Hex bytes", width=180)
         self.InsertColumn(2, "Disassembly", width=400)
-        self.pageMap: List[Tuple[int, int, int]] = []
-        self.decodeCache: List[DecodedInstruction] = []
+        self.pageMap: list[tuple[int, int, int]] = []
+        self.decodeCache: list[DecodedInstruction] = []
         self.cacheLock = threading.Lock()
-        self.backHistory: List[int] = []
+        self.backHistory: list[int] = []
         self.resolveAllRefsStatus = True
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
         self.Bind(wx.EVT_MOTION, self.OnOperandHover)
@@ -96,7 +103,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         self.pageMap.sort(key=lambda x: x[0])
 
-    def FindPage(self, addr: int) -> Optional[Tuple[int, int, int]]:
+    def FindPage(self, addr: int) -> tuple[int, int, int] | None:
         for base, size, prot in self.pageMap:
             if base <= addr < base + size:
                 return base, size, prot
@@ -104,7 +111,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         # log.warning("[DEBUG CONSOLE] Address: 0x%x not in page map, fetching update page map", addr)
         return None
 
-    def SetInstructions(self, insts: List[DecodedInstruction], append: bool = False):
+    def SetInstructions(self, insts: list[DecodedInstruction], append: bool = False):
         fontItalic = wx.Font(10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL)
         self.Freeze()
         try:
@@ -329,7 +336,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
                     wx.MessageBox(f"Instruction address not found: {entry}", "Warning", wx.OK | wx.ICON_WARNING)
                 else:
                     self.PushHistory(int(target, 16))
-            except Exception as e:
+            except Exception:
                 wx.MessageBox(f"Invalid register or hex address: {entry}", "Error", wx.OK | wx.ICON_ERROR)
 
         dialog.Destroy()
@@ -348,7 +355,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
             payload = f"{cip}|{addr:#X}"
             self.parent.SendCommand(CMD_SET_REGISTER, payload)
-        except ValueError as e:
+        except ValueError:
             wx.MessageBox(f"Invalid address for Set EIP/RIP: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnStepInto(self, event):
@@ -366,7 +373,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
             addr = int(addrStr, 16)
             payload = f"{addr:#X}"
             self.parent.SendCommand(CMD_RUN_UNTIL, payload)
-        except ValueError as e:
+        except ValueError:
             wx.MessageBox(f"Invalid address for Run Until: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnSetBreakpoint(self, row, slot):
@@ -375,7 +382,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
             addr = int(addrStr, 16)
             payload = f"{slot.lower()}|{addr:#X}"
             self.parent.SendCommand(CMD_SET_BREAKPOINT, payload)
-        except ValueError as e:
+        except ValueError:
             wx.MessageBox(f"Invalid address for Set Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def ClearBpBackground(self, addr):
@@ -456,7 +463,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         return registers
 
-    def ParseOperandAddress(self, inst: str, ripBase: int) -> Optional[int]:
+    def ParseOperandAddress(self, inst: str, ripBase: int) -> int | None:
         m = re.search(r"\[([A-Za-z]{2}:)?([^\]]+)\]", inst)
         if m:
             seg = m.group(1).lower()[:-1] if m.group(1) else None
@@ -956,7 +963,7 @@ class MemDumpListCtrl(wx.ListCtrl):
         self.InsertColumn(2, "Ascii", width=150)
         self.data = []
         self.addr = None
-        self.backHistory: List[int] = []
+        self.backHistory: list[int] = []
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
 
     def UpdateData(self, data):
@@ -1159,13 +1166,13 @@ class ThreadListCtrl(wx.ListCtrl):
     def __init__(self, parent):
         super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
         self.parent = parent
-        self.data: List[Tuple[str, str]] = []
+        self.data: list[tuple[str, str]] = []
         self.InsertColumn(0, "TID", width=60)
         self.InsertColumn(1, "Start Address", width=160)
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
         self.Bind(wx.EVT_MOTION, self.OnMouseOver)
 
-    def UpdateData(self, threadEntries: List[Tuple[str, str]]):
+    def UpdateData(self, threadEntries: list[tuple[str, str]]):
         """Populate the list with thread info: (tid, start address)."""
         self.DeleteAllItems()
         self.data = threadEntries
@@ -1220,12 +1227,12 @@ class BreakpointsListCtrl(wx.ListCtrl):
     def __init__(self, parent):
         super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
         self.parent = parent
-        self.data: List[Tuple[str, str]] = []
+        self.data: list[tuple[str, str]] = []
         self.InsertColumn(0, "DR", width=40)
         self.InsertColumn(1, "Address", width=160)
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
 
-    def UpdateData(self, bps: List[Tuple[str, str]]):
+    def UpdateData(self, bps: list[tuple[str, str]]):
         """Populate the list with thread info: (dr, address)."""
         self.DeleteAllItems()
         if not bps:
@@ -1279,7 +1286,7 @@ class ModulesListCtrl(wx.ListCtrl):
         self.InsertColumn(3, "Path", width=160)
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
 
-    def UpdateData(self, modules: List[Tuple[str, str, str, str]]):
+    def UpdateData(self, modules: list[tuple[str, str, str, str]]):
         """Populate the list"""
         self.DeleteAllItems()
         for i, (addr, size, name, path) in enumerate(modules):

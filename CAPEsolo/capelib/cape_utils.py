@@ -14,7 +14,7 @@
 
 import logging
 import re
-from typing import Any, Dict
+from typing import Any
 
 # CAPE output types. To correlate with cape\cape.h in monitor
 COMPRESSION = 2
@@ -44,10 +44,10 @@ pe_map = {
     "PE32": ": 32-bit ",
 }
 
-cape_name_regex = re.compile(r" (?:payload|config|loader|strings)$", re.I)
+cape_name_regex = re.compile(r" (?:payload|config|loader|strings)$", re.IGNORECASE)
 
 
-def get_cape_name_from_yara_hit(hit: Dict[str, Any]) -> str:
+def get_cape_name_from_yara_hit(hit: dict[str, Any]) -> str:
     """Use the cape_type as defined in the metadata for the yara hit
     (e.g. "SocGholish Payload") and return the part before
     "Loader", "Payload", "Config", or "Strings"

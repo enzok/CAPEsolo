@@ -7,13 +7,13 @@ import socket
 import sys
 from builtins import NotImplementedError
 from collections import defaultdict
-from typing import Dict, List
 
 import dns.resolver
 from tldextract import TLDExtract
 
-import CAPEsolo.signatures as signatures
-import CAPEsolo.signatures.community as community
+from CAPEsolo import signatures
+from CAPEsolo.signatures import community
+
 from .path_utils import path_exists
 from .url_validate import url as url_validator
 from .utils import create_folder
@@ -146,7 +146,7 @@ class Signature:
         if target.get("category") in ("file", "static") and target.get("file"):
             for keyword in ("cape_yara", "yara"):
                 for yara_block in self.results["target"]["file"].get(keyword, []):
-                    if re.findall(name, yara_block["name"], re.I):
+                    if re.findall(name, yara_block["name"], re.IGNORECASE):
                         yield "sample", self.results["target"]["file"][
                             "path"
                         ], yara_block, self.results["target"]["file"]
@@ -154,20 +154,20 @@ class Signature:
             for block in target["file"].get("extracted_files", []):
                 for keyword in ("cape_yara", "yara"):
                     for yara_block in block[keyword]:
-                        if re.findall(name, yara_block["name"], re.I):
+                        if re.findall(name, yara_block["name"], re.IGNORECASE):
                             # we can't use here values from set_path
                             yield "sample", block["path"], yara_block, block
 
         for block in self.results.get("CAPE", {}).get("payloads", []) or []:
             for sub_keyword in ("cape_yara", "yara"):
                 for yara_block in block.get(sub_keyword, []):
-                    if re.findall(name, yara_block["name"], re.I):
+                    if re.findall(name, yara_block["name"], re.IGNORECASE):
                         yield sub_keyword, block["path"], yara_block, block
 
             for subblock in block.get("extracted_files", []):
                 for keyword in ("cape_yara", "yara"):
                     for yara_block in subblock[keyword]:
-                        if re.findall(name, yara_block["name"], re.I):
+                        if re.findall(name, yara_block["name"], re.IGNORECASE):
                             yield "sample", subblock["path"], yara_block, block
 
         for keyword in ("procdump", "procmemory", "extracted", "dropped"):
@@ -177,7 +177,7 @@ class Signature:
                         continue
                     for sub_keyword in ("cape_yara", "yara"):
                         for yara_block in block.get(sub_keyword, []):
-                            if re.findall(name, yara_block["name"], re.I):
+                            if re.findall(name, yara_block["name"], re.IGNORECASE):
                                 path = block["path"] if block.get("path", False) else ""
                                 yield keyword, path, yara_block, block
 
@@ -185,7 +185,7 @@ class Signature:
                         for pe in block.get("extracted_pe", []) or []:
                             for sub_keyword in ("cape_yara", "yara"):
                                 for yara_block in pe.get(sub_keyword, []) or []:
-                                    if re.findall(name, yara_block["name"], re.I):
+                                    if re.findall(name, yara_block["name"], re.IGNORECASE):
                                         yield "extracted_pe", pe[
                                             "path"
                                         ], yara_block, block
@@ -193,7 +193,7 @@ class Signature:
                     for subblock in block.get("extracted_files", []):
                         for keyword in ("cape_yara", "yara"):
                             for yara_block in subblock[keyword]:
-                                if re.findall(name, yara_block["name"], re.I):
+                                if re.findall(name, yara_block["name"], re.IGNORECASE):
                                     yield "sample", subblock["path"], yara_block, block
 
         macro_path = os.path.join(self.analysis_path, "macros")
@@ -214,7 +214,7 @@ class Signature:
                     )
                     or []
                 ):
-                    if re.findall(name, sub_block["name"], re.I):
+                    if re.findall(name, sub_block["name"], re.IGNORECASE):
                         yield "macro", os.path.join(
                             macro_path, macroname
                         ), sub_block, self.results["static"]["office"]["Macro"]["info"]
@@ -230,7 +230,7 @@ class Signature:
                 .get("yara_macro", [])
                 or []
             ):
-                if re.findall(name, yara_block["name"], re.I):
+                if re.findall(name, yara_block["name"], re.IGNORECASE):
                     yield "macro", os.path.join(
                         macro_path, "xlm_macro"
                     ), yara_block, self.results["static"]["office"][
@@ -244,7 +244,7 @@ class Signature:
         matched_signatures = [sig["name"] for sig in self.results.get("signatures", [])]
         return signame in matched_signatures
 
-    def get_signature_data(self, signame: str) -> List[Dict[str, str]]:
+    def get_signature_data(self, signame: str) -> list[dict[str, str]]:
         # Retrieve data from matched signature (useful for ordered signatures)
         if self.signature_matched(signame):
             signature = next(
@@ -417,7 +417,7 @@ class Signature:
     def check_process_name(self, pattern, all=False):
         if "behavior" in self.results and "processes" in self.results["behavior"]:
             for process in self.results["behavior"]["processes"]:
-                if re.findall(pattern, process["process_name"], re.I):
+                if re.findall(pattern, process["process_name"], re.IGNORECASE):
                     return process if all else True
         return False
 
@@ -947,7 +947,7 @@ class Signature:
                 sid = alert.get("sid", 0)
                 if (
                     sid not in self.banned_suricata_sids and sid not in blacklist
-                ) and re.findall(pattern, alert.get("signature", ""), re.I):
+                ) and re.findall(pattern, alert.get("signature", ""), re.IGNORECASE):
                     res = True
                     break
         return res

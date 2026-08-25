@@ -3,12 +3,13 @@ from pathlib import Path
 import wx
 import wx.grid as gridlib
 
-from .custom_grid import CopyableGrid
-from .key_event import KeyEventHandlerMixin
-from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
 from CAPEsolo.capelib.network import FormatTime, NetworkData
 from CAPEsolo.capelib.network_decrypt import DecryptStreams, StreamRows
 from CAPEsolo.capelib.path_utils import path_exists
+
+from .custom_grid import CopyableGrid
+from .key_event import KeyEventHandlerMixin
+from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
 
 ALL_KINDS = "<All traffic>"
 
@@ -30,7 +31,7 @@ class NetworkPanel(wx.Panel, KeyEventHandlerMixin):
     """Correlate a capture taken outside the guest with the analysis TLS secrets."""
 
     def __init__(self, parent):
-        super(NetworkPanel, self).__init__(parent)
+        super().__init__(parent)
         self.parent = parent
         self.analysisDir = parent.analysisDir
         self.results = {}

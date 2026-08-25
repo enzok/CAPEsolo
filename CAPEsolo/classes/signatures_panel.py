@@ -2,15 +2,16 @@ import wx
 import wx.grid as gridlib
 import wx.lib.scrolledpanel as scrolled
 
+from CAPEsolo.capelib.signatures import RunSignatures
+
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import GRID_ROW_ALT, apply_theme
-from CAPEsolo.capelib.signatures import RunSignatures
 
 
 class SignaturesPanel(wx.Panel, KeyEventHandlerMixin):
     def __init__(self, parent):
-        super(SignaturesPanel, self).__init__(parent)
+        super().__init__(parent)
         self.analysisDir = parent.analysisDir
         self.results = parent.results
         self.sigs = []

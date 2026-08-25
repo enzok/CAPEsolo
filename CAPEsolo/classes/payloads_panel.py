@@ -5,10 +5,6 @@ import wx
 import wx.grid as gridlib
 import wx.lib.scrolledpanel as scrolled
 
-from .custom_grid import CopyableGrid
-from .hexview_window import HexViewWindow
-from .pe_window import PeWindow
-from .theme import GRID_ROW_ALT, apply_theme
 from CAPEsolo.capelib.cape_utils import (
     get_cape_name_from_cape_type,
     metadata_processing,
@@ -17,10 +13,15 @@ from CAPEsolo.capelib.objects import File
 from CAPEsolo.capelib.parse_pe import IsPEImage
 from CAPEsolo.capelib.utils import JsonPathExists, LoadFilesJson
 
+from .custom_grid import CopyableGrid
+from .hexview_window import HexViewWindow
+from .pe_window import PeWindow
+from .theme import GRID_ROW_ALT, apply_theme
+
 
 class PayloadsPanel(wx.Panel):
     def __init__(self, parent):
-        super(PayloadsPanel, self).__init__(parent)
+        super().__init__(parent)
         self.parent = parent
         self.analysisDir = parent.analysisDir
         self.payloadsLoaded = False

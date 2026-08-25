@@ -11,7 +11,6 @@ import re
 import struct
 from contextlib import suppress
 from datetime import datetime
-from typing import Dict, List
 
 import cryptography
 import pefile
@@ -209,7 +208,7 @@ class PortableExecutable:
             else None
         )
 
-    def get_resources(self, pe: pefile.PE) -> List[Dict[str, str]]:
+    def get_resources(self, pe: pefile.PE) -> list[dict[str, str]]:
         """Get resources.
         @return: resources dict or None.
         """
@@ -283,7 +282,7 @@ class PortableExecutable:
 
         return None
 
-    def get_imported_symbols(self, pe: pefile.PE) -> Dict[str, dict]:
+    def get_imported_symbols(self, pe: pefile.PE) -> dict[str, dict]:
         """Gets imported symbols.
         @return: imported symbols dict or None.
         """
@@ -331,7 +330,7 @@ class PortableExecutable:
             return dllname.decode("latin-1")
         return None
 
-    def get_exported_symbols(self, pe: pefile.PE) -> List[dict]:
+    def get_exported_symbols(self, pe: pefile.PE) -> list[dict]:
         """Gets exported symbols.
         @return: list of dicts of exported symbols or None.
         """
@@ -358,7 +357,7 @@ class PortableExecutable:
 
         return exports
 
-    def get_directory_entries(self, pe: pefile.PE) -> List[Dict[str, str]]:
+    def get_directory_entries(self, pe: pefile.PE) -> list[dict[str, str]]:
         """Gets image directory entries.
         @return: directory entries dict or None.
         """
@@ -442,7 +441,7 @@ class PortableExecutable:
 
         return "|".join(tags)
 
-    def get_sections(self, pe: pefile.PE) -> List[Dict[str, str]]:
+    def get_sections(self, pe: pefile.PE) -> list[dict[str, str]]:
         """Gets sections.
         @return: sections dict or None.
         """
@@ -473,7 +472,7 @@ class PortableExecutable:
 
         return sections
 
-    def get_versioninfo(self, pe: pefile.PE) -> List[dict]:
+    def get_versioninfo(self, pe: pefile.PE) -> list[dict]:
         """Get version info.
         @return: info dict or None.
         """
@@ -556,7 +555,7 @@ class PortableExecutable:
 
         return datetime.fromtimestamp(pe_timestamp).strftime("%Y-%m-%d %H:%M:%S")
 
-    def get_digital_signers(self, pe: pefile.PE) -> List[dict]:
+    def get_digital_signers(self, pe: pefile.PE) -> list[dict]:
         """If this executable is signed, get its signature(s)."""
         if not pe:
             return []

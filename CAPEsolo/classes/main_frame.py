@@ -5,6 +5,9 @@ from pathlib import Path
 
 import wx
 
+from CAPEsolo.capelib.config_paths import config_paths
+from CAPEsolo.capelib.path_utils import path_mkdir
+
 from .behavior_panel import BehaviorPanel
 from .configs_panel import ConfigsPanel
 from .debugger_panel import DebuggerPanel
@@ -12,15 +15,14 @@ from .js_console_panel import JsConsolePanel
 from .network_panel import NetworkPanel
 from .payloads_panel import PayloadsPanel
 from .process_yara import ProcessYara
+from .signatures_panel import SignaturesPanel
 from .start_panel import StartPanel
 from .status_bar import AnalysisStatusBar
 from .strings_panel import StringsPanel
 from .target_info import TargetInfoPanel
+from .theme import BG_MAIN, FONT_UI, ToggleTheme, apply_theme, is_dark
+from .theme import _init as _init_theme
 from .yara_panel import YaraPanel
-from .signatures_panel import SignaturesPanel
-from .theme import BG_MAIN, FONT_UI, ToggleTheme, _init as _init_theme, apply_theme, is_dark
-from CAPEsolo.capelib.config_paths import config_paths
-from CAPEsolo.capelib.path_utils import path_mkdir
 
 
 class ConfigObject:
@@ -60,7 +62,7 @@ class MainFrame(wx.Frame):
         restored = kwargs.pop("restored", False)
         self.version = Path("version.txt").read_text()
         kwargs["title"] = f"Capesolo - v{self.version}"
-        super(MainFrame, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.SetAppIcon()
         self.GetConfig()
         self.CreateAnalysisDirectory()
@@ -195,9 +197,7 @@ class MainFrame(wx.Frame):
     def OnNotebookPageChanged(self, event):
         newSelection = event.GetSelection()
         selectedPage = self.notebook.GetPage(newSelection)
-        if selectedPage == self.behaviorTab:
-            selectedPage.UpdateGenerateButtonState()
-        elif selectedPage == self.signaturesTab:
+        if selectedPage == self.behaviorTab or selectedPage == self.signaturesTab:
             selectedPage.UpdateGenerateButtonState()
         elif selectedPage == self.infoTab:
             selectedPage.LoadAndDisplayContent()
@@ -211,9 +211,7 @@ class MainFrame(wx.Frame):
             selectedPage.PopulateFileDropdown()
         elif selectedPage == self.debuggerTab:
             selectedPage.PopulateLogFileDropdown()
-        elif selectedPage == self.jsConsoleTab:
-            selectedPage.UpdateProcessButtonState()
-        elif selectedPage == self.networkTab:
+        elif selectedPage == self.jsConsoleTab or selectedPage == self.networkTab:
             selectedPage.UpdateProcessButtonState()
 
         event.Skip()

@@ -4,13 +4,14 @@ from pathlib import Path
 import wx
 
 from CAPEsolo.capelib.utils import LoadFilesJson, extract_strings
+
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, apply_theme
 
 
 class StringsPanel(wx.Panel, KeyEventHandlerMixin):
     def __init__(self, parent):
-        super(StringsPanel, self).__init__(parent)
+        super().__init__(parent)
         self.parent = parent
         self.analysisDir = parent.analysisDir
         self.BindKeyEvents()

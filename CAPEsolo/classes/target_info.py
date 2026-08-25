@@ -3,15 +3,16 @@ from pathlib import Path
 import wx
 import wx.grid as gridlib
 
+from CAPEsolo.capelib.objects import File
+
 from .custom_grid import CopyableGrid
 from .pe_window import PeWindow
 from .theme import GRID_ROW_ALT, apply_theme
-from CAPEsolo.capelib.objects import File
 
 
 class TargetInfoPanel(wx.Panel):
     def __init__(self, parent):
-        super(TargetInfoPanel, self).__init__(parent)
+        super().__init__(parent)
         self.parent = parent
         self.infoLoaded = False
         self.peData = {}
@@ -80,8 +81,7 @@ class TargetInfoPanel(wx.Panel):
             if key not in "path" and value:
                 if not isinstance(value, str):
                     value = str(value) + " bytes"
-                if value.startswith("s_"):
-                    value = value[2:]
+                value = value.removeprefix("s_")
                 self.AddNewRow(key[0].upper() + key[1:], value)
         self.grid.AutoSizeColumns()
         self.grid.SetColSize(0, 120)
@@ -148,7 +148,7 @@ class TargetInfoPanel(wx.Panel):
             position = main_frame.GetPosition()
             # displayedFile, not targetFile: the grid may be showing an ad-hoc file.
             viewer_window = PeWindow(
-                self, f"{str(self.displayedFile)}", self.displayedFile, position, size
+                self, f"{self.displayedFile!s}", self.displayedFile, position, size
             )
             viewer_window.Show()
         except Exception as e:

@@ -9,7 +9,7 @@ from CAPEsolo.capelib.utils import convert_to_printable
 
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
-from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme, BEHAVIOR_CATEGORY_COLORS
+from .theme import BEHAVIOR_CATEGORY_COLORS, FONT_CODE, GRID_ROW_ALT, apply_theme
 
 BACKGNDCLR = BEHAVIOR_CATEGORY_COLORS
 

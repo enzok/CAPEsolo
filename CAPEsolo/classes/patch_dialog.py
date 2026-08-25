@@ -1,8 +1,9 @@
-import wx
-
 from contextlib import suppress
 
+import wx
+
 from CAPEsolo.capelib.cmdconsts import CMD_PATCH_BYTES
+
 from .patch_models import PatchEntry
 
 

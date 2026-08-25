@@ -13,6 +13,7 @@ import wx
 import wx.lib.scrolledpanel as scrolled
 
 from CAPEsolo.capelib.config_paths import config_paths, user_config_path
+
 from .theme import apply_theme, is_dark
 
 # Each row: (section, key, label, kind, choices, default).

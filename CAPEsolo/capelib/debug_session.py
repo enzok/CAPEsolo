@@ -1,7 +1,7 @@
 import logging
 import re
 from threading import Condition, Lock
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from distorm3 import Decode, Decode32Bits, Decode64Bits
 
@@ -24,7 +24,7 @@ GENERAL_REG_RX = re.compile(r"\b([A-Z0-9]{2,3}):\s*([0-9A-Fa-f]{8,16})")
 XMM_REG_RX = re.compile(r"\bXMM(\d{1,2})\s*\.(Low|High)\s*:\s*([0-9A-Fa-f]{8,16})")
 
 
-def ParseAddress(value: Any) -> Optional[int]:
+def ParseAddress(value: Any) -> int | None:
     """Accept an int or a hex string (with or without 0x) and return an address."""
     if isinstance(value, bool):
         return None
@@ -47,7 +47,7 @@ def ParseAddress(value: Any) -> Optional[int]:
     return addr if addr >= 0 else None
 
 
-def IsFailure(payload: Optional[str]) -> bool:
+def IsFailure(payload: str | None) -> bool:
     """Return whether a debug server payload reports a failure rather than data."""
     if payload is None:
         return True
@@ -55,7 +55,7 @@ def IsFailure(payload: Optional[str]) -> bool:
     return payload.startswith(FAILURE_TOKENS)
 
 
-def ParseCip(payload: str) -> Optional[int]:
+def ParseCip(payload: str) -> int | None:
     """Extract the current instruction pointer from a register dump or break payload."""
     m = CIP_RX.search(payload)
     if m:
@@ -68,7 +68,7 @@ def ParseCip(payload: str) -> Optional[int]:
     return None
 
 
-def ParseRegisters(regsText: str) -> Dict[str, str]:
+def ParseRegisters(regsText: str) -> dict[str, str]:
     """Parse the register display text into a name to hex value mapping."""
     registers = {}
     for name, value in GENERAL_REG_RX.findall(regsText):
@@ -81,7 +81,7 @@ def ParseRegisters(regsText: str) -> Dict[str, str]:
     return registers
 
 
-def ParseStack(payload: str) -> List[Dict[str, str]]:
+def ParseStack(payload: str) -> list[dict[str, str]]:
     """Parse 'address, value' stack lines."""
     entries = []
     for line in payload.splitlines():
@@ -94,7 +94,7 @@ def ParseStack(payload: str) -> List[Dict[str, str]]:
     return entries
 
 
-def ParseMemDump(payload: str) -> Tuple[Optional[int], str]:
+def ParseMemDump(payload: str) -> tuple[int | None, str]:
     """Split a memory dump payload into its request address and hex data."""
     if "|" not in payload:
         return None, ""
@@ -106,7 +106,7 @@ def ParseMemDump(payload: str) -> Tuple[Optional[int], str]:
         return None, ""
 
 
-def ParseThreads(payload: str) -> List[Dict[str, Any]]:
+def ParseThreads(payload: str) -> list[dict[str, Any]]:
     """Parse thread lines of the form 'marker|tid|start address'."""
     threads = []
     for line in payload.splitlines():
@@ -120,7 +120,7 @@ def ParseThreads(payload: str) -> List[Dict[str, Any]]:
     return threads
 
 
-def ParseBreakpoints(payload: str) -> List[Dict[str, str]]:
+def ParseBreakpoints(payload: str) -> list[dict[str, str]]:
     """Parse breakpoint entries of the form 'dr,address' joined by '|'."""
     if "No" in payload:
         return []
@@ -136,7 +136,7 @@ def ParseBreakpoints(payload: str) -> List[Dict[str, str]]:
     return breakpoints
 
 
-def ParseModules(payload: str) -> List[Dict[str, str]]:
+def ParseModules(payload: str) -> list[dict[str, str]]:
     """Parse module entries of the form 'base,size,name,path' joined by '|'."""
     modules = []
     for mod in payload.split("|"):
@@ -149,7 +149,7 @@ def ParseModules(payload: str) -> List[Dict[str, str]]:
     return modules
 
 
-def Disassemble(base: int, data: bytes, bits: int, count: int) -> List[Dict[str, str]]:
+def Disassemble(base: int, data: bytes, bits: int, count: int) -> list[dict[str, str]]:
     """Decode instructions from raw bytes read at `base`."""
     mode = Decode64Bits if bits == 64 else Decode32Bits
     instructions = []
@@ -212,7 +212,7 @@ class DebuggerSession:
         self.connected = True
         return response.decode("utf-8", errors="replace").strip()
 
-    def UpdateCip(self, payload: str) -> Optional[int]:
+    def UpdateCip(self, payload: str) -> int | None:
         """Record the instruction pointer reported by an execution or register payload."""
         cip = ParseCip(payload)
         if cip is not None:
@@ -220,7 +220,7 @@ class DebuggerSession:
 
         return self.cip
 
-    def WaitForBreak(self, timeout: float = DEFAULT_BREAK_TIMEOUT) -> Optional[str]:
+    def WaitForBreak(self, timeout: float = DEFAULT_BREAK_TIMEOUT) -> str | None:
         """Wait for an unsolicited break notification and return its payload."""
         with self.breakCondition:
             notified = self.breakCondition.wait_for(lambda: self.debuggerResponse is not None, timeout=timeout)
@@ -231,7 +231,7 @@ class DebuggerSession:
             self.UpdateCip(payload)
             return payload
 
-    def SendCommand(self, command: str, data: str = "", timeout: float = DEFAULT_COMMAND_TIMEOUT) -> Optional[str]:
+    def SendCommand(self, command: str, data: str = "", timeout: float = DEFAULT_COMMAND_TIMEOUT) -> str | None:
         """Send a debugger command and return its payload, or None on timeout.
 
         Only valid while the target is halted at a break, which is when the debug
@@ -243,7 +243,7 @@ class DebuggerSession:
                 self.UpdateCip(stale)
                 log.debug("[DEBUG SESSION] Discarding unconsumed break payload: %s", stale[:64])
 
-            self.pendingCommand = f"{command}:{data}".encode("utf-8")
+            self.pendingCommand = f"{command}:{data}".encode()
             self.breakCondition.notify_all()
             notified = self.breakCondition.wait_for(lambda: self.debuggerResponse is not None, timeout=timeout)
             if not notified:
