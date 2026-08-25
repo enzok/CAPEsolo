@@ -8,13 +8,6 @@ from CAPEsolo.capelib.objects import File
 from .custom_grid import CopyableGrid
 from .pe_window import PeWindow
 from .theme import GRID_ROW_ALT, apply_theme
-from .vt_helper import (
-    confirm_vt_upload,
-    format_vt_rows,
-    peek_vt_cache,
-    run_vt_lookup_async,
-    run_vt_upload_async,
-)
 
 
 class TargetInfoPanel(wx.Panel):
@@ -26,14 +19,6 @@ class TargetInfoPanel(wx.Panel):
         # Whatever the grid is currently describing, which the PE button acts on. Not
         # necessarily the analysis target: Get Info can show an arbitrary file.
         self.displayedFile = None
-        self.displayedSha256 = None
-        # Upload is only offered for the real analysis target, never an ad-hoc Get Info file (whose
-        # contract is "display only - not copied, analysed or recorded").
-        self.displayedIsTarget = False
-        # sha256 a VT lookup has already been rendered for, so repeat clicks don't duplicate rows.
-        self._vtDoneFor = None
-        # A lookup is running: Get Info re-enables the button, so this stops a second thread starting.
-        self._vtInFlight = False
         self.InitUI()
 
     def InitUI(self):
@@ -69,15 +54,7 @@ class TargetInfoPanel(wx.Panel):
         self.peButton = wx.Button(self, label="PE")
         self.peButton.Bind(wx.EVT_BUTTON, self.OnShowPe)
         self.peButton.Hide()
-        hboxButtons.Add(self.peButton, proportion=0, flag=wx.RIGHT, border=5)
-        self.vtButton = wx.Button(self, label="VirusTotal")
-        self.vtButton.Bind(wx.EVT_BUTTON, self.OnVirusTotalLookup)
-        self.vtButton.Hide()
-        hboxButtons.Add(self.vtButton, proportion=0, flag=wx.RIGHT, border=5)
-        self.uploadButton = wx.Button(self, label="Upload to VT")
-        self.uploadButton.Bind(wx.EVT_BUTTON, self.OnVtUpload)
-        self.uploadButton.Hide()
-        hboxButtons.Add(self.uploadButton, proportion=0)
+        hboxButtons.Add(self.peButton, proportion=0)
         vbox.Add(hboxButtons, proportion=0, flag=wx.LEFT | wx.BOTTOM, border=5)
 
         self.SetSizer(vbox)
@@ -94,7 +71,7 @@ class TargetInfoPanel(wx.Panel):
         if rows:
             self.grid.DeleteRows(0, rows)
 
-    def PopulateGrid(self, path, is_target=False):
+    def PopulateGrid(self, path):
         """Render file info for *path*. Nothing is written anywhere."""
         self.ClearGrid()
         fileObj = File(str(path))
@@ -111,26 +88,14 @@ class TargetInfoPanel(wx.Panel):
         self.grid.AutoSizeRows()
         self.ApplyAlternateRowShading()
         self.displayedFile = Path(path)
-        self.displayedSha256 = fileinfo.get("sha256")
-        self.displayedIsTarget = is_target
-        self._vtDoneFor = None
         self.peButton.Show()
-        self.vtButton.Enable()
-        self.vtButton.Show()
-        # Hidden until a lookup confirms the target is not already on VT.
-        self.uploadButton.Hide()
-        # If VT info was already fetched for this file (e.g. at download time), show it now and
-        # disable the lookup button rather than spending a request to re-fetch it.
-        cached = peek_vt_cache(self.displayedSha256) if self.displayedSha256 else None
-        if cached is not None:
-            self._ShowVtResult(cached)
         self.Layout()
 
     def LoadAndDisplayContent(self):
         self.targetFile = self.parent.targetFile
         if self.infoLoaded or not self.targetFile:
             return
-        self.PopulateGrid(self.targetFile, is_target=True)
+        self.PopulateGrid(self.targetFile)
         self.infoLoaded = True
 
     def OnGetInfo(self, event):
@@ -190,78 +155,6 @@ class TargetInfoPanel(wx.Panel):
             wx.MessageBox(
                 f"Failed to execute the command: {e}", "Error", wx.OK | wx.ICON_ERROR
             )
-
-    def OnVirusTotalLookup(self, event):
-        sha256 = self.displayedSha256
-        if not sha256 or self._vtDoneFor == sha256 or self._vtInFlight:
-            return
-        self._vtInFlight = True
-        self.vtButton.Disable()
-        run_vt_lookup_async(sha256, lambda result: self._OnVtDone(sha256, result))
-
-    def _OnVtDone(self, sha256, result):
-        self._vtInFlight = False
-        # displayedSha256 may have changed if Get Info swapped the file mid-lookup: drop the result.
-        if sha256 != self.displayedSha256:
-            return
-        if result.get("error"):
-            self.vtButton.Enable()  # allow a retry
-            wx.MessageBox(result.get("msg", "VirusTotal lookup failed"), "VirusTotal", wx.OK | wx.ICON_ERROR)
-            return
-        self._ShowVtResult(result)
-        self.Layout()
-
-    def _ShowVtResult(self, result):
-        """Render a VT result into the grid and disable the lookup button (info is shown, no reason to
-        look up again). For the target that is not on VT, reveal the upload button. Shared by a fresh
-        lookup and a cached/download-time result."""
-        for label, value in format_vt_rows(result):
-            self.AddNewRow(label, value)
-        self.grid.AutoSizeRows()
-        self.ApplyAlternateRowShading()
-        self._vtDoneFor = self.displayedSha256
-        self.vtButton.Disable()
-        if result.get("found") is False and self.displayedIsTarget:
-            self.uploadButton.Show()
-
-    def OnVtUpload(self, event):
-        path, sha256 = self.displayedFile, self.displayedSha256
-        if not path or not confirm_vt_upload(self, path):
-            return
-        self.uploadButton.Disable()
-        self._SetStatus(f"Uploading {path.name} to VirusTotal...")
-        run_vt_upload_async(path, sha256, lambda result: self._OnUploadDone(sha256, result))
-
-    def _SetStatus(self, message):
-        mainFrame = self.GetMainFrame()
-        if mainFrame:
-            mainFrame.statusBar.SetMessage(message)
-
-    def _OnUploadDone(self, sha256, result):
-        # Only touch the buttons/grid if the same file is still displayed - Get Info may have swapped
-        # it during a slow upload, and its state must not be clobbered.
-        current = sha256 == self.displayedSha256
-        if result.get("error"):
-            if current:
-                self.uploadButton.Enable()
-            self._SetStatus("VirusTotal upload failed")
-            wx.MessageBox(result.get("msg", "Upload failed"), "VirusTotal", wx.OK | wx.ICON_ERROR)
-            return
-        self._SetStatus("Uploaded to VirusTotal - analysis queued")
-        if current:
-            # Submitted: the button has done its job, so retire it and note the pending analysis.
-            self.uploadButton.Hide()
-            self.AddNewRow("VT Upload", "Submitted - analysis pending")
-            if result.get("permalink"):
-                self.AddNewRow("VT Link", result["permalink"])
-            self.grid.AutoSizeRows()
-            self.ApplyAlternateRowShading()
-            self.Layout()
-        wx.MessageBox(
-            "File submitted to VirusTotal. Analysis is queued.",
-            "VirusTotal",
-            wx.OK | wx.ICON_INFORMATION,
-        )
 
     def GetMainFrame(self):
         parent = self.GetParent()
