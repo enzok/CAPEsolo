@@ -41,6 +41,8 @@ class ProcessTreeWindow(wx.Frame):
         self.itemByPid = {}     # pid -> wx.TreeItemId
         self.suspended = set()
         self._structSig = None
+        self._collapsed = set()  # pids the user collapsed, so a rebuild doesn't re-expand them
+        self._building = False   # suppress collapse/expand event handling during a programmatic rebuild
         self.logPath = Path(parent.analysisDir) / "analysis.log"
         self._logPos = 0        # byte offset consumed so far (complete lines only)
         self.InitUI(position)
@@ -58,8 +60,18 @@ class ProcessTreeWindow(wx.Frame):
             style=wx.TR_DEFAULT_STYLE | wx.TR_HIDE_ROOT | wx.TR_HAS_BUTTONS | wx.TR_LINES_AT_ROOT,
         )
         self.root = self.tree.AddRoot("Processes")
+        # The native Explorer-themed tree draws its expander arrows only on hover and they wash out
+        # against the dark theme. Dropping the visual style gives classic, always-visible +/- buttons.
+        try:
+            import ctypes
+
+            ctypes.windll.uxtheme.SetWindowTheme(ctypes.c_void_p(self.tree.GetHandle()), "", "")
+        except Exception:
+            pass
         self.tree.Bind(wx.EVT_TREE_ITEM_GETTOOLTIP, self.OnItemTooltip)
         self.tree.Bind(wx.EVT_TREE_ITEM_RIGHT_CLICK, self.OnRightClick)
+        self.tree.Bind(wx.EVT_TREE_ITEM_COLLAPSED, self.OnItemCollapsed)
+        self.tree.Bind(wx.EVT_TREE_ITEM_EXPANDED, self.OnItemExpanded)
         vbox.Add(self.tree, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
         panel.SetSizer(vbox)
         apply_theme(self)
@@ -145,12 +157,24 @@ class ProcessTreeWindow(wx.Frame):
         colour = self.tree.GetForegroundColour() if entry["alive"] else EXITED_COLOUR
         self.tree.SetItemTextColour(item, colour)
 
+    def OnItemCollapsed(self, event):
+        if self._building:
+            return
+        pid = self.tree.GetItemData(event.GetItem())
+        if pid is not None:
+            self._collapsed.add(pid)
+
+    def OnItemExpanded(self, event):
+        if self._building:
+            return
+        pid = self.tree.GetItemData(event.GetItem())
+        if pid is not None:
+            self._collapsed.discard(pid)
+
     def _Rebuild(self):
         sel = self.tree.GetSelection()
         selPid = self.tree.GetItemData(sel) if sel.IsOk() else None
-        expanded = {
-            pid for pid, item in self.itemByPid.items() if item.IsOk() and self.tree.IsExpanded(item)
-        }
+        self._building = True
         self.tree.Freeze()
         try:
             self.tree.DeleteAllItems()
@@ -171,17 +195,15 @@ class ProcessTreeWindow(wx.Frame):
             for pid in list(remaining):  # orphans/cycles: attach to root
                 self._AddNode(self.root, pid, remaining.pop(pid))
 
-            for pid in expanded:
-                item = self.itemByPid.get(pid)
-                if item and item.IsOk() and self.tree.ItemHasChildren(item):
-                    self.tree.Expand(item)
-            for pid, item in self.itemByPid.items():  # top-level nodes expanded by default
-                if self.model[pid]["ppid"] not in self.model and self.tree.ItemHasChildren(item):
+            # Fully expanded by default so the whole tree is visible; honor user-collapsed nodes.
+            for pid, item in self.itemByPid.items():
+                if self.tree.ItemHasChildren(item) and pid not in self._collapsed:
                     self.tree.Expand(item)
             if selPid is not None and selPid in self.itemByPid:
                 self.tree.SelectItem(self.itemByPid[selPid])
         finally:
             self.tree.Thaw()
+            self._building = False
 
     def _AddNode(self, parent, pid, entry):
         item = self.tree.AppendItem(parent, "")
@@ -235,34 +257,71 @@ class ProcessTreeWindow(wx.Frame):
             wx.MessageBox(str(e), "Process Tree", wx.OK | wx.ICON_ERROR)
         self._Render()
 
+    def _subtree(self, pid):
+        """pid plus all its descendants in the model (cycle-safe), parent before children."""
+        children = {}
+        for p, entry in self.model.items():
+            children.setdefault(entry["ppid"], []).append(p)
+        out, stack, seen = [], [pid], set()
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            out.append(cur)
+            stack.extend(children.get(cur, []))
+        return out
+
     def _OnTerminate(self, pid):
-        name = self.model.get(pid, {}).get("name", str(pid))
-        if wx.MessageBox(
-            f"Terminate {name} ({pid})?\n\nCapemon is asked to shut it down cleanly first; if it "
-            "does not exit it is force-killed. Monitoring of this process ends.",
-            "Terminate Process",
-            wx.YES_NO | wx.ICON_WARNING,
-            self,
-        ) != wx.YES:
+        # Terminate the whole subtree: the selected process and every live, non-critical descendant.
+        blocked = self._blocked()
+        targets = [
+            p for p in self._subtree(pid) if self.model[p]["alive"] and p not in blocked
+        ]
+        if not targets:
             return
-        self._SetStatus(f"Terminating {name} ({pid})...")
+        name = self.model.get(pid, {}).get("name", str(pid))
+        childCount = len(targets) - 1
+        if childCount:
+            msg = (
+                f"Terminate {name} ({pid}) and its {childCount} child process(es)?\n\nCapemon is "
+                "asked to shut each down cleanly first; any that do not exit are force-killed. "
+                "Monitoring of these processes ends."
+            )
+        else:
+            msg = (
+                f"Terminate {name} ({pid})?\n\nCapemon is asked to shut it down cleanly first; if it "
+                "does not exit it is force-killed. Monitoring of this process ends."
+            )
+        if wx.MessageBox(msg, "Terminate Process", wx.YES_NO | wx.ICON_WARNING, self) != wx.YES:
+            return
+        self._SetStatus(
+            f"Terminating {name} ({pid})" + (f" +{childCount} child(ren)..." if childCount else "...")
+        )
 
         def worker():
-            try:
-                how = terminate_process(pid)
-                wx.CallAfter(self._AfterTerminate, pid, how, None)
-            except OSError as e:
-                wx.CallAfter(self._AfterTerminate, pid, None, str(e))
+            errors = []
+            for target in targets:
+                try:
+                    terminate_process(target)
+                except OSError as e:
+                    errors.append(f"pid {target}: {e}")
+            wx.CallAfter(self._AfterTerminate, targets, errors)
 
         Thread(target=worker, daemon=True).start()
 
-    def _AfterTerminate(self, pid, how, err):
-        if err:
-            self._SetStatus("Terminate failed")
-            wx.MessageBox(err, "Process Tree", wx.OK | wx.ICON_ERROR)
+    def _AfterTerminate(self, targets, errors):
+        for p in targets:
+            self.suspended.discard(p)
+        if errors:
+            self._SetStatus("Terminate: some processes failed")
+            wx.MessageBox(
+                "Some processes could not be terminated:\n" + "\n".join(errors),
+                "Process Tree",
+                wx.OK | wx.ICON_ERROR,
+            )
         else:
-            self.suspended.discard(pid)
-            self._SetStatus(f"Terminated pid {pid} ({how})")
+            self._SetStatus(f"Terminated {len(targets)} process(es)")
 
     def _OnDump(self, pid):
         name = self.model.get(pid, {}).get("name", str(pid))
