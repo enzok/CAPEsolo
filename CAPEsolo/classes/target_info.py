@@ -11,6 +11,7 @@ from .theme import GRID_ROW_ALT, apply_theme
 from .vt_helper import (
     confirm_vt_upload,
     format_vt_rows,
+    peek_vt_cache,
     run_vt_lookup_async,
     run_vt_upload_async,
 )
@@ -118,6 +119,11 @@ class TargetInfoPanel(wx.Panel):
         self.vtButton.Show()
         # Hidden until a lookup confirms the target is not already on VT.
         self.uploadButton.Hide()
+        # If VT info was already fetched for this file (e.g. at download time), show it now and
+        # disable the lookup button rather than spending a request to re-fetch it.
+        cached = peek_vt_cache(self.displayedSha256) if self.displayedSha256 else None
+        if cached is not None:
+            self._ShowVtResult(cached)
         self.Layout()
 
     def LoadAndDisplayContent(self):
@@ -198,19 +204,25 @@ class TargetInfoPanel(wx.Panel):
         # displayedSha256 may have changed if Get Info swapped the file mid-lookup: drop the result.
         if sha256 != self.displayedSha256:
             return
-        self.vtButton.Enable()
         if result.get("error"):
+            self.vtButton.Enable()  # allow a retry
             wx.MessageBox(result.get("msg", "VirusTotal lookup failed"), "VirusTotal", wx.OK | wx.ICON_ERROR)
             return
+        self._ShowVtResult(result)
+        self.Layout()
+
+    def _ShowVtResult(self, result):
+        """Render a VT result into the grid and disable the lookup button (info is shown, no reason to
+        look up again). For the target that is not on VT, reveal the upload button. Shared by a fresh
+        lookup and a cached/download-time result."""
         for label, value in format_vt_rows(result):
             self.AddNewRow(label, value)
         self.grid.AutoSizeRows()
         self.ApplyAlternateRowShading()
-        self._vtDoneFor = sha256
-        # Not on VT and this is the real target: offer to publish it.
+        self._vtDoneFor = self.displayedSha256
+        self.vtButton.Disable()
         if result.get("found") is False and self.displayedIsTarget:
             self.uploadButton.Show()
-        self.Layout()
 
     def OnVtUpload(self, event):
         path, sha256 = self.displayedFile, self.displayedSha256

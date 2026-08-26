@@ -51,6 +51,18 @@ def seed_vt_cache(sha256, result):
         _vt_cache[sha256] = (time.time(), result)
 
 
+def peek_vt_cache(sha256):
+    """Return a cached VT result for *sha256* WITHOUT making a request, or None. Only definitive
+    results (not transient errors) are returned, so callers can display them by default - e.g. the
+    Info tab showing download-time VT info without spending a lookup."""
+    entry = _vt_cache.get(sha256)
+    if entry is not None:
+        _, result = entry
+        if result and not result.get("error"):
+            return result
+    return None
+
+
 def cached_vt_lookup(sha256):
     entry = _vt_cache.get(sha256)
     if entry is not None:
