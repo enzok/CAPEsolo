@@ -27,6 +27,9 @@ EXITED_COLOUR = wx.Colour(140, 140, 140)
 # not receive the record) makes the tree match the log. Read straight from the text file - no
 # injecting/hooking, so capemon is undisturbed.
 PROC_RE = re.compile(r"Process (\d+) \(parent (\d+)\): (.+?), path (.+?)\s*$")
+# capemon's per-process command-line line in analysis.log: "<pid>: Commandline: <cmdline>".
+CMDLINE_RE = re.compile(r"(\d+): Commandline: (.+?)\s*$")
+CMDLINE_MAX = 300  # cap the tooltip command line
 
 
 class ProcessTreeWindow(wx.Frame):
@@ -39,6 +42,7 @@ class ProcessTreeWindow(wx.Frame):
         self.startPanel = parent
         self.model = {}         # pid -> {"ppid","name","path","alive"}
         self.itemByPid = {}     # pid -> wx.TreeItemId
+        self._cmdlines = {}     # pid -> command line, for the tooltip (from analysis.log)
         self.suspended = set()
         self._structSig = None
         self._collapsed = set()  # pids the user collapsed, so a rebuild doesn't re-expand them
@@ -111,14 +115,16 @@ class ProcessTreeWindow(wx.Frame):
         self._logPos += lastNl + 1
         for line in chunk[: lastNl + 1].decode("utf-8", errors="replace").splitlines():
             m = PROC_RE.search(line)
-            if not m:
+            if m:
+                pid, ppid = int(m.group(1)), int(m.group(2))
+                if pid not in self.model:  # keep the first sighting; never resurrect an exited pid
+                    self.model[pid] = {
+                        "ppid": ppid, "name": m.group(3), "path": m.group(4), "alive": True,
+                    }
                 continue
-            pid, ppid = int(m.group(1)), int(m.group(2))
-            if pid in self.model:  # keep the first sighting; never resurrect an exited pid
-                continue
-            self.model[pid] = {
-                "ppid": ppid, "name": m.group(3), "path": m.group(4), "alive": True,
-            }
+            m = CMDLINE_RE.search(line)
+            if m:
+                self._cmdlines[int(m.group(1))] = m.group(2)
 
     def OnTimer(self, event):
         self._Tick()
@@ -212,9 +218,20 @@ class ProcessTreeWindow(wx.Frame):
         self._StyleItem(item, pid, entry)
 
     def OnItemTooltip(self, event):
-        entry = self.model.get(self.tree.GetItemData(event.GetItem()))
-        if entry and entry.get("path"):
-            event.SetToolTip(entry["path"])
+        pid = self.tree.GetItemData(event.GetItem())
+        entry = self.model.get(pid)
+        if not entry:
+            return
+        lines = []
+        if entry.get("path"):
+            lines.append(entry["path"])
+        cmdline = self._cmdlines.get(pid)
+        if cmdline:
+            if len(cmdline) > CMDLINE_MAX:
+                cmdline = cmdline[:CMDLINE_MAX] + " ...(truncated)"
+            lines.append(cmdline)
+        if lines:
+            event.SetToolTip("\n".join(lines))
 
     # --- actions ------------------------------------------------------------
     def _actionable(self, pid, entry):

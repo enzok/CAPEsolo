@@ -1371,8 +1371,28 @@ class StartPanel(scrolled.ScrolledPanel):
         originalPath = Path(self.targetPath.GetValue())
         newFilename = sanitize_filename(originalPath.name)
         if newFilename != originalPath.name:
+            # Rename a hash-named file (e.g. a downloaded sample) to a shorter name so malware can't
+            # detect it by its own hash. Guard the re-launch case: a prior launch already renamed it,
+            # so the original no longer exists - reuse the renamed file instead of failing. Update the
+            # field to the new name so this is idempotent, and replace() tolerates an existing target.
             self.target = Path(originalPath.parent, newFilename)
-            originalPath.rename(self.target)
+            if originalPath.exists():
+                try:
+                    originalPath.replace(self.target)
+                except OSError as e:
+                    wx.MessageBox(
+                        f"Could not prepare the target file:\n{e}", "Error", wx.OK | wx.ICON_ERROR
+                    )
+                    return
+                self.targetPath.SetValue(str(self.target))
+        else:
+            self.target = originalPath
+
+        if not self.target.exists():
+            wx.MessageBox(
+                f"Target file not found:\n{self.target}", "Error", wx.OK | wx.ICON_ERROR
+            )
+            return
 
         self.CopyTarget()
         self.parent.targetFile = self.targetFile
