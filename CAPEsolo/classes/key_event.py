@@ -1,4 +1,4 @@
-from wx import NewIdRef, PyEventBinder, EVT_CHAR_HOOK
+from wx import EVT_CHAR_HOOK, NewIdRef, PyEventBinder
 
 from .search_dialog import SearchDialog
 

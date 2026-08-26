@@ -9,10 +9,11 @@ from pathlib import Path
 import wx
 import wx.grid as gridlib
 
+from CAPEsolo.capelib.path_utils import path_exists, path_mkdir
+
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
-from CAPEsolo.capelib.path_utils import path_exists, path_mkdir
 
 # Host-side only: a file handed back by a config parser via "dump_files". Deliberately
 # outside the monitor's range so it can't collide with a code in cape\cape.h.

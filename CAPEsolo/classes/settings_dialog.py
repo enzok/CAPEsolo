@@ -13,6 +13,7 @@ import wx
 import wx.lib.scrolledpanel as scrolled
 
 from CAPEsolo.capelib.config_paths import config_paths, user_config_path
+
 from .theme import apply_theme, is_dark
 
 # Each row: (section, key, label, kind, choices, default).
@@ -30,6 +31,11 @@ SETTINGS_SCHEMA = [
         ("download", "directory", "Download directory (blank = Desktop)", "dir", None, ""),
         ("virustotal", "api_key_enc", "VirusTotal key (encrypted blob)", "text", None, ""),
         ("malwarebazaar", "api_key_enc", "MalwareBazaar key (encrypted blob)", "text", None, ""),
+    ]),
+    ("VirusTotal lookups", [
+        # Plaintext free community key for the GUI's own post-launch VT lookups/uploads (Payloads/Info
+        # buttons); replaces the throttled built-in public key. Not used for downloads. Blank = public key.
+        ("virustotal", "community_key", "Community API key (post-launch lookups, plaintext)", "text", None, ""),
     ]),
     ("MCP server", [
         ("mcp_server", "enabled", "Enable MCP server", "bool", None, "false"),

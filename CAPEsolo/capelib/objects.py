@@ -6,13 +6,13 @@ import binascii
 import contextlib
 import hashlib
 import logging
-import magic
 import struct
 import subprocess
-import tlsh
 from pathlib import Path
 
+import magic
 import pefile
+import tlsh
 
 from .parse_pe import IMAGE_FILE_MACHINE_AMD64, IsPEImage
 

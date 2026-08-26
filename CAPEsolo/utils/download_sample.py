@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from CAPEsolo.capelib.config_paths import config_paths
+from CAPEsolo.capelib.virustotal import vt_lookup
 
 log = logging.getLogger(__name__)
 
@@ -279,10 +280,24 @@ def _serve():
         sys.stdout.write(json.dumps(obj) + "\n")
         sys.stdout.flush()
 
+    def vt_key():
+        try:
+            return _resolve_key("VirusTotal", password, direct_keys)
+        except DownloadError:
+            return ""
+
     def worker(cmd, state):
         try:
             path = download_sample(cmd["hash"], cmd["dest"], password, direct_keys)
             result = {"ok": True, "path": str(path)}
+            # While we hold the analyst's key, fetch the VT report too so the Info tab can show it
+            # without a (throttled) public-key lookup. Best-effort: never fail the download over it.
+            key = vt_key()
+            if key:
+                try:
+                    result["vtinfo"] = vt_lookup(cmd["hash"], apikey=key)
+                except Exception as e:
+                    log.warning("VT info fetch failed for %s: %s", cmd["hash"], e)
         except Exception as e:
             result = {"ok": False, "error": str(e)}
         with write_lock:

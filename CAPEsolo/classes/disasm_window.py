@@ -1,11 +1,12 @@
 import wx
 import wx.lib.scrolledpanel as scrolled
 
-from .key_event import KeyEventHandlerMixin
-from .theme import FONT_CODE, apply_theme
 # MAX_INSTRUCTION_LEN is read past the end of a page so the last instruction decodes
 # whole instead of being cut mid-encoding.
 from CAPEsolo.capelib.debug_session import MAX_INSTRUCTION_LEN, Disassemble
+
+from .key_event import KeyEventHandlerMixin
+from .theme import FONT_CODE, apply_theme
 
 # Page sizes in KB. Disassembly text runs several times the size of the bytes it
 # describes, so these are smaller than the hex view's.
@@ -29,7 +30,7 @@ class DisasmWindow(wx.Frame, KeyEventHandlerMixin):
         *args,
         **kwargs,
     ):
-        super(DisasmWindow, self).__init__(parent, title=title, *args, **kwargs)
+        super().__init__(parent, title=title, *args, **kwargs)
         self.panel = scrolled.ScrolledPanel(
             self, -1, style=wx.TAB_TRAVERSAL | wx.SUNKEN_BORDER
         )

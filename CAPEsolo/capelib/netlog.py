@@ -12,7 +12,6 @@ from .logtbl import table as LOGTBL
 from .path_utils import path_get_filename
 from .utils import default_converter
 
-
 log = logging.getLogger(__name__)
 
 ###############################################################################

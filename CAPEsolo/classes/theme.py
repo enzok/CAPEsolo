@@ -473,7 +473,7 @@ def _style_widget(w):
         return
 
     # --- Buttons (Support both wx.Button and generic GenButton) ---
-    import wx.lib.buttons as buttons
+    from wx.lib import buttons
     if isinstance(w, (wx.Button, buttons.GenButton)):
         label = w.GetLabel().lower()
         # Semantic color coding: Highlight destructive, emergency or cancel actions with alert red

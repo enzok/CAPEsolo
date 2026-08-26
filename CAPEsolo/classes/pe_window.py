@@ -1,5 +1,5 @@
-from hashlib import sha256
 import json
+from hashlib import sha256
 
 import pefile
 import wx
@@ -7,6 +7,7 @@ import wx.grid as gridlib
 import wx.lib.scrolledpanel as scrolled
 
 from CAPEsolo.capelib.parse_pe import PortableExecutable
+
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import ACCENT_CYAN, FONT_BOLD, GRID_ROW_ALT, apply_theme
@@ -23,7 +24,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         *args,
         **kwargs,
     ):
-        super(PeWindow, self).__init__(parent, title=title, *args, **kwargs)
+        super().__init__(parent, title=title, *args, **kwargs)
         self.data = PortableExecutable(str(filepath)).run()
         self.filepath = filepath
         self.offset = []
@@ -89,7 +90,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
             "resources": "Resources",
             "dirents": "Directory Entries",
         }
-        for key in keyLabels.keys():
+        for key in keyLabels:
             value = data.get(key, "")
             if not value:
                 continue
@@ -451,5 +452,5 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
             try:
                 with open(pathname, "w") as outfile:
                     json.dump(self.data, outfile, indent=4)
-            except IOError:
+            except OSError:
                 wx.LogError(f"Cannot save PE Info to file '{pathname}'.")

@@ -3,10 +3,11 @@ import re
 import wx
 import wx.lib.scrolledpanel as scrolled
 
+from CAPEsolo.capelib.parse_pe import IsPEImage, PortableExecutable
+
 from .disasm_window import ARCH_CHOICES, DisasmWindow
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, apply_theme
-from CAPEsolo.capelib.parse_pe import IsPEImage, PortableExecutable
 
 # Read size for the file-wide search. Chunks overlap by the pattern length so a match
 # straddling a boundary is still found.
@@ -32,7 +33,7 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
         *args,
         **kwargs,
     ):
-        super(HexViewWindow, self).__init__(parent, title=title, *args, **kwargs)
+        super().__init__(parent, title=title, *args, **kwargs)
         self.panel = scrolled.ScrolledPanel(
             self, -1, style=wx.TAB_TRAVERSAL | wx.SUNKEN_BORDER
         )

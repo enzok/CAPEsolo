@@ -3,18 +3,19 @@ import json
 import wx
 import wx.grid as gridlib
 
+from CAPEsolo.capelib.js_log import GetJsLogPath, JsLog
+from CAPEsolo.capelib.path_utils import path_exists
+
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
-from CAPEsolo.capelib.js_log import GetJsLogPath, JsLog
-from CAPEsolo.capelib.path_utils import path_exists
 
 ALL_EVENTS = "<All events>"
 
 
 class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
     def __init__(self, parent):
-        super(JsConsolePanel, self).__init__(parent)
+        super().__init__(parent)
         self.analysisDir = parent.analysisDir
         self.results = parent.results
         self.BindKeyEvents()
