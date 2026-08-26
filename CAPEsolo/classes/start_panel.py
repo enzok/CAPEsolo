@@ -35,6 +35,7 @@ from .key_event import EVT_ANALYZER_COMPLETE, EVT_ANALYZER_COMPLETE_ID
 from .logger_window import LoggerWindow
 from .process_tree_window import ProcessTreeWindow
 from .theme import apply_theme
+from .vt_helper import seed_vt_cache
 
 log = logging.getLogger(__name__)
 
@@ -1190,6 +1191,11 @@ class StartPanel(scrolled.ScrolledPanel):
                 raise RuntimeError("no response from download helper")
             reply = json.loads(line)
             if reply.get("ok"):
+                # The broker fetched VT info with the analyst's key at download time; cache it so the
+                # Info tab shows it without a public-key request (which VT throttles).
+                vtinfo = reply.get("vtinfo")
+                if vtinfo and vtinfo.get("sha256"):
+                    seed_vt_cache(vtinfo["sha256"], vtinfo)
                 wx.CallAfter(self._OnDownloadDone, Path(reply["path"]), None)
             else:
                 wx.CallAfter(self._OnDownloadDone, None, reply.get("error", "unknown error"))

@@ -168,7 +168,7 @@ class PayloadsPanel(wx.Panel):
         buttonBox.Add(uploadBtn, 0, wx.ALIGN_LEFT | wx.ALL, 5)
 
         sha256 = fileinfo.get("sha256")
-        self.vt_buttons[vtBtn.GetId()] = (grid, sha256, path, uploadBtn)
+        self.vt_buttons[vtBtn.GetId()] = (grid, sha256, uploadBtn)
         self.vt_upload_buttons[uploadBtn.GetId()] = (path, sha256, grid)
 
         self.panelsizer.Add(buttonBox, proportion=1, flag=wx.EXPAND)
@@ -309,9 +309,7 @@ class PayloadsPanel(wx.Panel):
 
     def OnVirusTotalLookup(self, event):
         buttonId = event.GetId()
-        grid, sha256, path, uploadBtn = self.vt_buttons.get(
-            buttonId, (None, None, None, None)
-        )
+        grid, sha256, uploadBtn = self.vt_buttons.get(buttonId, (None, None, None))
         if not sha256:
             return
         button = event.GetEventObject()
@@ -329,7 +327,7 @@ class PayloadsPanel(wx.Panel):
             return
         for label, value in format_vt_rows(result):
             self.AddNewRow(grid, label, value)
-        # Not on VT: offer to publish this payload.
+        # Not on VT: reveal the per-payload upload button.
         if result.get("found") is False:
             uploadBtn.Show()
         grid.AutoSizeRows()

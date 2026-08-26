@@ -32,6 +32,11 @@ SETTINGS_SCHEMA = [
         ("virustotal", "api_key_enc", "VirusTotal key (encrypted blob)", "text", None, ""),
         ("malwarebazaar", "api_key_enc", "MalwareBazaar key (encrypted blob)", "text", None, ""),
     ]),
+    ("VirusTotal lookups", [
+        # Plaintext free community key for the GUI's own post-launch VT lookups/uploads (Payloads/Info
+        # buttons); replaces the throttled built-in public key. Not used for downloads. Blank = public key.
+        ("virustotal", "community_key", "Community API key (post-launch lookups, plaintext)", "text", None, ""),
+    ]),
     ("MCP server", [
         ("mcp_server", "enabled", "Enable MCP server", "bool", None, "false"),
         ("mcp_server", "transport", "Transport", "choice", ["stdio", "streamable-http"], "stdio"),
