@@ -67,6 +67,20 @@ class AnalysisStatusBar(wx.Panel):
         self.timer.Start(1000)
         self.Refresh()
 
+    def AddTime(self, delta):
+        """Extend a running countdown by *delta* seconds (Extend-timeout button). Restarts the tick
+        timer if the countdown had already reached zero while the analysis kept running."""
+        delta = int(delta)
+        if delta <= 0:
+            return
+        self.total += delta
+        self.remaining += delta
+        if not self.timer.IsRunning():
+            self.running = True
+            self.state = "Analyzing"
+            self.timer.Start(1000)
+        self.Refresh()
+
     def Finish(self, text="Analysis complete"):
         """Stop counting and hold a terminal state.
 

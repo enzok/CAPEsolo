@@ -1,4 +1,5 @@
 import json
+import os
 
 import wx
 import wx.grid as gridlib
@@ -190,19 +191,34 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
 
         return [e for e in self.myevents if e.get("event", "") == self.category]
 
+    def BodyText(self, body):
+        # Body-log objects are {text, truncated} (buffered payloads add {stream, bytes, offset}).
+        # Return the readable text, falling back to a string for arrays/scalars so body-bearing
+        # events never render an empty cell.
+        if isinstance(body, dict):
+            return body.get("text") or ""
+        if body is None:
+            return ""
+        return str(body)
+
     def GetSummary(self, event):
         name = event.get("event", "")
-        if name in ("http_request", "http_response", "http_error", "http_request_body"):
+        if name in ("http_request", "http_response", "http_error"):
             parts = [
                 event.get("method", ""),
                 str(event.get("status", "")),
                 event.get("url", ""),
                 event.get("error", ""),
             ]
+        elif name == "http_request_body":
+            # Emitted as {request_id, body}; the body is the whole point of the event.
+            parts = [self.BodyText(event.get("body"))]
         elif name in ("dns_query", "dns_result", "dns_error"):
+            # The interceptor emits host/query_type/result (a body-log object), not hostname/addresses.
             parts = [
-                event.get("hostname", ""),
-                str(event.get("addresses", "")),
+                event.get("query_type", ""),
+                event.get("host", ""),
+                self.BodyText(event.get("result")),
                 event.get("error", ""),
             ]
         elif name in ("tcp_connect", "tcp_send", "tcp_receive", "tcp_error"):
@@ -211,10 +227,17 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
                 str(event.get("port", "")),
                 event.get("error", ""),
             ]
-            # tcp_send/tcp_receive carry the payload as a saved-buffer reference, not host/port.
+            # tcp_send/tcp_receive carry the payload inline (small text) or as a buffer-file
+            # reference ({stream,bytes,offset}); js_log stamps the dropped-file sha256 onto the event.
             body = event.get("body")
-            if isinstance(body, dict) and body.get("file"):
-                parts.append(f"{body.get('bytes', 0)} bytes -> {body['file']}")
+            if isinstance(body, dict):
+                if body.get("text"):
+                    parts.append(body["text"])
+                elif body.get("stream"):
+                    ref = f"{body.get('bytes', 0)} bytes -> {body['stream']}"
+                    if event.get("sha256"):
+                        ref += f" ({event['sha256'][:12]})"
+                    parts.append(ref)
         elif name == "console":
             parts = [event.get("level", ""), event.get("message", "")]
         else:
@@ -268,12 +291,38 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
                 self.grid.SetRowAttr(row, attr)
         self.grid.ForceRefresh()
 
+    def ResolveBufferedBody(self, event):
+        # tcp_send/tcp_receive payloads over the inline limit are streamed to files/<sha256>; js_log
+        # stamps the sha256 onto the event. Read just this chunk's slice [offset:offset+bytes] so the
+        # detail pane shows the actual bytes rather than only the {stream, bytes, offset} reference.
+        body = event.get("body")
+        sha256 = event.get("sha256")
+        if not isinstance(body, dict) or not sha256 or not body.get("stream"):
+            return ""
+        path = os.path.join(self.analysisDir, "files", sha256)
+        if not path_exists(path):
+            return ""
+        try:
+            offset = int(body.get("offset", 0))
+            size = int(body.get("bytes", 0))
+            with open(path, "rb") as fd:
+                fd.seek(offset)
+                raw = fd.read(size) if size else fd.read()
+        except Exception:
+            return ""
+        return raw.decode("utf-8", errors="replace").replace("\x00", "")
+
     def OnSelectCell(self, event):
         row = event.GetRow()
         if 0 <= row < len(self.pageEvents):
+            selected = self.pageEvents[row]
             # No NUL guard needed here: json.dumps escapes control characters, so a NUL in the
             # event data reaches the control as an escaped sequence, not a raw byte.
-            self.resultsWindow.SetValue(json.dumps(self.pageEvents[row], indent=4))
+            content = json.dumps(selected, indent=4)
+            buffered = self.ResolveBufferedBody(selected)
+            if buffered:
+                content += "\n\n--- buffered body ---\n" + buffered
+            self.resultsWindow.SetValue(content)
         event.Skip()
 
     def UpdatePaginationControls(self):

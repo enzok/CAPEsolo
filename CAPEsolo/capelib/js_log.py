@@ -7,7 +7,6 @@ from .path_utils import path_exists
 log = logging.getLogger(__name__)
 
 LOG_NAME = "js_console.log"
-MAX_ENTRIES = 10000
 MAX_LOG_CHARS = 64 * 1024
 
 # Event types the report buckets by name. The interceptor emits more than these (dns_*,
@@ -23,7 +22,7 @@ EVENT_KEYS = {
 }
 
 
-def ParseJsLog(logPath, maxEntries=MAX_ENTRIES):
+def ParseJsLog(logPath):
     """Parse the JSON lines written by the js_console interceptor.
     @return: events, total lines, parsed lines, malformed lines, truncated
     """
@@ -31,6 +30,8 @@ def ParseJsLog(logPath, maxEntries=MAX_ENTRIES):
     totalLines = 0
     parsedLines = 0
     malformedLines = 0
+    # Retained for backward compatibility with callers and the report schema; every line
+    # is now parsed, so this is always False.
     truncated = False
 
     try:
@@ -40,10 +41,6 @@ def ParseJsLog(logPath, maxEntries=MAX_ENTRIES):
                 text = line.strip()
                 if not text:
                     continue
-
-                if parsedLines >= maxEntries:
-                    truncated = True
-                    break
 
                 try:
                     events.append(json.loads(text))
@@ -68,7 +65,7 @@ def GetJsLogPath(analysisDir):
     return logPath
 
 
-def JsLog(analysisDir, maxEntries=MAX_ENTRIES):
+def JsLog(analysisDir):
     """Process the js_console log into report results."""
     logPath = GetJsLogPath(analysisDir)
     output = {
@@ -86,6 +83,7 @@ def JsLog(analysisDir, maxEntries=MAX_ENTRIES):
         "console": [],
         "warnings": [],
         "init": [],
+        "buffers": [],
     }
 
     if not path_exists(str(logPath)):
@@ -101,7 +99,7 @@ def JsLog(analysisDir, maxEntries=MAX_ENTRIES):
             output["log"] = rawLog
 
         events, totalLines, parsedLines, malformedLines, truncated = ParseJsLog(
-            logPath, maxEntries
+            logPath
         )
         output["total_lines"] = totalLines
         output["parsed_lines"] = parsedLines
@@ -113,6 +111,30 @@ def JsLog(analysisDir, maxEntries=MAX_ENTRIES):
             key = EVENT_KEYS.get(event.get("event"))
             if key:
                 output[key].append(event)
+
+        # Link tcp_send/tcp_receive events to the dropped buffer files. The interceptor streams large
+        # TCP payloads to per-stream files and logs a {stream, bytes, offset} reference; the aux module
+        # hashes each and writes js_buffers.json (stream -> sha256), uploading the bytes as
+        # files/<sha256>. Stamp the sha256 onto matching events so the report can resolve them.
+        manifestPath = logPath.parent / "js_buffers.json"
+        if path_exists(str(manifestPath)):
+            try:
+                manifest = json.loads(manifestPath.read_text(encoding="utf-8", errors="replace"))
+                streamMap = {
+                    entry["stream"]: {"sha256": entry.get("sha256"), "bytes": entry.get("bytes")}
+                    for entry in manifest
+                    if entry.get("stream")
+                }
+                output["buffers"] = [{"stream": s, **info} for s, info in streamMap.items()]
+                for event in events:
+                    if event.get("event") in ("tcp_send", "tcp_receive"):
+                        body = event.get("body")
+                        if isinstance(body, dict):
+                            info = streamMap.get(body.get("stream"))
+                            if info and info.get("sha256"):
+                                event["sha256"] = info["sha256"]
+            except Exception as e:
+                log.warning("js_log: failed to read buffer manifest %s: %s", manifestPath, e)
     except Exception as e:
         log.warning("js_log failed on %s: %s", logPath, e)
 

@@ -119,6 +119,10 @@ class MainFrame(wx.Frame):
         # the theme toggle sits beside it rather than as a child of it.
         bottom = wx.BoxSizer(wx.HORIZONTAL)
         self.statusBar = AnalysisStatusBar(self.panel)
+        self.extendTimeoutBtn = wx.Button(self.panel, label="Extend", style=wx.BU_EXACTFIT)
+        self.extendTimeoutBtn.SetToolTip("Add time to the running analysis timeout.")
+        self.extendTimeoutBtn.Disable()
+        self.extendTimeoutBtn.Bind(wx.EVT_BUTTON, self.startTab.OnExtendTimeout)
         self.settingsButton = wx.Button(self.panel, label="Settings", style=wx.BU_EXACTFIT)
         self.settingsButton.SetToolTip("Edit CAPEsolo settings (cfg.ini)")
         self.settingsButton.Bind(wx.EVT_BUTTON, self.OnSettings)
@@ -126,6 +130,7 @@ class MainFrame(wx.Frame):
         self.themeButton.SetToolTip("Switch between the light and dark palettes")
         self.themeButton.Bind(wx.EVT_BUTTON, self.OnToggleTheme)
         bottom.Add(self.statusBar, 1, wx.EXPAND)
+        bottom.Add(self.extendTimeoutBtn, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 6)
         bottom.Add(self.settingsButton, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 6)
         bottom.Add(self.themeButton, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, 6)
         sizer.Add(bottom, 0, wx.EXPAND)

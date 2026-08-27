@@ -278,17 +278,18 @@ def _FromJsLog(collector, jsLog):
                 collector.AddHttp(url=url, method=event.get("method") or "GET")
                 found = True
         elif name == "dns_query":
-            hostname = event.get("hostname") or ""
+            # The interceptor emits the queried name as "host", not "hostname".
+            hostname = event.get("host") or ""
             if hostname:
                 collector.AddDnsRequest(hostname)
                 found = True
         elif name == "dns_result":
-            hostname = event.get("hostname") or ""
-            addresses = event.get("addresses") or []
-            if isinstance(addresses, str):
-                addresses = [addresses]
+            # Resolved addresses arrive as a body-log object ({text, truncated}) under "result", not a
+            # plain "addresses" list, so the domain is registered here; answers still fold in via the
+            # capture/behaviour sources.
+            hostname = event.get("host") or ""
             if hostname:
-                collector.AddDnsRequest(hostname, answers=addresses)
+                collector.AddDnsRequest(hostname)
                 found = True
         elif name == "tcp_connect":
             host = str(event.get("host") or "")
