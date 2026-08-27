@@ -1,3 +1,5 @@
+import hashlib
+import json
 import logging
 import os
 import subprocess
@@ -21,8 +23,12 @@ INTERCEPTOR_TEMPLATE = """ (() => {
   const fs = require("fs");
   const path = require("path");
   const zlib = require("zlib");
-  const crypto = require("crypto");
   const MAX_BODY_CHARS = 4096;
+  const MAX_INLINE_BYTES = 4096;   // small text TCP payloads log inline; larger/binary go to a file
+  let bufferSeq = 0;
+  const bufferBytesWritten = Object.create(null);   // buffer file path -> bytes written so far
+  // Per-process tag so buffer files can't collide across processes when Windows reuses a PID.
+  const bufferRunTag = Math.random().toString(36).slice(2, 10);
 
   // Store the original functions
   const originalSetTimeout = global.setTimeout;
@@ -133,25 +139,57 @@ INTERCEPTOR_TEMPLATE = """ (() => {
     return buffer;
   }
 
-  function saveBuffer(chunk) {
-    // Save a raw buffer to js_buffers/<sha256> and return a compact descriptor for the log instead of
-    // the huge integer array JSON.stringify(Buffer) would produce. Content-addressed, so identical
-    // buffers are stored once. No size cap - the result server's upload_max_size truncates on upload.
+  function appendBuffer(streamName, chunk) {
+    // Append raw bytes to the per-stream working file and return a compact descriptor for the log
+    // (stream id + this chunk's size + its offset in the stream) instead of the huge integer array
+    // JSON.stringify(Buffer) would produce. finish() hashes the completed file and uploads it as a
+    // dropped file named by sha256; the host links events to that hash via the stream id.
     let buf;
     try { buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk); }
     catch (e) { return { error: safeToString(e) }; }
+    const full = path.join(path.dirname(logPath), "js_buffers", streamName);
     try {
-      const sha = crypto.createHash("sha256").update(buf).digest("hex");
-      const rel = "js_buffers/" + sha;
-      const full = path.join(path.dirname(logPath), "js_buffers", sha);
-      if (!fs.existsSync(full)) {
-        fs.mkdirSync(path.dirname(full), { recursive: true });
-        fs.writeFileSync(full, buf);
-      }
-      return { file: rel, bytes: buf.length, sha256: sha };
+      const offset = bufferBytesWritten[full] || 0;
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.appendFileSync(full, buf);
+      bufferBytesWritten[full] = offset + buf.length;
+      return { stream: streamName, bytes: buf.length, offset };
     } catch (e) {
       return { error: safeToString(e), bytes: buf.length };
     }
+  }
+
+  function isProbablyText(buf) {
+    // Cheap heuristic: a NUL byte or a high ratio of control chars (allowing \\t\\n\\v\\f\\r) means binary.
+    const n = buf.length;
+    if (n === 0) return true;
+    let suspicious = 0;
+    for (let i = 0; i < n; i++) {
+      const c = buf[i];
+      if (c === 0) return false;
+      if (c < 0x09 || (c > 0x0d && c < 0x20)) suspicious++;
+    }
+    return suspicious / n < 0.1;
+  }
+
+  function tcpBody(streamName, chunk) {
+    // Every chunk is appended to the per-stream file so finish() saves a faithful copy of the whole
+    // stream as files/<sha256> (still one file per stream-direction, not per chunk). A small text
+    // chunk additionally carries an inline preview so the log stays readable without opening the
+    // dropped file. Deciding inline-vs-file per chunk previously let a small or text-looking tail
+    // (e.g. a gzip trailer under MAX_INLINE_BYTES) be inlined instead of appended, leaving the
+    // reassembled file truncated.
+    if (chunk === undefined || chunk === null) return null;
+    let buf;
+    try { buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk); }
+    catch (e) { return { error: safeToString(e) }; }
+    const ref = appendBuffer(streamName, buf);
+    if (!ref.error && buf.length <= MAX_INLINE_BYTES && isProbablyText(buf)) {
+      const t = truncate(buf.toString("utf8"));
+      ref.text = t.text;
+      ref.truncated = t.truncated;
+    }
+    return ref;
   }
 
   function nodeRequestMeta(input, options) {
@@ -606,8 +644,14 @@ INTERCEPTOR_TEMPLATE = """ (() => {
     if (!socket || socket.__jsInterceptorTrafficWrapped) return;
     socket.__jsInterceptorTrafficWrapped = true;
 
-    // Raw TCP payloads are binary and can be large; save each to a content-addressed file
-    // (js_buffers/<sha256>) and log the reference instead of the byte-by-byte integer array.
+    // Raw TCP payloads are binary and can be large; stream them to per-direction working files and
+    // log a reference (stream id + offset + length) instead of the byte-by-byte integer array.
+    // finish() hashes each completed file and uploads it as a dropped file named by its sha256.
+    const streamId = ++bufferSeq;
+    const pid = safeCall(() => (typeof process !== "undefined" ? process.pid : 0), 0);
+    const sendName = `sock_${pid}_${bufferRunTag}_${streamId}_send`;
+    const recvName = `sock_${pid}_${bufferRunTag}_${streamId}_recv`;
+
     const originalWrite = typeof socket.write === "function" ? socket.write.bind(socket) : null;
     if (originalWrite) {
       socket.write = function(chunk, ...rest) {
@@ -616,7 +660,7 @@ INTERCEPTOR_TEMPLATE = """ (() => {
           source: "js_interceptor",
           event: "tcp_send",
           transport,
-          body: (chunk === undefined || chunk === null) ? null : saveBuffer(chunk),
+          body: tcpBody(sendName, chunk),
         });
         return originalWrite(chunk, ...rest);
       };
@@ -628,7 +672,7 @@ INTERCEPTOR_TEMPLATE = """ (() => {
         source: "js_interceptor",
         event: "tcp_receive",
         transport,
-        body: (chunk === undefined || chunk === null) ? null : saveBuffer(chunk),
+        body: tcpBody(recvName, chunk),
       });
     });
     socket.on("error", (err) => {
@@ -973,6 +1017,44 @@ class JsConsole(Auxiliary):
             log.warning("js_console: log file %s not found", self.log_path)
             return
 
+        # Hash each per-stream TCP buffer and record a stream->sha256 manifest so the processing
+        # module can link tcp_send/tcp_receive events to the dropped file. The manifest is a SEPARATE
+        # file (not appended to the log) so it can't be lost to the processing module's max_entries
+        # cap on log events. The buffers themselves are uploaded as standard dropped files
+        # (files/<sha256>) so they ride the existing dropped-file YARA/signature pipeline.
+        buffers = []
+        manifest = []
+        buffers_dir = os.path.join(os.path.dirname(self.log_path), "js_buffers")
+        if os.path.isdir(buffers_dir):
+            for name in os.listdir(buffers_dir):
+                fpath = os.path.join(buffers_dir, name)
+                if not os.path.isfile(fpath):
+                    continue
+                try:
+                    digest = hashlib.sha256()
+                    with open(fpath, "rb") as fd:
+                        for chunk in iter(lambda: fd.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                    sha256 = digest.hexdigest()
+                    size = os.path.getsize(fpath)
+                except Exception as e:
+                    log.warning("js_console: failed to hash buffer %s: %s", fpath, e)
+                    continue
+
+                buffers.append((fpath, sha256))
+                manifest.append({"stream": name, "sha256": sha256, "bytes": size})
+
+        if manifest:
+            # aux/js_console is already whitelisted in resultserver.RESULT_UPLOADABLE, so no server
+            # change is needed for the manifest file.
+            manifest_path = os.path.join(os.path.dirname(self.log_path), "js_buffers.json")
+            try:
+                with open(manifest_path, "w", encoding="utf-8") as fd:
+                    json.dump(manifest, fd)
+                upload_to_host(manifest_path, os.path.join("aux", "js_console", "js_buffers.json"))
+            except Exception as e:
+                log.warning("js_console: failed to write/upload buffer manifest: %s", e)
+
         try:
             # Upload to aux directory for the processing module to pick up and parse into report.json
             upload_to_host(
@@ -981,17 +1063,10 @@ class JsConsole(Auxiliary):
         except Exception as e:
             log.warning("js_console: upload failed for %s: %s", self.log_path, e)
 
-        # Upload the raw TCP buffers the interceptor saved (referenced by path in the log). The result
-        # server whitelist must include aux_/js_console/js_buffers (see resultserver.RESULT_UPLOADABLE).
-        buffers_dir = os.path.join(os.path.dirname(self.log_path), "js_buffers")
-        if os.path.isdir(buffers_dir):
-            for name in os.listdir(buffers_dir):
-                fpath = os.path.join(buffers_dir, name)
-                if not os.path.isfile(fpath):
-                    continue
-                try:
-                    upload_to_host(
-                        fpath, os.path.join("aux", "js_console", "js_buffers", name)
-                    )
-                except Exception as e:
-                    log.warning("js_console: buffer upload failed for %s: %s", fpath, e)
+        # Upload each buffer as a dropped file named by sha256. The result server dedups identical
+        # content via open_exclusive (EEXIST -> skipped), matching CAPE's content-addressed store.
+        for fpath, sha256 in buffers:
+            try:
+                upload_to_host(fpath, f"files/{sha256}", metadata="js_console tcp buffer", category="files")
+            except Exception as e:
+                log.warning("js_console: buffer upload failed for %s: %s", fpath, e)

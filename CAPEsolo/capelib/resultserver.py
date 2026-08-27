@@ -74,9 +74,6 @@ RESULT_UPLOADABLE = (
     b"aux_",
     b"aux_/amsi",
     b"aux_/js_console",
-    # js_console saves raw intercepted TCP buffers here (referenced by path in js_console.log). Same
-    # exact-match rule as the sslkeylogfile note below - the subdirectory must be listed explicitly.
-    b"aux_/js_console/js_buffers",
     # sslkeylogfile uploads to "aux/sslkeylogfile/sslkeys.log". Every aux_ subdirectory has to
     # be listed individually - the check is an exact match on the directory, not a prefix - so
     # without this the TLS secrets were refused and the client disconnected.

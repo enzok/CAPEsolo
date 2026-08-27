@@ -858,6 +858,7 @@ class StartPanel(scrolled.ScrolledPanel):
 
         self.WaitForUploads(pending)
         self.GetMainFrame().statusBar.Finish("Analysis complete")
+        self.GetMainFrame().extendTimeoutBtn.Disable()
         self.log("Shutting down")
         try:
             if hasattr(self.analyzer, "command_pipe"):
@@ -1251,6 +1252,7 @@ class StartPanel(scrolled.ScrolledPanel):
             mainFrame.statusBar.StartCountdown(self.countdown)
             self.StartAnalyzerThread(self.analyzer)
             self.terminateAnalyzerBtn.Enable()
+            self.GetMainFrame().extendTimeoutBtn.Enable()
             # os.unlink(ANALYSIS_CONF)
 
         except CuckooError:
@@ -1364,8 +1366,25 @@ class StartPanel(scrolled.ScrolledPanel):
             completeFolder = os.path.join(os.environ["TMP"], idHash)
             Path(completeFolder).mkdir(exist_ok=True)
             self.terminateAnalyzerBtn.Disable()
+            self.GetMainFrame().extendTimeoutBtn.Disable()
         except Exception as e:
             wx.MessageBox(f"Could not terminate analyzer: {e}", "Error", wx.OK | wx.ICON_ERROR)
+
+    def OnExtendTimeout(self, event):
+        analyzer = getattr(self, "analyzer", None)
+        if not analyzer or not getattr(analyzer, "config", None):
+            return
+        extra = wx.GetNumberFromUser(
+            "Extend the running analysis by:", "Seconds", "Extend timeout", 60, 1, 24 * 60 * 60, self
+        )
+        if extra <= 0:  # -1 on cancel
+            return
+        try:
+            analyzer.config.timeout = int(analyzer.config.timeout) + extra
+        except (TypeError, ValueError):
+            analyzer.config.timeout = extra
+        self.GetMainFrame().statusBar.AddTime(extra)
+        self.GetMainFrame().statusBar.SetMessage(f"Timeout extended by {extra}s")
 
     def OnLaunchAnalyzer(self, event):
         originalPath = Path(self.targetPath.GetValue())
