@@ -20,6 +20,8 @@ INTERCEPTOR_TEMPLATE = """ (() => {
 
   const fs = require("fs");
   const path = require("path");
+  const zlib = require("zlib");
+  const crypto = require("crypto");
   const MAX_BODY_CHARS = 4096;
 
   // Store the original functions
@@ -63,7 +65,15 @@ INTERCEPTOR_TEMPLATE = """ (() => {
 
   function safeToString(v) {
     if (typeof v === "string") return v;
-    try { return JSON.stringify(v); } catch { return String(v); }
+    try {
+      // Render Buffers/typed arrays as a short marker instead of the giant integer array
+      // JSON.stringify would emit ({"type":"Buffer","data":[...]}), which bloats the log.
+      return JSON.stringify(v, (k, val) => {
+        if (typeof Buffer !== "undefined" && Buffer.isBuffer(val)) return `<Buffer ${val.length} bytes>`;
+        if (val && val.type === "Buffer" && Array.isArray(val.data)) return `<Buffer ${val.data.length} bytes>`;
+        return val;
+      });
+    } catch { return String(v); }
   }
 
   function truncate(s, limit = MAX_BODY_CHARS) {
@@ -95,6 +105,53 @@ INTERCEPTOR_TEMPLATE = """ (() => {
     if (value === undefined || value === null) return null;
     const t = truncate(safeToString(value));
     return { text: t.text, truncated: t.truncated };
+  }
+
+  function headerValue(headers, name) {
+    // Case-insensitive header lookup. Node's res.headers are lowercased, but request headers set by
+    // the sample can be any case.
+    if (!headers) return "";
+    const want = name.toLowerCase();
+    for (const k in headers) {
+      if (k.toLowerCase() === want) return headers[k];
+    }
+    return "";
+  }
+
+  function decodeBody(buffer, encoding) {
+    // Decompress a raw HTTP body by Content-Encoding so it logs as readable text rather than
+    // compressed bytes. require("http")/https hand back the raw body (fetch/axios auto-decode).
+    // Unknown/empty encoding or any failure -> return the buffer unchanged.
+    try {
+      const enc = safeToString(encoding || "").toLowerCase();
+      if (enc.includes("gzip")) return zlib.gunzipSync(buffer);
+      if (enc.includes("br")) return zlib.brotliDecompressSync(buffer);
+      if (enc.includes("deflate")) {
+        try { return zlib.inflateSync(buffer); } catch (_) { return zlib.inflateRawSync(buffer); }
+      }
+    } catch (_) {}
+    return buffer;
+  }
+
+  function saveBuffer(chunk) {
+    // Save a raw buffer to js_buffers/<sha256> and return a compact descriptor for the log instead of
+    // the huge integer array JSON.stringify(Buffer) would produce. Content-addressed, so identical
+    // buffers are stored once. No size cap - the result server's upload_max_size truncates on upload.
+    let buf;
+    try { buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk); }
+    catch (e) { return { error: safeToString(e) }; }
+    try {
+      const sha = crypto.createHash("sha256").update(buf).digest("hex");
+      const rel = "js_buffers/" + sha;
+      const full = path.join(path.dirname(logPath), "js_buffers", sha);
+      if (!fs.existsSync(full)) {
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, buf);
+      }
+      return { file: rel, bytes: buf.length, sha256: sha };
+    } catch (e) {
+      return { error: safeToString(e), bytes: buf.length };
+    }
   }
 
   function nodeRequestMeta(input, options) {
@@ -178,7 +235,11 @@ INTERCEPTOR_TEMPLATE = """ (() => {
       if (originalEnd) {
         req.end = function(chunk, encoding, cb) {
           if (chunk !== undefined && chunk !== null) reqBodyChunks.push(Buffer.from(chunk));
-          const bodyText = reqBodyChunks.length ? Buffer.concat(reqBodyChunks).toString("utf8") : null;
+          let bodyText = null;
+          if (reqBodyChunks.length) {
+            const reqEnc = headerValue(meta.headers, "content-encoding");
+            bodyText = decodeBody(Buffer.concat(reqBodyChunks), reqEnc).toString("utf8");
+          }
           safeAppendJson({
             ts: nowIso(),
             source: "js_interceptor",
@@ -196,7 +257,9 @@ INTERCEPTOR_TEMPLATE = """ (() => {
           if (c !== undefined && c !== null) chunks.push(Buffer.from(c));
         });
         res.on("end", () => {
-          const text = chunks.length ? Buffer.concat(chunks).toString("utf8") : "";
+          const raw = chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0);
+          const text = decodeBody(raw, res.headers && res.headers["content-encoding"]).toString("utf8");
+          const t = truncate(text);
           safeAppendJson({
             ts: nowIso(),
             source: "js_interceptor",
@@ -206,11 +269,7 @@ INTERCEPTOR_TEMPLATE = """ (() => {
             status: res.statusCode,
             status_text: res.statusMessage || "",
             headers: normalizeHeaders(res.headers),
-            body: {
-              text: truncate(text).text,
-              truncated: truncate(text).truncated,
-              unreadable: false,
-            },
+            body: { text: t.text, truncated: t.truncated, unreadable: false },
             elapsed_ms: Date.now() - started,
           });
         });
@@ -547,6 +606,8 @@ INTERCEPTOR_TEMPLATE = """ (() => {
     if (!socket || socket.__jsInterceptorTrafficWrapped) return;
     socket.__jsInterceptorTrafficWrapped = true;
 
+    // Raw TCP payloads are binary and can be large; save each to a content-addressed file
+    // (js_buffers/<sha256>) and log the reference instead of the byte-by-byte integer array.
     const originalWrite = typeof socket.write === "function" ? socket.write.bind(socket) : null;
     if (originalWrite) {
       socket.write = function(chunk, ...rest) {
@@ -555,7 +616,7 @@ INTERCEPTOR_TEMPLATE = """ (() => {
           source: "js_interceptor",
           event: "tcp_send",
           transport,
-          body: toBodyLog(chunk),
+          body: (chunk === undefined || chunk === null) ? null : saveBuffer(chunk),
         });
         return originalWrite(chunk, ...rest);
       };
@@ -567,7 +628,7 @@ INTERCEPTOR_TEMPLATE = """ (() => {
         source: "js_interceptor",
         event: "tcp_receive",
         transport,
-        body: toBodyLog(chunk),
+        body: (chunk === undefined || chunk === null) ? null : saveBuffer(chunk),
       });
     });
     socket.on("error", (err) => {
@@ -919,3 +980,18 @@ class JsConsole(Auxiliary):
             )
         except Exception as e:
             log.warning("js_console: upload failed for %s: %s", self.log_path, e)
+
+        # Upload the raw TCP buffers the interceptor saved (referenced by path in the log). The result
+        # server whitelist must include aux_/js_console/js_buffers (see resultserver.RESULT_UPLOADABLE).
+        buffers_dir = os.path.join(os.path.dirname(self.log_path), "js_buffers")
+        if os.path.isdir(buffers_dir):
+            for name in os.listdir(buffers_dir):
+                fpath = os.path.join(buffers_dir, name)
+                if not os.path.isfile(fpath):
+                    continue
+                try:
+                    upload_to_host(
+                        fpath, os.path.join("aux", "js_console", "js_buffers", name)
+                    )
+                except Exception as e:
+                    log.warning("js_console: buffer upload failed for %s: %s", fpath, e)

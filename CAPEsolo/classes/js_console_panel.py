@@ -211,6 +211,10 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
                 str(event.get("port", "")),
                 event.get("error", ""),
             ]
+            # tcp_send/tcp_receive carry the payload as a saved-buffer reference, not host/port.
+            body = event.get("body")
+            if isinstance(body, dict) and body.get("file"):
+                parts.append(f"{body.get('bytes', 0)} bytes -> {body['file']}")
         elif name == "console":
             parts = [event.get("level", ""), event.get("message", "")]
         else:
