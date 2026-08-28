@@ -1,17 +1,29 @@
 import json
-import os
 
 import wx
 import wx.grid as gridlib
 
 from CAPEsolo.capelib.js_log import GetJsLogPath, JsLog
+from CAPEsolo.capelib.js_streams import AssembleConversations, AssembleDns, DropExtractedFiles
+
 from CAPEsolo.capelib.path_utils import path_exists
 
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
 
-ALL_EVENTS = "<All events>"
+ALL = "<All>"
+# Order the kind filter offers; a kind only appears when it has rows.
+KIND_ORDER = ("Conversation", "HTTP", "DNS", "Event")
+# Events the network views (Conversation/HTTP/DNS rows) already cover; everything else stays an Event row.
+NETWORK_EVENTS = {
+    "tcp_connect", "tcp_endpoints", "tcp_send", "tcp_receive", "tcp_error",
+    "dns_query", "dns_result", "dns_error",
+    "http_request", "http_response", "http_error", "http_request_body",
+}
+BODY_TEXT_CAP = 64 * 1024
+INFO_COL_MAX = 520
+ADDR_COL_MAX = 240
 
 
 class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
@@ -21,9 +33,9 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
         self.results = parent.results
         self.BindKeyEvents()
         self.jsLogComplete = False
-        self.myevents = []
-        self.pageEvents = []
-        self.category = ALL_EVENTS
+        self.allRows = []
+        self.pageRows = []
+        self.category = ALL
         self.numevents = 0
         self.current_page = 1
         self.items_per_page = 100
@@ -40,7 +52,7 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
 
         self.categoryDropdown = wx.ComboBox(self, style=wx.CB_READONLY)
         self.categoryDropdown.Bind(wx.EVT_COMBOBOX, self.OnCatView)
-        vbox.Add(wx.StaticText(self, label="Events:"), flag=wx.LEFT | wx.TOP, border=5)
+        vbox.Add(wx.StaticText(self, label="Show:"), flag=wx.LEFT | wx.TOP, border=5)
         vbox.Add(
             self.categoryDropdown,
             proportion=0,
@@ -48,20 +60,31 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
             border=5,
         )
 
-        self.grid = CopyableGrid(self, 0, 3)
-        for col, label in enumerate(("Time", "Event", "Summary")):
+        # Grid over detail pane, matching the Network tab's convention.
+        self.splitter = wx.SplitterWindow(self, style=wx.SP_LIVE_UPDATE | wx.SP_3DSASH)
+        self.splitter.SetSashGravity(0.6)
+        self.splitter.SetMinimumPaneSize(80)
+
+        self.grid = CopyableGrid(self.splitter, 0, 5)
+        for col, label in enumerate(("Time", "Kind", "Source", "Destination", "Info")):
             self.grid.SetColLabelValue(col, label)
         self.grid.SetColLabelAlignment(wx.ALIGN_CENTRE, wx.ALIGN_CENTRE)
-        summaryAttr = gridlib.GridCellAttr()
-        summaryAttr.SetAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE)
-        self.grid.SetColAttr(2, summaryAttr)
+        infoAttr = gridlib.GridCellAttr()
+        infoAttr.SetAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE)
+        self.grid.SetColAttr(4, infoAttr)
         self.grid.SetRowLabelSize(0)
         self.grid.EnableEditing(False)
         self.grid.Bind(gridlib.EVT_GRID_SELECT_CELL, self.OnSelectCell)
-        self.grid.Hide()
+
+        self.resultsWindow = wx.TextCtrl(
+            self.splitter, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2
+        )
+        self.resultsWindow.SetFont(FONT_CODE)
+
+        self.splitter.SplitHorizontally(self.grid, self.resultsWindow)
         vbox.Add(
-            self.grid,
-            proportion=2,
+            self.splitter,
+            proportion=1,
             flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
             border=5,
         )
@@ -110,23 +133,12 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
         )
         self.items_per_page_dropdown.Bind(wx.EVT_COMBOBOX, self.OnItemsPerPageChange)
         self.pagination_sizer.Add(
-            wx.StaticText(self, label="Events per page:"), 0, wx.ALL | wx.CENTER, 5
+            wx.StaticText(self, label="Rows per page:"), 0, wx.ALL | wx.CENTER, 5
         )
         self.pagination_sizer.Add(self.items_per_page_dropdown, 0, wx.ALL, 5)
 
         vbox.Add(self.pagination_sizer, 0, wx.CENTER | wx.BOTTOM, 5)
         self.pagination_sizer.Hide(True)
-
-        self.resultsWindow = wx.TextCtrl(
-            self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2
-        )
-        self.resultsWindow.SetFont(FONT_CODE)
-        vbox.Add(
-            self.resultsWindow,
-            proportion=1,
-            flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
-            border=5,
-        )
 
         self.SetSizer(vbox)
         apply_theme(self)
@@ -137,122 +149,193 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
         else:
             self.jsLogButton.Disable()
 
-    def ProcessJsLog(self, event):
-        # A busy cursor rather than a progress dialog, matching BehaviorPanel and
-        # PayloadsPanel: parsing is a single pass with nothing to report part way.
+    def ProcessJsLog(self, event=None):
+        # A busy cursor rather than a progress dialog, matching BehaviorPanel and PayloadsPanel:
+        # parsing is a single pass with nothing to report part way. event defaults to None so the
+        # auto-process step can call this directly.
         with wx.BusyCursor():
             jslog = JsLog(self.analysisDir)
             self.results["js_log"] = jslog
-            self.myevents = jslog.get("events", [])
-            self.LoadEventCategories()
+            conversations, drops = AssembleConversations(jslog, self.analysisDir)
+            dnsRows = AssembleDns(jslog)
+            newPaths = DropExtractedFiles(self.analysisDir, drops)
+            self._LiveAppendPayloads(newPaths)
+            self.allRows = (
+                conversations
+                + self._BuildHttpRows(jslog)
+                + dnsRows
+                + self._BuildEventRows(jslog)
+            )
+            self.LoadKindFilter()
             self.pagination_sizer.Show(True)
+            self.current_page = 1
             self.AddTableData()
             self.grid.Show()
             self.jsLogButton.Disable()
 
-        self.resultsWindow.SetValue(self.Summarize(jslog))
+        self.resultsWindow.SetValue(self.Summarize(jslog, conversations, dnsRows, newPaths))
         self.jsLogComplete = True
 
-    def Summarize(self, jslog):
+    def _LiveAppendPayloads(self, newPaths):
+        # Push reconstructed drops into the Payloads and Yara tabs if they are already loaded; both
+        # AddPayload methods guard on load state and otherwise defer to their first-open path.
+        if not newPaths:
+            return
+        frame = self.GetTopLevelParent()
+        for attr in ("payloadsTab", "yaraTab"):
+            panel = getattr(frame, attr, None)
+            if panel is None:
+                continue
+            for rel in newPaths:
+                try:
+                    panel.AddPayload(rel)
+                except Exception:
+                    pass
+
+    def Summarize(self, jslog, conversations, dnsRows, newPaths):
         content = f'• {jslog.get("path", "")}\n'
         content += f'\tLines: {jslog.get("total_lines", 0)}\n'
         content += f'\tEvents: {jslog.get("parsed_lines", 0)}\n'
         if jslog.get("malformed_lines", 0):
             content += f'\tMalformed lines: {jslog.get("malformed_lines")}\n'
-        if jslog.get("truncated", False):
-            content += "\tTruncated: event limit reached, later events were not parsed.\n"
-        content += "\nSelect a row to view the full event."
-
+        content += f"\tConversations: {len(conversations)}\n"
+        content += f"\tDNS lookups: {len(dnsRows)}\n"
+        if newPaths:
+            content += f"\tFiles dropped: {len(newPaths)}\n"
+        content += "\nSelect a row to view its detail."
         return content
 
-    def LoadEventCategories(self):
-        counts = {}
-        for event in self.myevents:
-            name = event.get("event", "")
-            counts[name] = counts.get(name, 0) + 1
-
-        self.categoryDropdown.Clear()
-        self.categoryDropdown.Append(f"{ALL_EVENTS} ({len(self.myevents)})")
-        for name in sorted(counts):
-            self.categoryDropdown.Append(f"{name} ({counts[name]})")
-        self.categoryDropdown.SetSelection(0)
-        self.category = ALL_EVENTS
-
-    def OnCatView(self, event):
-        selected = self.categoryDropdown.GetValue()
-        # Labels carry a trailing " (count)" that is not part of the event name.
-        self.category = selected.rsplit(" (", 1)[0]
-        self.current_page = 1
-        self.AddTableData()
-
-    def GetEvents(self):
-        if self.category == ALL_EVENTS:
-            return self.myevents
-
-        return [e for e in self.myevents if e.get("event", "") == self.category]
-
-    def BodyText(self, body):
-        # Body-log objects are {text, truncated} (buffered payloads add {stream, bytes, offset}).
-        # Return the readable text, falling back to a string for arrays/scalars so body-bearing
-        # events never render an empty cell.
+    # -- row builders -------------------------------------------------------
+    def _Body(self, body):
         if isinstance(body, dict):
             return body.get("text") or ""
         if body is None:
             return ""
         return str(body)
 
-    def GetSummary(self, event):
+    def _FormatHeaders(self, headers):
+        if not isinstance(headers, dict):
+            return ""
+        return "\n".join(f"{k}: {v}" for k, v in headers.items())
+
+    def _BuildHttpRows(self, jslog):
+        # Pair http_request with its http_response / http_error by request_id; http_request_body
+        # (emitted separately) folds into the request's detail.
+        reqs = {r.get("request_id"): r for r in jslog.get("http_requests", [])}
+        reqBody = {
+            ev.get("request_id"): self._Body(ev.get("body"))
+            for ev in jslog.get("events", [])
+            if ev.get("event") == "http_request_body"
+        }
+        rows = []
+        seen = set()
+        for resp in jslog.get("http_responses", []):
+            rid = resp.get("request_id")
+            seen.add(rid)
+            rows.append(self._HttpRow(reqs.get(rid), resp, None, reqBody.get(rid)))
+        for err in jslog.get("http_errors", []):
+            rid = err.get("request_id")
+            seen.add(rid)
+            rows.append(self._HttpRow(reqs.get(rid), None, err, reqBody.get(rid)))
+        for rid, req in reqs.items():
+            if rid not in seen:
+                rows.append(self._HttpRow(req, None, None, reqBody.get(rid)))
+        return rows
+
+    def _HttpRow(self, req, resp, err, reqBody):
+        req = req or {}
+        method = req.get("method", "")
+        url = req.get("url", "")
+        status = ""
+        if resp:
+            status = f'{resp.get("status", "")} {resp.get("status_text", "")}'.strip()
+        error = err.get("error", "") if err else ""
+        info = " ".join(p for p in (method, url, status, error) if p)
+
+        sections = [f"{method} {url}  [{req.get('transport', '')}]".strip()]
+        if req.get("headers"):
+            sections.append("--- request headers ---\n" + self._FormatHeaders(req["headers"]))
+        if reqBody:
+            sections.append("--- request body ---\n" + reqBody[:BODY_TEXT_CAP])
+        if resp:
+            sections.append(f"HTTP {status}")
+            if resp.get("headers"):
+                sections.append("--- response headers ---\n" + self._FormatHeaders(resp["headers"]))
+            respBody = self._Body(resp.get("body"))
+            if respBody:
+                sections.append("--- response body ---\n" + respBody[:BODY_TEXT_CAP])
+        if error:
+            sections.append("Error: " + error)
+
+        ts = (resp or err or req).get("ts", "")
+        return {
+            "kind": "HTTP",
+            "ts": ts,
+            "src": req.get("transport", ""),
+            "dst": url,
+            "info": info,
+            "detail": "\n\n".join(sections),
+        }
+
+    def _BuildEventRows(self, jslog):
+        # Everything the network views do not cover (console/init/eval/warning/module_intercept*/
+        # socket_*/...) is preserved here exactly as before: a row plus the raw event JSON on select.
+        rows = []
+        for ev in jslog.get("events", []):
+            if ev.get("event") in NETWORK_EVENTS:
+                continue
+            rows.append(
+                {
+                    "kind": "Event",
+                    "ts": ev.get("ts", ""),
+                    "src": ev.get("source", ""),
+                    "dst": "",
+                    "info": self.EventSummary(ev),
+                    "detail": json.dumps(ev, indent=4),
+                }
+            )
+        return rows
+
+    def EventSummary(self, event):
         name = event.get("event", "")
-        if name in ("http_request", "http_response", "http_error"):
-            parts = [
-                event.get("method", ""),
-                str(event.get("status", "")),
-                event.get("url", ""),
-                event.get("error", ""),
-            ]
-        elif name == "http_request_body":
-            # Emitted as {request_id, body}; the body is the whole point of the event.
-            parts = [self.BodyText(event.get("body"))]
-        elif name in ("dns_query", "dns_result", "dns_error"):
-            # The interceptor emits host/query_type/result (a body-log object), not hostname/addresses.
-            parts = [
-                event.get("query_type", ""),
-                event.get("host", ""),
-                self.BodyText(event.get("result")),
-                event.get("error", ""),
-            ]
-        elif name in ("tcp_connect", "tcp_send", "tcp_receive", "tcp_error"):
-            parts = [
-                str(event.get("host", "")),
-                str(event.get("port", "")),
-                event.get("error", ""),
-            ]
-            # tcp_send/tcp_receive carry the payload inline (small text) or as a buffer-file
-            # reference ({stream,bytes,offset}); js_log stamps the dropped-file sha256 onto the event.
-            body = event.get("body")
-            if isinstance(body, dict):
-                if body.get("text"):
-                    parts.append(body["text"])
-                elif body.get("stream"):
-                    ref = f"{body.get('bytes', 0)} bytes -> {body['stream']}"
-                    if event.get("sha256"):
-                        ref += f" ({event['sha256'][:12]})"
-                    parts.append(ref)
-        elif name == "console":
+        if name == "console":
             parts = [event.get("level", ""), event.get("message", "")]
         else:
-            # Everything the interceptor may add later still shows its own fields rather
-            # than an empty cell.
             parts = [
                 f"{key}: {value}"
                 for key, value in event.items()
                 if key not in ("ts", "event", "source")
             ]
+        return " ".join(str(part) for part in parts if part)
 
-        # Intercepted messages and bodies are arbitrary text. A NUL terminates the native
-        # cell, dropping the rest of the summary with no error anywhere.
-        summary = " ".join(str(part) for part in parts if part)
-        return summary.replace("\x00", "")[:512]
+    # -- kind filter + grid -------------------------------------------------
+    def LoadKindFilter(self):
+        counts = {}
+        for row in self.allRows:
+            counts[row["kind"]] = counts.get(row["kind"], 0) + 1
+
+        self.categoryDropdown.Clear()
+        self.categoryDropdown.Append(f"{ALL} ({len(self.allRows)})")
+        for kind in KIND_ORDER:
+            if counts.get(kind):
+                self.categoryDropdown.Append(f"{kind} ({counts[kind]})")
+        self.categoryDropdown.SetSelection(0)
+        self.category = ALL
+
+    def OnCatView(self, event):
+        selected = self.categoryDropdown.GetValue()
+        # Labels carry a trailing " (count)" that is not part of the kind.
+        self.category = selected.rsplit(" (", 1)[0]
+        self.current_page = 1
+        self.AddTableData()
+
+    def GetRows(self):
+        if self.category == ALL:
+            return self.allRows
+        return [r for r in self.allRows if r["kind"] == self.category]
+
+    def _InfoCell(self, info):
+        return " ".join(str(info).split()).replace("\x00", "")[:512]
 
     def ClearGrid(self):
         self.grid.ClearGrid()
@@ -261,22 +344,27 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
             self.grid.DeleteRows(0, rows)
 
     def AddTableData(self):
-        myevents = self.GetEvents()
-        self.numevents = len(myevents)
+        rows = self.GetRows()
+        self.numevents = len(rows)
         self.UpdatePaginationControls()
         self.ClearGrid()
 
         start_index = (self.current_page - 1) * self.items_per_page
         end_index = start_index + self.items_per_page
-        self.pageEvents = myevents[start_index:end_index]
+        self.pageRows = rows[start_index:end_index]
 
-        for i, event in enumerate(self.pageEvents):
+        for i, row in enumerate(self.pageRows):
             self.grid.AppendRows(1)
-            self.grid.SetCellValue(i, 0, str(event.get("ts", "")))
-            self.grid.SetCellValue(i, 1, str(event.get("event", "")))
-            self.grid.SetCellValue(i, 2, self.GetSummary(event))
+            self.grid.SetCellValue(i, 0, str(row.get("ts", "")))
+            self.grid.SetCellValue(i, 1, row.get("kind", ""))
+            self.grid.SetCellValue(i, 2, str(row.get("src", "")))
+            self.grid.SetCellValue(i, 3, str(row.get("dst", "")))
+            self.grid.SetCellValue(i, 4, self._InfoCell(row.get("info", "")))
 
         self.grid.AutoSizeColumns()
+        for col, cap in ((2, ADDR_COL_MAX), (3, ADDR_COL_MAX), (4, INFO_COL_MAX)):
+            if self.grid.GetColSize(col) > cap:
+                self.grid.SetColSize(col, cap)
         self.grid.AutoSizeRows()
         self.ApplyAlternateRowShading()
         self.Layout()
@@ -291,38 +379,10 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
                 self.grid.SetRowAttr(row, attr)
         self.grid.ForceRefresh()
 
-    def ResolveBufferedBody(self, event):
-        # tcp_send/tcp_receive payloads over the inline limit are streamed to files/<sha256>; js_log
-        # stamps the sha256 onto the event. Read just this chunk's slice [offset:offset+bytes] so the
-        # detail pane shows the actual bytes rather than only the {stream, bytes, offset} reference.
-        body = event.get("body")
-        sha256 = event.get("sha256")
-        if not isinstance(body, dict) or not sha256 or not body.get("stream"):
-            return ""
-        path = os.path.join(self.analysisDir, "files", sha256)
-        if not path_exists(path):
-            return ""
-        try:
-            offset = int(body.get("offset", 0))
-            size = int(body.get("bytes", 0))
-            with open(path, "rb") as fd:
-                fd.seek(offset)
-                raw = fd.read(size) if size else fd.read()
-        except Exception:
-            return ""
-        return raw.decode("utf-8", errors="replace").replace("\x00", "")
-
     def OnSelectCell(self, event):
         row = event.GetRow()
-        if 0 <= row < len(self.pageEvents):
-            selected = self.pageEvents[row]
-            # No NUL guard needed here: json.dumps escapes control characters, so a NUL in the
-            # event data reaches the control as an escaped sequence, not a raw byte.
-            content = json.dumps(selected, indent=4)
-            buffered = self.ResolveBufferedBody(selected)
-            if buffered:
-                content += "\n\n--- buffered body ---\n" + buffered
-            self.resultsWindow.SetValue(content)
+        if 0 <= row < len(self.pageRows):
+            self.resultsWindow.SetValue(self.pageRows[row].get("detail", "").replace("\x00", ""))
         event.Skip()
 
     def UpdatePaginationControls(self):
