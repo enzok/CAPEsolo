@@ -16,6 +16,8 @@ import wx.lib.scrolledpanel as scrolled
 from sflock.abstracts import File as SflockFile
 from sflock.ident import identify as sflock_identify
 
+from CAPEsolo.capelib.js_log import GetJsLogPath
+from CAPEsolo.capelib.path_utils import path_exists
 from CAPEsolo.capelib.resultserver import ResultServer
 from CAPEsolo.capelib.utils import sanitize_filename
 from CAPEsolo.lib.common.hashing import hash_file
@@ -898,6 +900,11 @@ class StartPanel(scrolled.ScrolledPanel):
             logsDir = Path(self.analysisDir) / "logs"
             if logsDir.exists() and any(logsDir.iterdir()) and not mainFrame.behaviorTab.behaviorComplete:
                 self._AutoStep(statusBar, "behavior", lambda: mainFrame.behaviorTab.GenerateBehavior(None))
+
+            # Before payloads so reconstructed files dropped from the JS network log are picked up by
+            # PayloadsReady and the yara scan below in the same run.
+            if not mainFrame.jsConsoleTab.jsLogComplete and path_exists(str(GetJsLogPath(self.analysisDir))):
+                self._AutoStep(statusBar, "js log", mainFrame.jsConsoleTab.ProcessJsLog)
 
             self._AutoStep(statusBar, "payloads", mainFrame.payloadsTab.PayloadsReady)
 

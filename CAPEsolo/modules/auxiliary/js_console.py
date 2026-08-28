@@ -27,6 +27,7 @@ INTERCEPTOR_TEMPLATE = """ (() => {
   const MAX_INLINE_BYTES = 4096;   // small text TCP payloads log inline; larger/binary go to a file
   let bufferSeq = 0;
   const bufferBytesWritten = Object.create(null);   // buffer file path -> bytes written so far
+  const streamToFile = Object.create(null);   // stream name -> true once it has committed to a file
   // Per-process tag so buffer files can't collide across processes when Windows reuses a PID.
   const bufferRunTag = Math.random().toString(36).slice(2, 10);
 
@@ -173,18 +174,34 @@ INTERCEPTOR_TEMPLATE = """ (() => {
   }
 
   function tcpBody(streamName, chunk) {
-    // Every chunk is appended to the per-stream file so finish() saves a faithful copy of the whole
-    // stream as files/<sha256> (still one file per stream-direction, not per chunk). A small text
-    // chunk additionally carries an inline preview so the log stays readable without opening the
-    // dropped file. Deciding inline-vs-file per chunk previously let a small or text-looking tail
-    // (e.g. a gzip trailer under MAX_INLINE_BYTES) be inlined instead of appended, leaving the
-    // reassembled file truncated.
+    // Route a whole stream-direction to at most one file, decided per stream (not per chunk): once any
+    // chunk is large or binary the stream "commits" to its file and every later chunk - including a
+    // small text tail like a gzip trailer - is appended there too, so the reassembled file is never
+    // truncated. A stream that stays small and text-only never creates a file, which keeps a sample
+    // that opens many tiny connections from dropping hundreds of buffer files. Committed streams still
+    // carry an inline text preview for small chunks so the log stays readable.
     if (chunk === undefined || chunk === null) return null;
     let buf;
     try { buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk); }
     catch (e) { return { error: safeToString(e) }; }
+
+    const smallText = buf.length <= MAX_INLINE_BYTES && isProbablyText(buf);
+    if (smallText && !streamToFile[streamName]) {
+      const t = truncate(buf.toString("utf8"));
+      return { text: t.text, truncated: t.truncated };
+    }
+
     const ref = appendBuffer(streamName, buf);
-    if (!ref.error && buf.length <= MAX_INLINE_BYTES && isProbablyText(buf)) {
+    if (ref.error) {
+      // File append failed; fall back to inline for small text so the payload is not lost entirely.
+      if (smallText) {
+        const t = truncate(buf.toString("utf8"));
+        return { text: t.text, truncated: t.truncated };
+      }
+      return ref;
+    }
+    streamToFile[streamName] = true;
+    if (smallText) {
       const t = truncate(buf.toString("utf8"));
       ref.text = t.text;
       ref.truncated = t.truncated;
@@ -652,6 +669,8 @@ INTERCEPTOR_TEMPLATE = """ (() => {
     const sendName = `sock_${pid}_${bufferRunTag}_${streamId}_send`;
     const recvName = `sock_${pid}_${bufferRunTag}_${streamId}_recv`;
 
+    // conn_id ties every send/receive/error back to this socket so the host can separate concurrent
+    // connections and rebuild each conversation; it doubles as the stream id already in the file names.
     const originalWrite = typeof socket.write === "function" ? socket.write.bind(socket) : null;
     if (originalWrite) {
       socket.write = function(chunk, ...rest) {
@@ -660,6 +679,7 @@ INTERCEPTOR_TEMPLATE = """ (() => {
           source: "js_interceptor",
           event: "tcp_send",
           transport,
+          conn_id: streamId,
           body: tcpBody(sendName, chunk),
         });
         return originalWrite(chunk, ...rest);
@@ -672,6 +692,7 @@ INTERCEPTOR_TEMPLATE = """ (() => {
         source: "js_interceptor",
         event: "tcp_receive",
         transport,
+        conn_id: streamId,
         body: tcpBody(recvName, chunk),
       });
     });
@@ -681,9 +702,11 @@ INTERCEPTOR_TEMPLATE = """ (() => {
         source: "js_interceptor",
         event: "tcp_error",
         transport,
+        conn_id: streamId,
         error: safeToString(err),
       });
     });
+    return streamId;
   }
 
   function installNetLikeHook(mod, modName) {
@@ -695,17 +718,36 @@ INTERCEPTOR_TEMPLATE = """ (() => {
       const original = mod[fnName].bind(mod);
       mod[fnName] = function(...args) {
         const ep = endpointFromArgs(args, modName);
+        const socket = original(...args);
+        // Install the traffic hook first so conn_id is known before tcp_connect is logged.
+        const connId = installSocketTrafficHook(socket, modName);
         safeAppendJson({
           ts: nowIso(),
           source: "js_interceptor",
           event: "tcp_connect",
           transport: modName,
+          conn_id: connId,
           host: ep.host,
           port: ep.port,
           protocol: ep.proto,
         });
-        const socket = original(...args);
-        installSocketTrafficHook(socket, modName);
+        // The real local/remote addresses are only known once connected; log them as the src/dst
+        // the host uses for the conversation.
+        if (typeof socket.on === "function") {
+          socket.on("connect", () => {
+            safeAppendJson({
+              ts: nowIso(),
+              source: "js_interceptor",
+              event: "tcp_endpoints",
+              transport: modName,
+              conn_id: connId,
+              local_address: safeCall(() => socket.localAddress, ""),
+              local_port: safeCall(() => socket.localPort, ""),
+              remote_address: safeCall(() => socket.remoteAddress, ""),
+              remote_port: safeCall(() => socket.remotePort, ""),
+            });
+          });
+        }
         return socket;
       };
       mod[fnName].__jsInterceptorWrapped = true;
