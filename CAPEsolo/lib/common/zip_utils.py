@@ -13,7 +13,6 @@ except ImportError:
 
 from lib.common.exceptions import CuckooPackageError
 from lib.common.hashing import hash_file
-from lib.common.results import upload_to_host
 
 log = logging.getLogger(__name__)
 
@@ -286,6 +285,11 @@ def upload_extracted_files(root, files_at_root):
     """
     Upload each file that was extracted, for further analysis
     """
+    # Imported here, not at module top: results.py builds a module-level Config("analysis.conf")
+    # at import time, so importing it eagerly would bind that config before the GUI writes
+    # analysis.conf. This function only runs guest-side after analysis.conf exists.
+    from lib.common.results import upload_to_host
+
     for entry in files_at_root:
         try:
             file_path = os.path.join(root, entry)
