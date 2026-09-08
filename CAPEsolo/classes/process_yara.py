@@ -27,7 +27,13 @@ class ProcessYara:
         content = LoadFilesJson(self.analysisDir)
         if "error" not in content.keys():
             for file in content.keys():
-                if content[file].get("category", "") in ("files", "CAPE", "procdump"):
+                category = content[file].get("category", "")
+                # Archive/zip extraction uploads candidate samples under files/ without a
+                # category, so fall back to the storage directory when it is missing.
+                normalized = file.replace("\\", "/")
+                if category in ("files", "CAPE", "procdump") or normalized.startswith(
+                    ("files/", "CAPE/", "procdump/")
+                ):
                     path = os.path.join(self.analysisDir, file)
                     hits[file] = self.yara.get_yara(path)
                     self.yara_results.append({file: hits[file]})
