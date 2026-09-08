@@ -11,6 +11,9 @@ from lib.common.results import upload_to_host
 
 log = logging.getLogger(__name__)
 INTERCEPTOR_FILE_NAME = "js_interceptor.js"
+# Packages whose runtimes load the interceptor this module writes. nodejs consumes it via
+# NODE_OPTIONS; bun and deno only check for the file and never create it themselves.
+JS_PACKAGES = {"nodejs", "bun", "deno"}
 
 INTERCEPTOR_TEMPLATE = """ (() => {
   // Suppress Node.js internal deprecation warnings at the process level
@@ -960,11 +963,13 @@ class JsConsole(Auxiliary):
         self.interceptor_path = os.path.join(
             self._target_directory(), self.interceptor_name
         )
-        # Any package can end up spawning node.exe - a .bat that shells out, an exe that
-        # drops a script - and CreateProcessW inherits the environment block all the way
-        # down the chain, so the interceptor is installed for the whole analysis rather
-        # than for one package. The js_console key in analysis.conf is the on/off switch.
-        self.enabled = True
+        # Only the JS-runtime packages consume the interceptor this module writes, and
+        # bun/deno rely on it being present without ever creating it, so gate on the
+        # selected package to keep their instrumentation working while every other
+        # analysis skips the interceptor write and setx churn. The js_console key in
+        # analysis.conf decides whether the module is imported at all.
+        package = getattr(self.config, "package", "") or ""
+        self.enabled = package.lower() in JS_PACKAGES
         self.do_run = self.enabled
 
     def _target_directory(self):
