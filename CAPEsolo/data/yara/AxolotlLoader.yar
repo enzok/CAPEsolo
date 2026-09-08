@@ -34,7 +34,7 @@ rule AxolotlScanner3
         description = "AxolotlLoader Scanner"
         cape_options = "count=0,bp0=$size+7,action0=dumpsize:rdx,hc0=1,bp1=$payload*+4,action1=scan,hc1=1"
     strings:
-        $size = {48 C7 C2 ?? ?? ?? 00 [0-4] 49 C7 C0 40 00 00 00 4? 8D 4C 24}
+        $size = {48 C7 C2 ?? ?? ?? 00 [1-32] 49 C7 C0 40 00 00 00 4? 8D 4C 24}
         $payload = {4C 89 F9 48 C7 C2 [4] 4D 39 C0 4D 0F 44 45 ?? 49 8D 87}
     condition:
         all of them
