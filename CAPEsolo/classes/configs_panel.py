@@ -147,7 +147,20 @@ def Extract(configHits, analysisDir, jsonResults=False, newPayloads=None):
     CAPE_PARSERS = ("core", "community")
     customParsers = os.path.join(os.path.expanduser("~"), "Desktop", "custom")
 
+    # The same file+family reaches configHits from more than one place (the Yara and Payloads
+    # tabs both append {file: capename}), which would otherwise run the same parser twice and
+    # duplicate its rows. Keep the first occurrence of each (path, family).
+    seen = set()
+    uniqueHits = []
     for hit in configHits:
+        hitPath = list(hit.keys())[0]
+        key = (str(hitPath), hit.get(hitPath, ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        uniqueHits.append(hit)
+
+    for hit in uniqueHits:
         decoderModule = ""
         hitPath = list(hit.keys())[0]
         hitName = hit.get(hitPath, "")
@@ -309,39 +322,58 @@ class ConfigsPanel(wx.Panel, KeyEventHandlerMixin):
             self.grid.DeleteRows(0, rows)
 
     def AddTableData(self, entries):
-        """Rebuild the grid, one row per config field.
+        """Rebuild the grid, grouped by file, one row per config field.
 
         Extraction can be re-run while the tab is open, so this replaces the previous rows
-        rather than appending to them.
+        rather than appending to them. Rows for a file are kept contiguous and the File and
+        Family cells are shown only when they change, so each file (and each family within it)
+        is named once at the top of its run instead of repeated down every field row.
         """
-        self.rows = []
+        # Collate rows by file, preserving the order each file was first seen, so every row for a
+        # file is contiguous even if its hits were interleaved in the entry list.
+        order, byfile = [], {}
         for entry in entries:
-            if "error" in entry:
-                self.rows.append(
-                    {
-                        "path": entry["path"],
-                        "family": entry["family"],
-                        "field": "",
-                        "value": entry["error"],
-                    }
-                )
-                continue
+            path = entry["path"]
+            if path not in byfile:
+                byfile[path] = []
+                order.append(path)
+            byfile[path].append(entry)
 
-            for field, value in entry["fields"]:
-                self.rows.append(
-                    {
-                        "path": entry["path"],
-                        "family": entry["family"],
-                        "field": field,
-                        "value": value,
-                    }
-                )
+        self.rows = []
+        for path in order:
+            for entry in byfile[path]:
+                if "error" in entry:
+                    self.rows.append(
+                        {
+                            "path": path,
+                            "family": entry["family"],
+                            "field": "",
+                            "value": entry["error"],
+                        }
+                    )
+                    continue
+
+                for field, value in entry["fields"]:
+                    self.rows.append(
+                        {
+                            "path": path,
+                            "family": entry["family"],
+                            "field": field,
+                            "value": value,
+                        }
+                    )
 
         self.ClearGrid()
+        prevPath = prevFamily = None
         for row, data in enumerate(self.rows):
             self.grid.AppendRows(1)
-            self.grid.SetCellValue(row, 0, data["path"])
-            self.grid.SetCellValue(row, 1, data["family"])
+            if data["path"] != prevPath:
+                self.grid.SetCellValue(row, 0, data["path"])
+                self.grid.SetCellValue(row, 1, data["family"])
+                prevPath, prevFamily = data["path"], data["family"]
+            elif data["family"] != prevFamily:
+                self.grid.SetCellValue(row, 1, data["family"])
+                prevFamily = data["family"]
             self.grid.SetCellValue(row, 2, data["field"])
             # A config value is arbitrary data lifted out of a binary. A NUL terminates the
             # native cell, dropping the rest of the value with no error anywhere.

@@ -36,6 +36,9 @@ class PayloadsPanel(wx.Panel):
         # VT lookup button id -> (grid, sha256, path, uploadBtn); upload button id -> (path, sha256, grid).
         self.vt_buttons = {}
         self.vt_upload_buttons = {}
+        # file key -> (grid, row, originalType): the Type row for each payload, so Yara can fold
+        # a detected CAPE type into it once it has run (see ApplyYaraCapeTypes).
+        self.typeCells = {}
         self.panel = scrolled.ScrolledPanel(
             self, -1, style=wx.TAB_TRAVERSAL | wx.SUNKEN_BORDER
         )
@@ -122,7 +125,11 @@ class PayloadsPanel(wx.Panel):
             if infoKey not in "path" and infoValue:
                 if infoKey == "size":
                     infoValue = str(infoValue) + " bytes"
+                rowIndex = grid.GetNumberRows()
                 self.AddNewRow(grid, infoKey[0].upper() + infoKey[1:], infoValue)
+                # Remember the Type row so a CAPE type found by Yara can be folded in later.
+                if infoKey == "type":
+                    self.typeCells[key] = (grid, rowIndex, str(infoValue))
 
         grid.AutoSizeColumns()
         grid.SetColSize(0, 120)
@@ -196,6 +203,32 @@ class PayloadsPanel(wx.Panel):
         # The scrolled panel caches its virtual size, so a grid added after the initial
         # load is unreachable until scrolling is recalculated.
         self.panel.SetupScrolling(scroll_x=True, scroll_y=True, scrollToTop=False)
+
+    def ApplyYaraCapeTypes(self, capeByFile):
+        """Fold Yara-detected CAPE types into each payload's Type row.
+
+        Yara runs after the payloads are rendered, so the family it identifies is not known
+        when the Type row is first written. This updates that row in place; keyed off the
+        stored original magic so re-running Yara replaces rather than re-appends.
+        """
+        if not self.payloadsLoaded:
+            return
+
+        changed = False
+        for key, capeType in capeByFile.items():
+            info = self.typeCells.get(key)
+            if not info or not capeType:
+                continue
+            grid, row, original = info
+            grid.SetCellValue(row, 1, f"{original} - {capeType}" if original else capeType)
+            grid.AutoSizeRows()
+            changed = True
+
+        if changed:
+            self.panel.Layout()
+            self.Layout()
+            # The scrolled panel caches its virtual size; refresh it after resizing rows.
+            self.panel.SetupScrolling(scroll_x=True, scroll_y=True, scrollToTop=False)
 
     def PayloadsReady(self):
         if JsonPathExists(self.analysisDir):
