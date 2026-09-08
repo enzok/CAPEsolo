@@ -291,7 +291,7 @@ def upload_extracted_files(root, files_at_root):
             file_path = os.path.join(root, entry)
             log.info("Uploading {0} to host".format(file_path))
             filename = f"files/{hash_file(hashlib.sha256, file_path)}"
-            upload_to_host(file_path, filename, metadata=Path(entry).name, duplicated=False)
+            upload_to_host(file_path, filename, metadata=Path(entry).name, category="files", duplicated=False)
         except Exception as e:
             log.warning(f"Couldn't upload file {Path(entry).name} to host {e}")
 

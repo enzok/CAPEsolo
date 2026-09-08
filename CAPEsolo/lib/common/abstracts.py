@@ -17,10 +17,60 @@ from lib.core.compound import create_custom_folders
 
 # from typing import Dict, Any
 
+# sflock is the same content identifier the Start panel uses. Guarded so a missing/broken sflock
+# (or its libmagic/pefile deps) leaves execute_interesting_file behaving exactly as extension-only.
+try:
+    from sflock.abstracts import File as SflockFile
+    from sflock.ident import identify as sflock_identify
+
+    HAVE_SFLOCK = True
+except Exception:
+    HAVE_SFLOCK = False
+
 
 log = logging.getLogger(__name__)
 
 PE_INDICATORS = [b"MZ", b"This program cannot be run in DOS mode"]
+
+# Maps an sflock content type to the file extension that makes the existing extension dispatch in
+# execute_interesting_file launch it correctly (wscript picks JS vs VBS by extension, powershell
+# -File and msiexec need their extension, etc.). Only types with a launcher below are mapped.
+SFLOCK_KIND_TO_EXT = {
+    "exe": ".exe",
+    "dll": ".dll",
+    "doc": ".doc",
+    "xls": ".xls",
+    "js": ".js",
+    "javascript": ".js",
+    "jse": ".jse",
+    "vbs": ".vbs",
+    "visualbasic": ".vbs",
+    "vbe": ".vbe",
+    "wsf": ".wsf",
+    "ps1": ".ps1",
+    "powershell": ".ps1",
+    "lnk": ".lnk",
+    "msi": ".msi",
+    "html": ".html",
+}
+
+
+def identify_launch_type(file_path):
+    """Return the canonical extension for the file's real content, or None.
+
+    None means 'unknown / not a type we route by content' - the caller then falls back to the
+    existing extension-based dispatch. check_shellcode is off: shellcode has no launcher here and
+    it avoids the optional unicorn dependency.
+    """
+    if not HAVE_SFLOCK:
+        return None
+    try:
+        f = SflockFile.from_path(str(file_path).encode("utf-8"))
+        kind = sflock_identify(f, check_shellcode=False)
+    except Exception:
+        log.exception("sflock identify failed for %s", file_path)
+        return None
+    return SFLOCK_KIND_TO_EXT.get((kind or "").lower())
 
 
 class Package:
@@ -227,6 +277,14 @@ class Package:
         """
         Based on file extension or file contents, run relevant analysis package
         """
+        # Trust the bytes over a possibly-decoy extension. When sflock confidently identifies a
+        # type we can launch, rename the file to that type's extension so the dispatch below
+        # routes it correctly (wscript picks JS vs VBS, powershell -File, msiexec, PE-as-EXE/DLL).
+        # Unknown/undetected files fall through to the extension logic unchanged.
+        detected_ext = identify_launch_type(file_path)
+        if detected_ext:
+            file_path = check_file_extension(file_path, detected_ext)
+            file_name = os.path.basename(file_path)
         # File extensions that require cmd.exe to run
         if file_name.lower().endswith((".lnk", ".bat", ".cmd")):
             cmd_path = self.get_path("cmd.exe")
