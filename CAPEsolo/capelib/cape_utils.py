@@ -19,6 +19,12 @@ from typing import Any
 # CAPE output types. To correlate with cape\cape.h in monitor
 COMPRESSION = 2
 TYPE_STRING = 0x100
+# Host-side only: a file handed back by a config parser via "dump_files". Deliberately
+# outside the monitor's range so it can't collide with a code in cape\cape.h.
+PARSER_EXTRACTED = 0x10000
+# Neutral label: one family routinely drops another, so the blob must not inherit the
+# family of the parser that dumped it.
+PARSER_EXTRACTED_TYPE = "Parser Extracted File"
 
 log = logging.getLogger(__name__)
 
@@ -107,6 +113,9 @@ def metadata_processing(metadata, pids=None):
 
         elif file_info["cape_type_code"] == COMPRESSION:
             file_info["cape_type"] = "Decompressed PE Image"
+
+        elif file_info["cape_type_code"] == PARSER_EXTRACTED:
+            file_info["cape_type"] = PARSER_EXTRACTED_TYPE
 
         elif file_info["cape_type_code"] in inject_map:
             file_info["cape_type"] = inject_map[file_info["cape_type_code"]]

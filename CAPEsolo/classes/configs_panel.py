@@ -9,15 +9,12 @@ from pathlib import Path
 import wx
 import wx.grid as gridlib
 
+from CAPEsolo.capelib.cape_utils import PARSER_EXTRACTED
 from CAPEsolo.capelib.path_utils import path_exists, path_mkdir
 
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
-
-# Host-side only: a file handed back by a config parser via "dump_files". Deliberately
-# outside the monitor's range so it can't collide with a code in cape\cape.h.
-PARSER_EXTRACTED = 0x10000
 
 # A payload is named by its sha256 and a config value can be a long list, so autosizing
 # either column alone can take the whole width and push the rest of the row off screen.
@@ -63,7 +60,10 @@ def DumpParserFiles(cfg, analysisDir, newPayloads):
                     "filepath": "",
                     "pids": [],
                     "ppids": [],
-                    "metadata": f"{PARSER_EXTRACTED};?;?;?",
+                    # No ";?" fields: they carry the process and module that produced a
+                    # monitor dump, and a host-side parser dump has neither. Emitting them
+                    # empty put blank process_path/module_path on the payload.
+                    "metadata": f"{PARSER_EXTRACTED}",
                     "category": "CAPE",
                 }
                 # Append-writes are atomic
@@ -133,7 +133,7 @@ def FormatValue(value):
     return str(value)
 
 
-def Extract(configHits, analysisDir, jsonResults=False, newPayloads=None):
+def Extract(configHits, analysisDir, jsonResults=False, newPayloads=None, seen=None):
     """Run the config parser for every CAPE name yara matched.
 
     Returns the list of {path: config} the JSON report expects when *jsonResults* is set,
@@ -144,13 +144,14 @@ def Extract(configHits, analysisDir, jsonResults=False, newPayloads=None):
     configs = []
     if newPayloads is None:
         newPayloads = []
+    if seen is None:
+        seen = set()
     CAPE_PARSERS = ("core", "community")
     customParsers = os.path.join(os.path.expanduser("~"), "Desktop", "custom")
 
     # The same file+family reaches configHits from more than one place (the Yara and Payloads
     # tabs both append {file: capename}), which would otherwise run the same parser twice and
     # duplicate its rows. Keep the first occurrence of each (path, family).
-    seen = set()
     uniqueHits = []
     for hit in configHits:
         hitPath = list(hit.keys())[0]
@@ -304,14 +305,27 @@ class ConfigsPanel(wx.Panel, KeyEventHandlerMixin):
         apply_theme(self)
 
     def ExtractConfigs(self, event):
-        newPayloads = []
-        entries = Extract(self.configHits, self.analysisDir, newPayloads=newPayloads)
+        entries = []
+        # Persists across rounds so a hit parsed in an earlier round is not parsed again.
+        processed = set()
+        pending = list(self.configHits)
+        # A dumped payload can itself yield a config that dumps more files. Terminates
+        # because the writes are content addressed -- DumpParserFiles skips an existing
+        # blob and never re-queues it -- and *processed* bounds the parser runs.
+        while pending:
+            newPayloads = []
+            entries += Extract(pending, self.analysisDir, newPayloads=newPayloads, seen=processed)
+            if not newPayloads:
+                break
+            mark = len(self.configHits)
+            # Yara scans each new payload and appends its CAPE names to self.configHits.
+            self.UpdatePayloadPanels(newPayloads)
+            pending = self.configHits[mark:]
+
         # Shown before the rows go in, so the Layout that AddTableData ends with is the one
         # that sizes it, matching SignaturesPanel.
         self.grid.Show()
         self.AddTableData(entries)
-        if newPayloads:
-            self.UpdatePayloadPanels(newPayloads)
         self.configsButton.Disable()
         self.configsComplete = True
 
@@ -443,7 +457,8 @@ class ConfigsPanel(wx.Panel, KeyEventHandlerMixin):
 
         Both tabs load once and have already run by the time configs can be extracted, so
         they are updated in place rather than reloaded. Any CAPE name the new yara hits
-        produce is appended to configHits, so re-running the extraction picks it up.
+        produce is appended to configHits, which the ExtractConfigs drain then parses in
+        its next round.
         """
         frame = self.GetMainFrame()
         payloadsTab = getattr(frame, "payloadsTab", None)
