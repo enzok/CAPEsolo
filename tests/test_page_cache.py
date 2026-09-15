@@ -7,10 +7,15 @@ a GUI, a monitor, or a live analysis:
 """
 
 from CAPEsolo.capelib.page_cache import (
+    REGION_FREED,
+    REGION_NEW,
+    REGION_REPROTECTED,
+    REGION_RESIZED,
     BoundInstructions,
     CommonPrefixLength,
     ContiguousSpan,
     CoversAddress,
+    DiffRegions,
     DistantPages,
     FindRegion,
     HotPages,
@@ -19,6 +24,7 @@ from CAPEsolo.capelib.page_cache import (
     PageHash,
     PagesOfSpan,
     SelectWindowPages,
+    StalePages,
 )
 
 PAGE_SIZE = 4 * 1024
@@ -323,3 +329,78 @@ def test_covers_address_detects_region_change():
     assert CoversAddress([0x10000], 0x10FFF, PAGE_SIZE)
     assert not CoversAddress([0x10000], 0x11000, PAGE_SIZE)
     assert not CoversAddress([], 0x10000, PAGE_SIZE)
+
+
+# --- region diff ---------------------------------------------------------------------
+# base, size, protect. 0x20 is PAGE_EXECUTE_READ, 0x04 PAGE_READWRITE, 0x40 PAGE_EXECUTE_READWRITE.
+BASE_MAP = [(0x10000, 0x10000, 0x20), (0x30000, 0x1000, 0x04), (0x90000, 0x1000, 0x04)]
+
+
+def test_first_scan_is_a_baseline_not_a_flood_of_new_regions():
+    """An empty previous map means nothing has been observed yet, not that it all just appeared."""
+    assert DiffRegions([], BASE_MAP) == []
+    assert DiffRegions(BASE_MAP, []) == []
+
+
+def test_diff_reports_a_new_allocation():
+    allocated = sorted(BASE_MAP + [(0x50000, 0x21000, 0x04)])
+    changes = DiffRegions(BASE_MAP, allocated)
+    assert [(c.base, c.kind) for c in changes] == [(0x50000, REGION_NEW)]
+    assert changes[0].size == 0x21000
+    assert changes[0].prevProt is None
+
+
+def test_diff_reports_the_rw_to_rx_flip_of_an_unpacked_region():
+    # The classic tell: a buffer written as data, then made executable and jumped into.
+    unpacked = [(0x10000, 0x10000, 0x20), (0x30000, 0x1000, 0x40), (0x90000, 0x1000, 0x04)]
+    changes = DiffRegions(BASE_MAP, unpacked)
+    assert [(c.base, c.kind, c.prevProt, c.prot) for c in changes] == [(0x30000, REGION_REPROTECTED, 0x04, 0x40)]
+
+
+def test_diff_reports_a_grown_region_separately_from_a_reprotected_one():
+    grown = [(0x10000, 0x10000, 0x20), (0x30000, 0x8000, 0x04), (0x90000, 0x1000, 0x04)]
+    assert [(c.base, c.kind) for c in DiffRegions(BASE_MAP, grown)] == [(0x30000, REGION_RESIZED)]
+
+
+def test_diff_reports_a_freed_region():
+    freed = [(0x10000, 0x10000, 0x20), (0x90000, 0x1000, 0x04)]
+    assert [(c.base, c.kind) for c in DiffRegions(BASE_MAP, freed)] == [(0x30000, REGION_FREED)]
+
+
+def test_diff_ignores_regions_past_a_truncated_payload():
+    """capemon truncates a long PM payload, so a missing tail is not a freed tail.
+
+    Without this the regions above the cut are reported freed on one scan and new on the
+    next, forever, which is worse than not reporting them at all.
+    """
+    truncated = [(0x10000, 0x10000, 0x20), (0x30000, 0x1000, 0x04)]
+    assert DiffRegions(BASE_MAP, truncated) == []
+    # ...and the same in reverse, when it is the older map that was cut short.
+    assert DiffRegions(truncated, BASE_MAP) == []
+    # A change below the cut is still reported while the tail is being ignored.
+    cutAndChanged = [(0x10000, 0x10000, 0x40)]
+    assert [(c.base, c.kind) for c in DiffRegions(BASE_MAP, cutAndChanged)] == [(0x10000, REGION_REPROTECTED)]
+
+
+def test_diff_is_sorted_by_base():
+    changes = DiffRegions(BASE_MAP, [(0x10000, 0x10000, 0x40), (0x30000, 0x1000, 0x40), (0x90000, 0x1000, 0x04)])
+    assert [c.base for c in changes] == sorted(c.base for c in changes)
+
+
+# --- selective cache invalidation ----------------------------------------------------
+def test_stale_pages_keeps_buffers_an_unrelated_allocation_did_not_touch():
+    buffered = [0x10000, 0x11000, 0x12000]
+    allocated = sorted(BASE_MAP + [(0x50000, 0x21000, 0x04)])
+    assert StalePages(buffered, BASE_MAP, allocated, PAGE_SIZE) == []
+
+
+def test_stale_pages_drops_buffers_whose_region_was_reprotected():
+    buffered = [0x10000, 0x30000]
+    reprotected = [(0x10000, 0x10000, 0x20), (0x30000, 0x1000, 0x40), (0x90000, 0x1000, 0x04)]
+    assert StalePages(buffered, BASE_MAP, reprotected, PAGE_SIZE) == [0x30000]
+
+
+def test_stale_pages_drops_buffers_whose_region_is_gone():
+    buffered = [0x10000, 0x30000]
+    freed = [(0x10000, 0x10000, 0x20), (0x90000, 0x1000, 0x04)]
+    assert StalePages(buffered, BASE_MAP, freed, PAGE_SIZE) == [0x30000]

@@ -1,14 +1,16 @@
-"""Page selection and assembly for the interactive debugger's disassembly cache.
+"""Page map arithmetic for the interactive debugger's disassembly cache and memory view.
 
 Pure functions on plain dicts and tuples, deliberately free of wx and pipe imports so the
 page arithmetic can be exercised without a GUI or a live analysis (see
 tests/test_page_cache.py). ConsolePanel owns the buffers; this module only decides which
-pages to ask for, which bytes are safe to decode, and which pages to drop.
+pages to ask for, which bytes are safe to decode, which pages to drop, and what changed
+between one page map and the next.
 """
 
 
 import bisect
 import zlib
+from collections import namedtuple
 
 # Win32 memory protection constants, as VirtualQuery reports them in MEMORY_BASIC_INFORMATION.
 # PAGE_NOACCESS (0x01) and PAGE_EXECUTE (0x10) are deliberately absent from PAGE_READ_ANY:
@@ -210,3 +212,73 @@ def DistantPages(bufferedPages, cip: int, pageSize: int, keepPages: int) -> list
 def CoversAddress(bufferedPages, addr: int, pageSize: int) -> bool:
     """Whether any buffered page holds `addr`, used to spot a jump to a new region."""
     return PageBase(addr, pageSize) in set(bufferedPages)
+
+
+REGION_NEW = "new"
+REGION_REPROTECTED = "reprotected"
+REGION_RESIZED = "resized"
+REGION_FREED = "freed"
+
+RegionChange = namedtuple("RegionChange", ["base", "size", "prot", "prevProt", "kind"])
+
+
+def DiffRegions(oldMap, newMap) -> list[RegionChange]:
+    """What changed between two page maps, newest state first in each entry.
+
+    The page map is an unfiltered VirtualQueryEx walk, so an allocation, a mapped section, a
+    heap segment growing and the RW->RX flip of an unpacked region all show up here without
+    hooking anything or adding a command: PM is already on the wire.
+
+    An empty `oldMap` is the first scan and yields nothing - it is the baseline, not a
+    process-wide allocation event.
+
+    Appearances and disappearances are only reported up to the lowest top-of-map of the two,
+    because capemon truncates a long PM payload: 2772 entries by MAX_ENTRIES, and nearer 2300
+    by the 65 KB format buffer, whichever bites first. Past that cut a region is missing
+    rather than gone, and every one of them would otherwise be reported freed on one scan and
+    new on the next. Protection and size changes are compared only for bases present in both
+    maps, so they are unaffected either way.
+    """
+    old = {base: (size, prot) for base, size, prot in oldMap}
+    new = {base: (size, prot) for base, size, prot in newMap}
+    if not old or not new:
+        return []
+
+    limit = min(max(old), max(new))
+    changes = []
+    for base, (size, prot) in new.items():
+        previous = old.get(base)
+        if previous is None:
+            if base <= limit:
+                changes.append(RegionChange(base, size, prot, None, REGION_NEW))
+
+            continue
+
+        prevSize, prevProt = previous
+        if prot != prevProt:
+            changes.append(RegionChange(base, size, prot, prevProt, REGION_REPROTECTED))
+        elif size != prevSize:
+            changes.append(RegionChange(base, size, prot, prevProt, REGION_RESIZED))
+
+    for base, (size, prot) in old.items():
+        if base not in new and base <= limit:
+            changes.append(RegionChange(base, size, prot, prot, REGION_FREED))
+
+    changes.sort(key=lambda change: change.base)
+    return changes
+
+
+def StalePages(bufferedPages, oldMap, newMap, pageSize: int) -> list[int]:
+    """Buffered pages whose covering region is not identical in both maps.
+
+    Lets a page map refresh keep the cache for pages nothing happened to. Clearing every
+    buffer on any change costs ~9 pipe round trips to rebuild the window, which is affordable
+    as occasional recovery but not once per break - and most changes between two breaks are a
+    heap or stack region nowhere near the code being stepped.
+    """
+    stale = []
+    for page in bufferedPages:
+        if FindRegion(oldMap, page) != FindRegion(newMap, page):
+            stale.append(page)
+
+    return stale

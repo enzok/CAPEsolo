@@ -13,11 +13,13 @@ import win32file
 import wx
 from distorm3 import Decode, Decode32Bits, Decode64Bits
 
+from CAPEsolo.capelib.call_args import PROTECT_VALUES, CallArguments, ParseRegisters
 from CAPEsolo.capelib.cmdconsts import *
 from CAPEsolo.capelib.page_cache import (
     BoundInstructions,
     ContiguousSpan,
     CoversAddress,
+    DiffRegions,
     DistantPages,
     FindRegion,
     HotPages,
@@ -26,6 +28,7 @@ from CAPEsolo.capelib.page_cache import (
     PageHash,
     PagesOfSpan,
     SelectWindowPages,
+    StalePages,
 )
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
 
@@ -36,10 +39,13 @@ from .debug_controls import (
     DecodedInstruction,
     DisassemblyListCtrl,
     IsValidHexAddress,
+    COMMENT_COL,
     MemDumpListCtrl,
+    MemoryListCtrl,
     ModulesListCtrl,
     RegsTextCtrl,
     StackListCtrl,
+    ProtectText,
     StaticSlotAddress,
     ThreadListCtrl,
 )
@@ -59,6 +65,14 @@ CHUNK_SIZE = BUFFER_SIZE // 2
 KEEP_PAGES = 16
 # Smallest a splitter pane may be dragged to, so no view can be collapsed out of reach.
 MIN_PANE = 80
+# Share of the window the Console/Modules/Threads/Breakpoints row opens at. A fraction rather
+# than a row count so a tall window gives it more than the ~7 text rows it used to be fixed
+# at; the sash is the user's from then on.
+MISC_ROW_FRACTION = 0.28
+# Share of the width the left pane of each row opens at, shared by both rows so Disassembly
+# and Memory Dump are one column and Registers and Stack are the other. This is the
+# Disassembly/Registers split as it already was; the sashes are the user's after that.
+LEFT_PANE_FRACTION = 0.6
 DBGCMD = "DBGCMD"
 # Request tags, sent as a leading "<id>:<purpose>|" field and echoed by capemon in the
 # response. Replaces guessing a response's purpose from its length, which could not tell a
@@ -210,7 +224,7 @@ class ConsoleFrame(wx.Frame):
             return
 
         ctrl = focused
-        while ctrl and not isinstance(ctrl, (DisassemblyListCtrl, MemDumpListCtrl)):
+        while ctrl and not isinstance(ctrl, (DisassemblyListCtrl, MemDumpListCtrl, StackListCtrl)):
             ctrl = ctrl.GetParent()
 
         if hasattr(ctrl, "OnBack"):
@@ -252,11 +266,16 @@ class ConsolePanel(wx.Panel):
         # which it cannot - refreshing on the latter never terminates.
         self.unreadablePages: set[int] = set()
         self.requestId = 0
+        # The page map arrives in pages; these hold the walk in progress. See CollectPageMap.
+        self.pageMapPage = 0
+        self.pageMapPages: list[str] = []
         self.pageHashes = {}
         self.exports: dict[int, str] = {}
         # Sorted export addresses for nearest-symbol lookup, rebuilt when exports grow.
         self.exportAddrs: list[int] = []
         self.exportModules = []
+        # Module names already read, so a module list refresh re-queues only what is new.
+        self.exportsLoaded: set[str] = set()
         self.export = None
         self.resolvedExports: dict[int, dict[int, str]] = {}
         self.resolvedStrings: dict[int, str] = {}
@@ -295,10 +314,14 @@ class ConsolePanel(wx.Panel):
         # The four main views live in splitter panes so their boundaries can be dragged; the
         # panes were fixed sizer proportions before. Controls that call back into this panel
         # are given console=self, because their wx parent is now a pane rather than the panel.
-        self.paneSplitter = wx.SplitterWindow(self, style=wx.SP_LIVE_UPDATE | wx.SP_3DSASH)
+        # The Console/Modules/Threads/Breakpoints row is a pane of its own rather than a
+        # proportion-0 sizer entry, which pinned it to exactly its minimum height with no way
+        # to drag it taller.
+        self.outerSplitter = wx.SplitterWindow(self, style=wx.SP_LIVE_UPDATE | wx.SP_3DSASH)
+        self.paneSplitter = wx.SplitterWindow(self.outerSplitter, style=wx.SP_LIVE_UPDATE | wx.SP_3DSASH)
         self.topSplitter = wx.SplitterWindow(self.paneSplitter, style=wx.SP_LIVE_UPDATE | wx.SP_3DSASH)
         self.bottomSplitter = wx.SplitterWindow(self.paneSplitter, style=wx.SP_LIVE_UPDATE | wx.SP_3DSASH)
-        for splitter in (self.paneSplitter, self.topSplitter, self.bottomSplitter):
+        for splitter in (self.outerSplitter, self.paneSplitter, self.topSplitter, self.bottomSplitter):
             splitter.SetMinimumPaneSize(MIN_PANE)
 
         # Disassembly
@@ -371,46 +394,68 @@ class ConsolePanel(wx.Panel):
         stackPane.SetSizer(stackSizer)
 
         # Gravity keeps the old proportions when the window itself is resized; the sash
-        # positions are set once the panel has a real size, in _InitSashes.
+        # positions are set once the panel has a real size, in _InitSashes. Both vertical
+        # sashes take the same gravity as well as the same start, or a window resize would
+        # pull the two columns back out of line.
         self.topSplitter.SplitVertically(disasmPane, regsPane)
-        self.topSplitter.SetSashGravity(0.6)
+        self.topSplitter.SetSashGravity(LEFT_PANE_FRACTION)
         self.bottomSplitter.SplitVertically(memPane, stackPane)
-        self.bottomSplitter.SetSashGravity(0.7)
+        self.bottomSplitter.SetSashGravity(LEFT_PANE_FRACTION)
         self.paneSplitter.SplitHorizontally(self.topSplitter, self.bottomSplitter)
         self.paneSplitter.SetSashGravity(0.5)
-        mainSizer.Add(self.paneSplitter, 1, wx.EXPAND | wx.ALL, 5)
 
         # Console box
+        miscPane = wx.Panel(self.outerSplitter)
         consoleSizer = wx.BoxSizer(wx.VERTICAL)
-        self.outputConsole = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        self.outputConsole = wx.TextCtrl(miscPane, style=wx.TE_MULTILINE | wx.TE_READONLY)
         self.outputConsole.SetFont(fontCourier)
         charH = self.outputConsole.GetCharHeight()
-        self.outputConsole.SetMinSize(wx.Size(-1, charH * 7))
-        consoleSizer.Add(wx.StaticText(self, label="Console Output"), 0, wx.ALL, 5)
+        # A floor now, not the height: the row's height is the sash position. These were
+        # charH * 7, which was the only thing giving the row any height at all and therefore
+        # also the smallest it could ever be.
+        minRow = wx.Size(-1, charH * 3)
+        self.outputConsole.SetMinSize(minRow)
+        consoleSizer.Add(wx.StaticText(miscPane, label="Console Output"), 0, wx.ALL, 5)
         consoleSizer.Add(self.outputConsole, 1, wx.EXPAND | wx.ALL, 5)
 
-        # Modules List View
+        # Modules and Memory share the pane the way Stack and Call Stack do: what is loaded
+        # and what has just been allocated are both "where did this code come from" questions.
         modulesSizer = wx.BoxSizer(wx.VERTICAL)
-        modulesSizer.Add(wx.StaticText(self, label="Modules"), 0, wx.ALL, 5)
-        self.modulesDisplay = ModulesListCtrl(self)
+        self.modulesNotebook = wx.Notebook(miscPane)
+
+        modulesPage = wx.Panel(self.modulesNotebook)
+        modulesPageSizer = wx.BoxSizer(wx.VERTICAL)
+        self.modulesDisplay = ModulesListCtrl(modulesPage, console=self)
         self.modulesDisplay.SetFont(fontCourier)
-        self.modulesDisplay.SetMinSize(wx.Size(-1, charH * 7))
-        modulesSizer.Add(self.modulesDisplay, 1, wx.EXPAND | wx.ALL, 5)
+        modulesPageSizer.Add(self.modulesDisplay, 1, wx.EXPAND | wx.ALL, 3)
+        modulesPage.SetSizer(modulesPageSizer)
+        self.modulesNotebook.AddPage(modulesPage, "Modules")
+
+        memoryPage = wx.Panel(self.modulesNotebook)
+        memoryPageSizer = wx.BoxSizer(wx.VERTICAL)
+        self.memoryDisplay = MemoryListCtrl(memoryPage, console=self)
+        self.memoryDisplay.SetFont(fontCourier)
+        memoryPageSizer.Add(self.memoryDisplay, 1, wx.EXPAND | wx.ALL, 3)
+        memoryPage.SetSizer(memoryPageSizer)
+        self.modulesNotebook.AddPage(memoryPage, "Memory")
+
+        self.modulesNotebook.SetMinSize(minRow)
+        modulesSizer.Add(self.modulesNotebook, 1, wx.EXPAND | wx.ALL, 5)
 
         # Threads List View
         threadsSizer = wx.BoxSizer(wx.VERTICAL)
-        threadsSizer.Add(wx.StaticText(self, label="Threads"), 0, wx.ALL, 5)
-        self.threadsDisplay = ThreadListCtrl(self)
+        threadsSizer.Add(wx.StaticText(miscPane, label="Threads"), 0, wx.ALL, 5)
+        self.threadsDisplay = ThreadListCtrl(miscPane, console=self)
         self.threadsDisplay.SetFont(fontCourier)
-        self.threadsDisplay.SetMinSize(wx.Size(-1, charH * 7))
+        self.threadsDisplay.SetMinSize(minRow)
         threadsSizer.Add(self.threadsDisplay, 1, wx.EXPAND | wx.ALL, 5)
 
         # Breakpoints List View
         bpsSizer = wx.BoxSizer(wx.VERTICAL)
-        bpsSizer.Add(wx.StaticText(self, label="Breakpoints"), 0, wx.ALL, 5)
-        self.breakpointsDisplay = BreakpointsListCtrl(self)
+        bpsSizer.Add(wx.StaticText(miscPane, label="Breakpoints"), 0, wx.ALL, 5)
+        self.breakpointsDisplay = BreakpointsListCtrl(miscPane, console=self)
         self.breakpointsDisplay.SetFont(fontCourier)
-        self.breakpointsDisplay.SetMinSize(wx.Size(-1, charH * 7))
+        self.breakpointsDisplay.SetMinSize(minRow)
         bpsSizer.Add(self.breakpointsDisplay, 1, wx.EXPAND | wx.ALL, 5)
 
         miscSizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -418,7 +463,13 @@ class ConsolePanel(wx.Panel):
         miscSizer.Add(modulesSizer, 4, wx.EXPAND | wx.ALL)
         miscSizer.Add(threadsSizer, 2, wx.EXPAND | wx.ALL)
         miscSizer.Add(bpsSizer, 2, wx.EXPAND | wx.ALL)
-        mainSizer.Add(miscSizer, 0, wx.EXPAND)
+        miscPane.SetSizer(miscSizer)
+
+        # Gravity 1.0: the views absorb everything a window resize adds, so the row stays the
+        # height it was dragged to instead of growing with the window.
+        self.outerSplitter.SplitHorizontally(self.paneSplitter, miscPane)
+        self.outerSplitter.SetSashGravity(1.0)
+        mainSizer.Add(self.outerSplitter, 1, wx.EXPAND | wx.ALL, 5)
 
         # Input box
         inputSizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -459,7 +510,7 @@ class ConsolePanel(wx.Panel):
         self.SetSizer(mainSizer)
         apply_theme(self)
         # SplitterWindow is not a wx.Panel, so apply_theme leaves the sash the native grey.
-        for splitter in (self.paneSplitter, self.topSplitter, self.bottomSplitter):
+        for splitter in (self.outerSplitter, self.paneSplitter, self.topSplitter, self.bottomSplitter):
             splitter.SetBackgroundColour(BG_CARD)
 
         self.Bind(wx.EVT_SIZE, self.OnSize)
@@ -474,16 +525,22 @@ class ConsolePanel(wx.Panel):
         if self.sashesPlaced:
             return
 
-        # Each sash is a fraction of its own splitter, not of the panel: the misc row and the
-        # command row sit below paneSplitter, so the panel is taller than it is.
-        width, height = self.paneSplitter.GetClientSize()
-        if width <= MIN_PANE * 2 or height <= MIN_PANE * 2:
+        # Measured on the outermost splitter, and the inner sashes are derived from the height
+        # left above its sash rather than re-measured: setting a sash resizes the child
+        # splitters, and reading their size back in the same handler would depend on when wx
+        # has got round to that.
+        width, height = self.outerSplitter.GetClientSize()
+        if width <= MIN_PANE * 2 or height <= MIN_PANE * 4:
             return
 
         self.sashesPlaced = True
-        self.paneSplitter.SetSashPosition(int(height * 0.5))
-        self.topSplitter.SetSashPosition(int(width * 0.6))
-        self.bottomSplitter.SetSashPosition(int(width * 0.7))
+        viewsHeight = height - int(height * MISC_ROW_FRACTION)
+        self.outerSplitter.SetSashPosition(viewsHeight)
+        self.paneSplitter.SetSashPosition(int(viewsHeight * 0.5))
+        # One position for both, so Disassembly lines up with Memory Dump and Registers with
+        # Stack. The Memory Dump sash used to start at 0.7 and sat proud of the one above it.
+        self.topSplitter.SetSashPosition(int(width * LEFT_PANE_FRACTION))
+        self.bottomSplitter.SetSashPosition(int(width * LEFT_PANE_FRACTION))
 
     def IsAddressKnown(self, addr: int) -> bool:
         pageMap = getattr(self.disassemblyConsole, "pageMap", None)
@@ -806,7 +863,10 @@ class ConsolePanel(wx.Panel):
         self.SendCommand(CMD_BREAKPOINT_LIST)
 
     def RefreshPageMap(self):
-        self.SendCommand(CMD_PAGE_MAP)
+        """Start a fresh page map walk at page 0, abandoning any that was part-way through."""
+        self.pageMapPage = 0
+        self.pageMapPages = []
+        self.SendCommand(CMD_PAGE_MAP, "0")
 
     def RefreshModuleList(self):
         self.SendCommand(CMD_MODULE_LIST)
@@ -991,6 +1051,12 @@ class ConsolePanel(wx.Panel):
         than an export, or that could not be read at all - neither of which comes back with
         anything to show. Resolve Symbol re-asks on demand if a slot is populated later.
         """
+        # Nothing to match a slot's contents against until the export table is complete, and
+        # asking now would mark every site as having no name to show. LoadNextModuleExports
+        # calls back here once the load drains.
+        if self.currentExportsModule is not None:
+            return
+
         slots: dict[int, list[int]] = {}
         for inst in getattr(self.disassemblyConsole, "decodeCache", []):
             if inst.address in self.resolvedExports:
@@ -1176,12 +1242,41 @@ class ConsolePanel(wx.Panel):
         return f"{mnemonic} {dest}, {name}" if dest else f"{mnemonic} {name}"
 
     def GetAllExports(self, modules: list[tuple[str, str, str, str]]):
-        self.exportModules = list(modules)
-        self.LoadNextModuleExports()
+        """Queue export loading for the modules not already covered.
+
+        HandleModules runs on every module list refresh - seven call sites reach it, two of
+        them during startup - and this used to replace the queue with the full list each
+        time. Every refresh therefore re-read every module's exports from scratch at ~110ms
+        per 512-symbol page, and reset the module that was mid-flight so its remaining pages
+        were requested under the next module's name. A load that takes several seconds kept
+        being restarted before it could finish.
+        """
+        queued = {modName for _, _, modName, _ in self.exportModules}
+        for module in modules:
+            modName = module[2]
+            if modName in self.exportsLoaded or modName in queued:
+                continue
+
+            self.exportModules.append(module)
+            queued.add(modName)
+
+        if self.currentExportsModule is None:
+            self.LoadNextModuleExports()
 
     def LoadNextModuleExports(self):
         if not self.exportModules:
-            # log.info("[DEBUG CONSOLE] Finished loading all exports.")
+            if self.currentExportsModule is not None:
+                self.currentExportsModule = None
+                # The view is decoded long before the table exists: exports cost a command per
+                # page and the first break renders within a second. Nothing re-read the table
+                # once it arrived, which is why direct call targets were never named even
+                # though naming them needs no pipe traffic at all.
+                log.info("[DEBUG CONSOLE] Exports loaded for %d modules", len(self.exportsLoaded))
+                self.RenderDisassembly()
+                # Direct targets are named by the render above; the indirect ones were held
+                # back while there was nothing to name them from.
+                self.ResolveCallSlots()
+
             return
 
         _, _, modName, _ = self.exportModules.pop(0)
@@ -1361,16 +1456,19 @@ class ConsolePanel(wx.Panel):
             self.JumpTo(self.cip)
 
     def HandleExports(self, payload):
-        if payload.startswith("Failed"):
-            log.warning("[DEBUG CONSOLE] Exports: %s", payload)
-            return
-
-        if "||" not in payload:
+        # Every exit from here has to advance the queue. Two of these used to return without
+        # doing so, which left currentExportsModule set and the queue parked: one module
+        # capemon could not snapshot stopped every later module from ever being read.
+        if payload.startswith("Failed") or "||" not in payload:
+            log.warning("[DEBUG CONSOLE] Exports for %s: %s", self.currentExportsModule, payload)
+            self.MarkExportsLoaded(self.currentExportsModule)
+            wx.CallAfter(self.LoadNextModuleExports)
             return
 
         try:
             modName, *data, status = payload.split("||", 2)
         except ValueError:
+            self.MarkExportsLoaded(self.currentExportsModule)
             wx.CallAfter(self.LoadNextModuleExports)
             return
 
@@ -1390,28 +1488,104 @@ class ConsolePanel(wx.Panel):
             self.exportsPage += 1
             wx.CallAfter(self.RequestNextExportsPage)
         else:
+            self.MarkExportsLoaded(modName or self.currentExportsModule)
             wx.CallAfter(self.LoadNextModuleExports)
 
+    def MarkExportsLoaded(self, modName: str | None):
+        """Record that a module has been read, successfully or not.
+
+        Recording a failure too is deliberate: without it the module goes back on the queue on
+        every module list refresh and is re-requested for the life of the session.
+        """
+        if modName:
+            self.exportsLoaded.add(modName)
+
+    def CollectPageMap(self, payload: str) -> str | None:
+        """Accumulate one page of the memory map, returning the whole map or None if not done.
+
+        The wire shape is `<page>||<entries>||MORE|END`. Entries are joined by a single '|' and
+        are never empty, so '||' only ever delimits these three fields. A reply with no '||'
+        at all is a monitor that predates paging and is taken as a complete map, which is what
+        it was.
+
+        The page number is echoed so a reply belonging to a walk that RefreshPageMap has since
+        restarted can be dropped rather than spliced into the new one: the page map is
+        re-requested from several recovery paths, any of which can fire mid-walk.
+        """
+        parts = payload.split("||")
+        if len(parts) != 3:
+            return payload
+
+        pageStr, entries, status = parts
+        try:
+            page = int(pageStr)
+        except ValueError:
+            log.error("[DEBUG CONSOLE] PageMap page number invalid: %s", pageStr)
+            return None
+
+        if page != self.pageMapPage:
+            log.debug("[DEBUG] Ignoring page map page %d, walk is on page %d", page, self.pageMapPage)
+            return None
+
+        self.pageMapPages.append(entries)
+        if status == "MORE":
+            self.pageMapPage += 1
+            self.SendCommand(CMD_PAGE_MAP, str(self.pageMapPage))
+            return None
+
+        collected = "|".join(part for part in self.pageMapPages if part)
+        self.pageMapPages = []
+        return collected
+
     def HandlePageMap(self, payload):
-        self.disassemblyConsole.LoadPageMap(payload)
-        self.pageBuffers.clear()
-        self.pendingPages.clear()
-        self.pageHashes.clear()
-        # A fresh map is fresh truth about what is mapped, so last round's read failures are
-        # no longer evidence of anything.
-        self.unreadablePages.clear()
+        """Take a new page map: report what moved, and invalidate only what it invalidated.
+
+        Runs once per break now, so it can no longer clear the whole page cache and re-read
+        the window every time - that is ~9 round trips to advance one instruction, which is
+        the cost the cache exists to avoid. Only pages whose covering region actually changed
+        are dropped; a heap region appearing nowhere near the code being stepped leaves the
+        buffers alone.
+        """
+        if payload.startswith("Failed"):
+            # Without this the map would be replaced by nothing, the diff would report every
+            # region freed, and StalePages would throw away the whole page cache.
+            log.warning("[DEBUG CONSOLE] PageMap: %s", payload)
+            return
+
+        payload = self.CollectPageMap(payload)
+        if payload is None:
+            return
+
+        changed = self.disassemblyConsole.LoadPageMap(payload)
+        oldMap = self.disassemblyConsole.prevPageMap
+        newMap = self.disassemblyConsole.pageMap
+        if changed:
+            self.memoryDisplay.AddChanges(DiffRegions(oldMap, newMap))
+            stale = StalePages(list(self.pageBuffers), oldMap, newMap, PAGE_SIZE)
+            for page in stale:
+                del self.pageBuffers[page]
+                self.pageHashes.pop(page, None)
+                self.unreadablePages.discard(page)
 
         cip = self.cip
         if not self.IsAddressKnown(cip):
             log.debug(f"[DEBUG] CIP 0x{cip:X} is not present in the new PageMap; waiting for next execution update.")
             return
 
-        pagesToRequest = SelectWindowPages(self.disassemblyConsole.pageMap, cip, PAGE_SIZE, CHUNK_SIZE)
+        pagesToRequest = SelectWindowPages(newMap, cip, PAGE_SIZE, CHUNK_SIZE)
         if not pagesToRequest:
             self.JumpTo(cip)
             return
 
-        for pageBase in sorted(pagesToRequest):
+        missing = [page for page in sorted(pagesToRequest) if page not in self.pageBuffers]
+        if not missing:
+            # Nothing to fetch means no page load response is coming, so there is nothing to
+            # wait for and nothing to refresh. Returning here is also what stops a per-break
+            # page map from looping through RefreshViewState.
+            return
+
+        self.pendingPages.clear()
+        for pageBase in missing:
             self.RequestPage(pageBase)
 
         self.RefreshViewState()
@@ -1760,6 +1934,59 @@ class ConsolePanel(wx.Panel):
             return
 
         self.UpdateStack(payload)
+        # Here rather than after the decode: the decode runs while the page loads drain, which
+        # is before this break's registers have arrived, so it would annotate the call with
+        # the previous break's argument values. The stack reply is the last of the pair.
+        self.ShowCallArguments()
+
+    def AnnotateArgument(self, value: int) -> str:
+        """A call argument value, plus whatever can be said about it for free.
+
+        Only lookups that cost nothing: the export table is already loaded, and a protection
+        constant is arithmetic. Reading what a pointer points at would be a memory round trip
+        per argument per break, so a value that is merely plausible as a pointer is left as a
+        number - the Dump Address action is one click away.
+        """
+        export = self.exports.get(value)
+        if export:
+            return export
+
+        if value in PROTECT_VALUES:
+            return f"{value:#x} {ProtectText(value)}"
+
+        # Small values read better as decimal; a size or a count is the common case.
+        if value < 0x10000:
+            return f"{value:#x} ({value})"
+
+        return f"{value:#x}"
+
+    def ShowCallArguments(self):
+        """Put the current call's outgoing arguments in the comment column, and nowhere else.
+
+        Only the CIP row gets them, because only there are they knowable: the values a call
+        forty rows down will pass depend on register state execution has not reached. The
+        instruction has to be a call and CIP has to be on it - one step later the arguments
+        have moved.
+        """
+        disasm = self.disassemblyConsole
+        row = disasm.GetCipRow()
+        if disasm.commentRow is not None:
+            disasm.SetItem(disasm.commentRow, COMMENT_COL, "")
+            disasm.commentRow = None
+
+        if row == -1 or self.bits is None:
+            return
+
+        if not disasm.GetItemText(row, 2).lower().startswith("call"):
+            return
+
+        regVals = ParseRegisters(self.regsDisplay.GetValue())
+        args = CallArguments(self.bits, regVals, self.stackDisplay.StackWords())
+        if not args:
+            return
+
+        disasm.SetItem(row, COMMENT_COL, ", ".join(f"{name}={self.AnnotateArgument(v)}" for name, v in args))
+        disasm.commentRow = row
 
     def HandleConsoleOutput(self, payload):
         self.AppendConsole(payload)
@@ -1787,6 +2014,11 @@ class ConsolePanel(wx.Panel):
                 return
 
             self.JumpTo(cip)
+            # After JumpTo, so the page map lands once this break's pages are already in and
+            # HandlePageMap has nothing to re-request in the common case. Sent from here and
+            # not from RefreshViewState: HandlePageMap ends in RefreshViewState, so a page map
+            # request inside it would ask for another page map forever.
+            self.RefreshPageMap()
         else:
             log.error("[DEBUG CONSOLE] Failed to parse CIP from payload: %s", payload)
 
