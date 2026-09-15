@@ -745,8 +745,9 @@ class ConsolePanel(wx.Panel):
 
             wx.CallAfter(self.ProcessServerOutput, msg)
 
-        win32file.CloseHandle(self.pipeHandle)
-        self.pipeHandle = None
+        # The read failing is usually how this loop ends, and a disconnect is one of the
+        # reasons it fails - by which point the handle is already closed and cleared.
+        self.ClosePipe()
         log.info("[DEBUG CONSOLE] Reader thread exiting, pipe closed.")
 
     def SendInit(self):
@@ -864,14 +865,21 @@ class ConsolePanel(wx.Panel):
         elif name == "clear":
             self.outputConsole.Clear()
         elif name == "disconnect":
-            wx.CallAfter(self.statusBar.SetLabel, "Status: Disconnected")
-            if self.pipeHandle:
-                win32file.CloseHandle(self.pipeHandle)
-
+            # Cleared before closing, so nothing queues a write against a handle that is
+            # about to go.
             self.connected = False
+            self.ClosePipe()
+            wx.CallAfter(self.statusBar.SetLabel, "Status: Disconnected")
             log.info("[DEBUG CONSOLE] Pipe disconnected successfully.")
         elif name == "quit":
-            self.SendCommand(CMD_CONTINUE)
+            # Letting the target run on is only possible while there is a pipe to say so on.
+            # After a disconnect this used to be attempted anyway and logged a failure to
+            # send, which reads like a fault rather than the consequence of disconnecting.
+            if self.connected:
+                self.SendCommand(CMD_CONTINUE)
+            else:
+                self.AppendConsole("Already disconnected; the target is left as it is.")
+
             self.ShutdownConsole()
 
     def ShowInputHint(self):
@@ -944,18 +952,33 @@ class ConsolePanel(wx.Panel):
         self.close()
         self.parent.Close()
 
+    def ClosePipe(self):
+        """Close the pipe handle, once, if it is still open.
+
+        The only place that closes it. Three places used to, with three degrees of care: the
+        disconnect command closed the handle and left it set, so close() went on to close it
+        again and PipeLoop's teardown did the same with no guard at all. One disconnect
+        followed by one quit logged several errors between them.
+
+        The handle is taken and cleared in one step because the reader thread tears down at
+        the same time as whatever asked it to, and only one of them should do the closing.
+        """
+        handle, self.pipeHandle = self.pipeHandle, None
+        if not handle:
+            return
+
+        try:
+            win32file.CloseHandle(handle)
+        except Exception as e:
+            log.error("[DEBUG CONSOLE] Error closing pipe handle: %s", e)
+        else:
+            log.info("[DEBUG CONSOLE] Pipe handle closed")
+
     def close(self):
         """Stops the reading thread."""
         self.connected = False
         self.writeQueue.put(None)
-        if self.pipeHandle:
-            try:
-                win32file.CloseHandle(self.pipeHandle)
-            except Exception as e:
-                log.error("[DEBUG CONSOLE] Error closing pipe handle: %s", e)
-            finally:
-                self.pipeHandle = None
-                log.info("[DEBUG CONSOLE] Pipe handle closed")
+        self.ClosePipe()
 
     def RefreshViewState(self):
         if self.inspectedTid is not None:
