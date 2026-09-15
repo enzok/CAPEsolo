@@ -13,6 +13,7 @@ import win32file
 import wx
 from distorm3 import Decode, Decode32Bits, Decode64Bits
 
+from CAPEsolo.capelib.api_protos import AppendUserPrototype, LoadPrototypes, ParsePrototypes
 from CAPEsolo.capelib.call_args import PROTECT_VALUES, CallArguments, ParseRegisters
 from CAPEsolo.capelib.cmdconsts import *
 from CAPEsolo.capelib.page_cache import (
@@ -43,6 +44,7 @@ from .debug_controls import (
     MemDumpListCtrl,
     MemoryListCtrl,
     ModulesListCtrl,
+    PrototypeDialog,
     RegsTextCtrl,
     StackListCtrl,
     ProtectText,
@@ -123,6 +125,9 @@ wx.Bell = lambda: None
 JMP_CALL_ADDR_RX = re.compile(
     r"\b(?P<mnemonic>jmp|call)\b\s+(?:[A-Za-z_]+\s+)*?(?P<operand>\[[^\]]+\]|0x[0-9A-Fa-f]+)$", re.IGNORECASE
 )
+# `call mod!Name` once export resolution has rewritten the operand, which is where the
+# prototype lookup gets the API name from.
+CALL_SYMBOL_RX = re.compile(r"^call\s+(?:[\w.\-]+!)?(?P<symbol>[A-Za-z_][\w@]*)\s*$", re.IGNORECASE)
 LEA_MOV_ADDR_RX = re.compile(r"\b(?P<mnemonic>lea|mov)\b\s+(?P<dest>[A-Za-z0-9]+)\s*,\s*(?P<source>\[[^\]]+\])$", re.IGNORECASE)
 
 
@@ -270,6 +275,8 @@ class ConsolePanel(wx.Panel):
         self.pageMapPage = 0
         self.pageMapPages: list[str] = []
         self.pageHashes = {}
+        # API prototypes, packaged plus whatever has been added, for naming call arguments.
+        self.prototypes = LoadPrototypes()
         self.exports: dict[int, str] = {}
         # Sorted export addresses for nearest-symbol lookup, rebuilt when exports grow.
         self.exportAddrs: list[int] = []
@@ -1977,16 +1984,72 @@ class ConsolePanel(wx.Panel):
         if row == -1 or self.bits is None:
             return
 
-        if not disasm.GetItemText(row, 2).lower().startswith("call"):
+        text = disasm.GetItemText(row, 2)
+        if not text.lower().startswith("call"):
             return
 
+        proto = self.PrototypeFor(text)
         regVals = ParseRegisters(self.regsDisplay.GetValue())
-        args = CallArguments(self.bits, regVals, self.stackDisplay.StackWords())
+        argCount = len(proto.params) if proto else None
+        args = CallArguments(self.bits, regVals, self.stackDisplay.StackWords(), argCount)
+        if proto and not proto.params:
+            # A void prototype is an answer, not a failure to find one.
+            disasm.SetItem(row, COMMENT_COL, f"{proto.name}()")
+            disasm.commentRow = row
+            return
+
         if not args:
             return
 
-        disasm.SetItem(row, COMMENT_COL, ", ".join(f"{name}={self.AnnotateArgument(v)}" for name, v in args))
+        # Positional: the prototype's Nth parameter names the Nth argument. Where the count
+        # runs out - no prototype, or a mismatch - the register or slot name is used, so a
+        # label is never borrowed from the wrong position.
+        names = [p.name for p in proto.params] if proto else []
+        parts = []
+        for i, (slot, value) in enumerate(args):
+            label = names[i] if i < len(names) else slot
+            parts.append(f"{label}={self.AnnotateArgument(value)}")
+
+        disasm.SetItem(row, COMMENT_COL, ", ".join(parts))
         disasm.commentRow = row
+
+    def PrototypeFor(self, disasmText: str):
+        """The prototype for the API a call goes to, or None.
+
+        Read off the disassembly text, which by this point already carries the symbol that
+        export resolution put there - so no second lookup, and an unresolved call simply has
+        no name to match. Decorations are trimmed: stdcall exports arrive as `_Name@16`, and
+        the A/W pair are separate declarations because their parameter types differ.
+        """
+        m = CALL_SYMBOL_RX.match(disasmText)
+        if not m:
+            return None
+
+        symbol = m.group("symbol").lstrip("_").split("@")[0]
+        return self.prototypes.get(symbol)
+
+    def AddPrototype(self):
+        """Ask for a declaration, store it, and re-annotate with it straight away."""
+        dlg = PrototypeDialog(self)
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+
+            text = dlg.GetDeclaration()
+        finally:
+            dlg.Destroy()
+
+        protos = ParsePrototypes(text)
+        if not protos:
+            self.AppendConsole("Could not read a function declaration from that.")
+            return
+
+        AppendUserPrototype(text)
+        self.prototypes.update(protos)
+        for name, proto in protos.items():
+            self.AppendConsole(f"Prototype added: {name} ({len(proto.params)} parameters)")
+
+        self.ShowCallArguments()
 
     def HandleConsoleOutput(self, payload):
         self.AppendConsole(payload)

@@ -9,6 +9,7 @@ from pathlib import Path
 import wx
 
 from CAPEsolo.capelib.cmdconsts import *
+from CAPEsolo.capelib.api_protos import user_prototypes_path
 from CAPEsolo.capelib.flow_arrows import GUTTER_WIDTH, BranchLanes
 from CAPEsolo.capelib.page_cache import (
     REGION_FREED,
@@ -30,6 +31,7 @@ from .theme import (
     ACCENT_ORANGE,
     BG_INPUT,
     FG_SECONDARY,
+    FONT_CODE,
     apply_theme,
 )
 
@@ -384,6 +386,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
         miDumpAddress = menu.Append(wx.ID_ANY, "Dump Address")
         miResolveSymbol = menu.Append(wx.ID_ANY, "Resolve Symbol")
         miResolveString = menu.Append(wx.ID_ANY, "Resolve String")
+        miAddPrototype = menu.Append(wx.ID_ANY, "Add API Prototype...")
+        self.Bind(wx.EVT_MENU, lambda e: self.parent.AddPrototype(), miAddPrototype)
         menu.AppendSeparator()
         miStepInto = menu.Append(wx.ID_ANY, "Step Into")
         miStepOver = menu.Append(wx.ID_ANY, "Step Over")
@@ -1812,6 +1816,48 @@ class ExportsDialog(wx.Dialog):
         dlg = SearchDialog(self)
         dlg.ShowModal()
         dlg.Destroy()
+
+
+class PrototypeDialog(wx.Dialog):
+    """Paste a function declaration, in the form the documentation gives it.
+
+    Deliberately free-text rather than a field per parameter: a declaration can be copied
+    straight off a docs page, and re-typing one into separate fields is how the parameter
+    count ends up wrong - which mislabels every argument after the mistake.
+    """
+
+    HINT = (
+        "Paste a declaration, e.g.\n\n"
+        "DWORD GetProcessVersion(\n"
+        "  [in] DWORD ProcessId\n"
+        ");"
+    )
+
+    def __init__(self, parent):
+        super().__init__(
+            parent,
+            title="Add API Prototype",
+            size=wx.Size(620, 360),
+            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
+        )
+        outer = wx.BoxSizer(wx.VERTICAL)
+        outer.Add(wx.StaticText(self, label=self.HINT), 0, wx.ALL, 10)
+        self.textCtrl = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.HSCROLL)
+        self.textCtrl.SetFont(FONT_CODE)
+        outer.Add(self.textCtrl, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
+        outer.Add(
+            wx.StaticText(self, label=f"Saved to {user_prototypes_path()}"),
+            0,
+            wx.ALL,
+            10,
+        )
+        outer.Add(self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL), 0, wx.EXPAND | wx.ALL, 10)
+        self.SetSizer(outer)
+        apply_theme(self)
+        self.textCtrl.SetFocus()
+
+    def GetDeclaration(self) -> str:
+        return self.textCtrl.GetValue()
 
 
 class BreakpointDialog(wx.Dialog):

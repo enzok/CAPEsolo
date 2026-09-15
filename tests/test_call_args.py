@@ -87,3 +87,37 @@ def test_x86_without_a_stack_pointer_yields_nothing():
 
 def test_x86_with_an_empty_stack_window():
     assert CallArguments(32, ParseRegisters(REGS_32), []) == []
+
+
+# --- with a prototype supplying the argument count ---------------------------------
+def test_x64_fifth_argument_onwards_comes_off_the_stack_above_the_shadow_space():
+    """Only reachable because a prototype gave the count; CreateThread has six."""
+    sp = 0x14FF28
+    stack = [(sp + off, 0x1000 + off) for off in range(0, 0x60, 8)]
+    args = CallArguments(64, ParseRegisters(REGS_64), stack, argCount=6)
+    assert [name for name, _ in args] == ["RCX", "RDX", "R8", "R9", "[RSP+0x20]", "[RSP+0x28]"]
+    assert args[4][1] == 0x1020
+    assert args[5][1] == 0x1028
+
+
+def test_x64_argument_count_below_four_truncates_the_registers():
+    args = CallArguments(64, ParseRegisters(REGS_64), [], argCount=2)
+    assert [name for name, _ in args] == ["RCX", "RDX"]
+
+
+def test_x64_stack_arguments_need_the_stack_pointer():
+    regs = {k: v for k, v in ParseRegisters(REGS_64).items() if k != "rsp"}
+    args = CallArguments(64, regs, [(0x1000, 1)], argCount=6)
+    assert [name for name, _ in args] == ["RCX", "RDX", "R8", "R9"]
+
+
+def test_x86_argument_count_overrides_the_default_cap():
+    sp = 0x14FF28
+    stack = [(sp + i * 4, i) for i in range(20)]
+    assert len(CallArguments(32, ParseRegisters(REGS_32), stack, argCount=7)) == 7
+    assert len(CallArguments(32, ParseRegisters(REGS_32), stack, argCount=1)) == 1
+
+
+def test_a_void_prototype_shows_no_arguments():
+    assert CallArguments(64, ParseRegisters(REGS_64), [], argCount=0) == []
+    assert CallArguments(32, ParseRegisters(REGS_32), [(0x14FF28, 1)], argCount=0) == []
