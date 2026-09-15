@@ -75,6 +75,37 @@ def test_window_empty_when_cip_is_unmapped():
     assert SelectWindowPages(ONE_REGION, 0x99000, PAGE_SIZE, CHUNK_SIZE) == []
 
 
+def test_window_skips_unreadable_regions():
+    """A window running off the end of a module must not ask for the free region behind it.
+
+    capemon's page map is an unfiltered VirtualQueryEx walk, so free and reserved regions are
+    in it. Requesting one gets UNREADABLE back, which HandlePageLoad used to answer with a
+    page map refresh that re-selected the same page - a map refresh loop.
+    """
+    withFreeTail = [(0x10000, 0x2000, 0x20), (0x12000, 0x10000, 0x0)]
+    pages = SelectWindowPages(withFreeTail, 0x10005, PAGE_SIZE, CHUNK_SIZE)
+    assert pages == [0x10000, 0x11000]
+
+
+def test_window_keeps_cip_page_from_an_unreadable_region():
+    """The readability filter must not be able to starve the caller of a page load.
+
+    JumpTo relies on CIP's page always being selected so a response is always coming to
+    trigger the decode. An execute-only CIP region is readable by the CPU but not by
+    ReadProcessMemory, so without this exemption nothing would be requested at all and the
+    view would sit frozen with no reply to act on.
+    """
+    executeOnly = [(0x10000, 0x10000, 0x10)]
+    pages = SelectWindowPages(executeOnly, 0x10005, PAGE_SIZE, CHUNK_SIZE)
+    assert pages == [0x10000]
+
+
+def test_window_skips_guard_pages():
+    # Reading a guard page consumes the target's own guard, so it must never be requested.
+    guarded = [(0x10000, 0x10000, 0x20 | 0x100)]
+    assert SelectWindowPages(guarded, 0x11005, PAGE_SIZE, CHUNK_SIZE) == [0x11000]
+
+
 def test_window_skips_regions_ending_before_cip():
     # Documents the retained asymmetry: regions are culled against cip, not cip - PAGE_SIZE,
     # so the page immediately below cip is not picked up from an earlier region.

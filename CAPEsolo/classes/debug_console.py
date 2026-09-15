@@ -21,6 +21,7 @@ from CAPEsolo.capelib.page_cache import (
     DistantPages,
     FindRegion,
     HotPages,
+    PageBase,
     PageChanged,
     PageHash,
     PagesOfSpan,
@@ -241,6 +242,10 @@ class ConsolePanel(wx.Panel):
         # request tag -> page base, for the page loads still outstanding. Correlating by tag
         # means a late response from an earlier break cannot satisfy this break's request.
         self.pendingPages: dict[str, int] = {}
+        # Pages the target reported unreadable. Lets DoHotDecode tell "the bytes have not
+        # arrived yet", which a page map refresh can fix, from "the target cannot read them",
+        # which it cannot - refreshing on the latter never terminates.
+        self.unreadablePages: set[int] = set()
         self.requestId = 0
         self.pageHashes = {}
         self.exports: dict[int, str] = {}
@@ -872,6 +877,11 @@ class ConsolePanel(wx.Panel):
             del self.pageBuffers[page]
             self.pageHashes.pop(page, None)
 
+        # Bounded on the same window as the buffers: a page that far from CIP will not be
+        # re-requested, so remembering that it failed has no use and only grows the set.
+        for page in DistantPages(list(self.unreadablePages), self.cip, PAGE_SIZE, KEEP_PAGES):
+            self.unreadablePages.discard(page)
+
         # Drop the hot pages so a stale copy can never be decoded if the re-read fails.
         for page in hot:
             self.pageBuffers.pop(page, None)
@@ -891,6 +901,12 @@ class ConsolePanel(wx.Panel):
 
         spanData = ContiguousSpan(self.pageBuffers, self.cip, PAGE_SIZE, CHUNK_SIZE)
         if not spanData:
+            # Refreshing the map cannot make an unreadable page readable, and the refresh
+            # re-requests it, so this is the second half of the same loop as HandlePageLoad's.
+            if PageBase(self.cip, PAGE_SIZE) in self.unreadablePages:
+                log.warning("[DEBUG CONSOLE] CIP page for %#x is unreadable; nothing to disassemble", self.cip)
+                return
+
             log.warning("[DEBUG CONSOLE] No contiguous page data at CIP %#x; refreshing page map", self.cip)
             self.RefreshPageMap()
             return
@@ -1250,6 +1266,9 @@ class ConsolePanel(wx.Panel):
         self.pageBuffers.clear()
         self.pendingPages.clear()
         self.pageHashes.clear()
+        # A fresh map is fresh truth about what is mapped, so last round's read failures are
+        # no longer evidence of anything.
+        self.unreadablePages.clear()
 
         cip = self.cip
         if not self.IsAddressKnown(cip):
@@ -1290,11 +1309,15 @@ class ConsolePanel(wx.Panel):
             log.debug("[DEBUG] Ignoring unsolicited or stale page response for 0x%X (tag %s)", pageBase, tag)
             return
 
+        # The target has answered that it cannot read this page, which is a fact about the
+        # page and not evidence the map is stale. Refreshing the map here was a loop: the
+        # refreshed map re-selected the same page, which failed again. Record it and fall
+        # through to the drain below so the decode still runs on the pages that did arrive -
+        # ContiguousSpan stops at the first gap, so the window just comes up short.
         if pageData in ("UNREADABLE", "NODATA"):
-            log.debug(f"[DEBUG] PageLoad returned {pageData} for page 0x{pageBase:X}. Refreshing PageMap + ModuleList.")
-            self.RefreshPageMap()
-            self.RefreshModuleList()
-            return
+            log.debug("[DEBUG] PageLoad returned %s for page 0x%X; leaving it out of the window.", pageData, pageBase)
+            self.unreadablePages.add(pageBase)
+            pageData = ""
 
         validPages = False
         if pageData:
@@ -1303,6 +1326,7 @@ class ConsolePanel(wx.Panel):
                 validPages = True
 
         if validPages:
+            self.unreadablePages.discard(pageBase)
             region = self.disassemblyConsole.FindPage(pageBase)
             if not region:
                 # The map cannot place this page, so its true extent is unknown and trimming
@@ -1391,9 +1415,17 @@ class ConsolePanel(wx.Panel):
         purpose = tag.split(":", 1)[-1]
 
         if data in ("UNREADABLE", "NODATA"):
-            log.debug(f"[DEBUG] MemDump returned {data} for 0x{addr:X}. Refreshing memory map.")
+            log.debug(f"[DEBUG] MemDump returned {data} for 0x{addr:X}.")
             if purpose == TAG_FILE:
                 self.AppendConsole(f"Memory dump to file failed: {addr:#x} is {data}")
+
+            # The panel's dump is re-issued for the same address on every break, and the
+            # address only moves when a dump succeeds, so refreshing here looped: the refresh
+            # ran RefreshViewState, which asked for the same dead address again. Nothing is
+            # printed either, for the same reason - it would print on every break. The other
+            # purposes are one-shot user actions and cannot re-trigger themselves.
+            if purpose == TAG_DUMP:
+                return
 
             self.RefreshPageMap()
             self.RefreshModuleList()

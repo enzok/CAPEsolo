@@ -21,6 +21,7 @@ from .theme import (
     ACCENT_JUMP,
     ACCENT_ORANGE,
     BG_INPUT,
+    apply_theme,
 )
 
 log = logging.getLogger(__name__)
@@ -1479,6 +1480,9 @@ class ExportsDialog(wx.Dialog):
         sizer.Add(btn, 0, wx.ALIGN_CENTER | wx.ALL, 10)
         self.SetSizer(sizer)
         self.Layout()
+        # A dialog is a top-level window, so the panel's construction-time apply_theme never
+        # reached it: it has to theme its own tree, including its title bar.
+        apply_theme(self)
 
     def OnKeyDown(self, event):
         if event.ControlDown() and event.GetKeyCode() == ord("C"):
@@ -1553,6 +1557,7 @@ class BreakpointDialog(wx.Dialog):
 
         self.OnTypeChanged(None)
         self.Bind(wx.EVT_BUTTON, self.OnOk, id=wx.ID_OK)
+        apply_theme(self)
 
     def OnTypeChanged(self, event):
         # An execute breakpoint must keep LEN at one byte, so size is not a choice there.

@@ -10,6 +10,12 @@ pages to ask for, which bytes are safe to decode, and which pages to drop.
 import bisect
 import zlib
 
+# Win32 memory protection constants, as VirtualQuery reports them in MEMORY_BASIC_INFORMATION.
+# PAGE_NOACCESS (0x01) and PAGE_EXECUTE (0x10) are deliberately absent from PAGE_READ_ANY:
+# both are mapped but ReadProcessMemory fails on them.
+PAGE_READ_ANY = 0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80
+PAGE_GUARD = 0x100
+
 
 def PageBase(addr: int, pageSize: int) -> int:
     return (addr // pageSize) * pageSize
@@ -30,6 +36,21 @@ def FindRegion(pageMap: list[tuple[int, int, int]], addr: int) -> tuple[int, int
         return base, size, prot
 
     return None
+
+
+def IsReadable(prot: int) -> bool:
+    """Whether a VirtualQuery `Protect` value permits ReadProcessMemory.
+
+    Excludes PAGE_NOACCESS and execute-only pages, which are mapped but still unreadable, and
+    PAGE_GUARD, where the read would consume the target's own guard page.
+
+    capemon's page map is an unfiltered VirtualQueryEx walk, so it carries free and reserved
+    regions too. Windows leaves `Protect` undefined for those rather than promising 0, so this
+    is not a reliable test for them - in practice it reads back as 0 and they are filtered out,
+    but HandlePageLoad treating an UNREADABLE reply as final is what actually makes a reserved
+    page safe to ask for. Deciding it here would need `State` on the wire, which it is not.
+    """
+    return bool(prot & PAGE_READ_ANY) and not prot & PAGE_GUARD
 
 
 def PageHash(data: bytes) -> int:
@@ -61,23 +82,32 @@ def SelectWindowPages(pageMap: list[tuple[int, int, int]], cip: int, pageSize: i
     - The `cip - pageSize` back-reach is compared against the unaligned address, so the page
       preceding CIP is only ever admitted when CIP is itself page-aligned. That page is never
       read anyway: ContiguousSpan only ever reads forward from cip, never behind it.
+
+    Unreadable regions are skipped, because asking for one is not free: the reply is
+    UNREADABLE, which HandlePageLoad used to answer with a page map refresh that re-selected
+    the same page. A window reaching past the end of a module into the free region behind it
+    therefore refreshed the map forever. CIP's own page is exempt so the caller's guarantee
+    that a page load is always outstanding survives an execute-only CIP region - the reply
+    then says UNREADABLE once, which is the truth, instead of nothing arriving at all.
     """
     desiredStart = cip
     desiredEnd = cip + chunkSize
     lowest = max(0, desiredStart - pageSize)
+    cipPage = PageBase(cip, pageSize)
     pages = set()
-    for base, size, _prot in pageMap:
+    for base, size, prot in pageMap:
         regionEnd = base + size
         if regionEnd < desiredStart or base > desiredEnd:
             continue
 
+        readable = IsReadable(prot)
         # Clamp to the window before walking: a multi-megabyte region would otherwise be
         # stepped page by page on every break to discard nearly all of it.
         firstPage = max(PageBase(base, pageSize), PageBase(lowest, pageSize))
         lastPage = min(PageBase(regionEnd - 1, pageSize), PageBase(desiredEnd, pageSize))
         page = firstPage
         while page <= lastPage:
-            if lowest <= page <= desiredEnd:
+            if lowest <= page <= desiredEnd and (readable or page == cipPage):
                 pages.add(page)
 
             page += pageSize
