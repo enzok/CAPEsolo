@@ -37,6 +37,10 @@ COLOR_LIGHT_RED = ACCENT_ERROR
 MAX_IDLE = 1
 
 DecodedInstruction = namedtuple("DecodedInstruction", ["address", "bytes", "text"])
+# Indirect operands whose slot address the instruction alone determines, as distorm writes
+# them: "[0x405000]" and "[RIP+0x3af9]". See StaticSlotAddress.
+ABS_SLOT_RX = re.compile(r"^\[(0x[0-9A-Fa-f]+)\]$")
+RIP_SLOT_RX = re.compile(r"^\[RIP\s*([+-])\s*(0x[0-9A-Fa-f]+)\]$", re.IGNORECASE)
 
 def IsValidHexAddress(s: str) -> bool:
     try:
@@ -48,6 +52,28 @@ def IsValidHexAddress(s: str) -> bool:
         return False
 
     return value > 0x1000
+
+def StaticSlotAddress(operand: str, ripBase: int) -> int | None:
+    """The address an indirect operand reads, when the instruction alone determines it.
+
+    Covers the two forms an import slot is reached through - `[0x405000]` as distorm renders
+    32-bit absolute addressing, and `[RIP+0x3af9]` as it renders 64-bit rip-relative, where
+    the displacement is against the end of the instruction - and deliberately nothing else.
+
+    `[RAX+0x8]` is a vtable or a computed call: its slot depends on register values at this
+    break, so an answer cached against the instruction would be wrong at the next one. Those
+    stay on the Resolve Symbol menu item, where the user is asking about this break.
+    """
+    m = ABS_SLOT_RX.match(operand)
+    if m:
+        return int(m.group(1), 16)
+
+    m = RIP_SLOT_RX.match(operand)
+    if m:
+        displacement = int(m.group(2), 16)
+        return ripBase + displacement if m.group(1) == "+" else ripBase - displacement
+
+    return None
 
 def SetClipboard(text: str):
     clipboard = wx.TheClipboard
@@ -88,7 +114,6 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.decodeCache: list[DecodedInstruction] = []
         self.cacheLock = threading.Lock()
         self.backHistory: list[int] = []
-        self.resolveAllRefsStatus = True
         self.fontItalic = wx.Font(10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL)
         # Rows are rebuilt on every break, which drops their colours, so breakpoint addresses
         # are kept here and re-applied. cipRow is the one row holding the CIP highlight.
@@ -288,14 +313,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
         miPatchHistory = menu.Append(wx.ID_ANY, "Patch History")
         menu.AppendSeparator()
         miDumpAddress = menu.Append(wx.ID_ANY, "Dump Address")
-        miResolveAddress = menu.Append(wx.ID_ANY, "Resolve Export Name From Address")
-        miResolveRef = menu.Append(wx.ID_ANY, "Resolve Export Name From Dereference")
-        if self.resolveAllRefsStatus:
-            miResolveAllRefs = menu.Append(wx.ID_ANY, "Resolve All Export Names for Calls")
-            self.Bind(wx.EVT_MENU, self.OnResolveAllRefs, miResolveAllRefs)
-
-        miStringAddress = menu.Append(wx.ID_ANY, "Resolve String From Address")
-        miStringRef = menu.Append(wx.ID_ANY, "Resolve String From Dereference")
+        miResolveSymbol = menu.Append(wx.ID_ANY, "Resolve Symbol")
+        miResolveString = menu.Append(wx.ID_ANY, "Resolve String")
         menu.AppendSeparator()
         miStepInto = menu.Append(wx.ID_ANY, "Step Into")
         miStepOver = menu.Append(wx.ID_ANY, "Step Over")
@@ -320,10 +339,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.Bind(wx.EVT_MENU, lambda e: self.OnPatchBytes(row), miPatchBytes)
         self.Bind(wx.EVT_MENU, self.OnPatchHistory, miPatchHistory)
         self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnDumpAddress(r), miDumpAddress)
-        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnResolveAddress(r), miResolveAddress)
-        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnResolveRef(r), miResolveRef)
-        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnStringAddress(r), miStringAddress)
-        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnStringRef(r), miStringRef)
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnResolveSymbol(r), miResolveSymbol)
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnResolveString(r), miResolveString)
         self.Bind(wx.EVT_MENU, self.OnStepInto, miStepInto)
         self.Bind(wx.EVT_MENU, self.OnStepOver, miStepOver)
         self.Bind(wx.EVT_MENU, self.OnStepOut, miStepOut)
@@ -634,19 +651,28 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         self.parent.SendCommand(CMD_MEM_DUMP, f"{addr:#x}", tag=self.parent.NextTag(TAG_DUMP))
 
-    def OnResolveAddress(self, row):
+    def OnResolveSymbol(self, row):
+        """Name what this instruction's operand refers to.
+
+        Replaces the old From Address / From Dereference pair. Those asked the user to
+        classify the operand as the target or as memory holding the target, which the
+        disassembly already states: brackets or no brackets. Getting it wrong silently gave
+        a wrong answer - From Dereference on a direct call read the callee's first bytes and
+        looked those up as a pointer.
+
+        Direct operands are named for every instruction as it is decoded, so reaching for
+        this on one means the export table has no entry; say so rather than nothing. Indirect
+        ones need the slot read, which is also how a slot populated after the automatic pass
+        gets picked up.
+        """
         addr = self.OperandAddressAt(row)
         if addr is None:
             self.parent.AppendConsole("No address operand on this instruction.")
             return
 
-        export = self.parent.exports.get(addr)
-        self.parent.AppendConsole(export or f"No export known at {addr:#x}")
-
-    def OnResolveRef(self, row):
-        target = self.OperandAddressAt(row)
-        if target is None:
-            self.parent.AppendConsole("No address operand on this instruction.")
+        if "[" not in self.GetItemText(row, 2):
+            export = self.parent.exports.get(addr)
+            self.parent.AppendConsole(export or f"No export known at {addr:#x}")
             return
 
         try:
@@ -654,31 +680,27 @@ class DisassemblyListCtrl(wx.ListCtrl):
         except ValueError:
             return
 
-        if instAddr not in self.parent.resolvedExports:
-            self.parent.resolvedExports[instAddr] = {target: ""}
-            self.parent.ResolveRef(target)
+        self.parent.resolvedExports[instAddr] = {addr: ""}
+        self.parent.ResolveRef(addr)
 
-    def OnResolveAllRefs(self, event):
-        self.resolveAllRefsStatus = False
-        self.parent.DeReferenceCalls()
+    def OnResolveString(self, row):
+        """Read what this instruction's operand points at and show it as a string.
 
-    def OnStringAddress(self, row):
+        One item, where there were From Address and From Dereference: the cached-lookup half
+        was only ever the read half's result, so asking for the string now reports the cached
+        one if there is one and reads it if there is not.
+        """
         addr = self.OperandAddressAt(row)
         if addr is None:
             self.parent.AppendConsole("No address operand on this instruction.")
             return
 
         string = self.parent.resolvedStrings.get(addr)
-        self.parent.AppendConsole(string or f"No string resolved at {addr:#x}")
-
-    def OnStringRef(self, row):
-        addr = self.OperandAddressAt(row)
-        if addr is None:
-            self.parent.AppendConsole("No address operand on this instruction.")
+        if string:
+            self.parent.AppendConsole(string)
             return
 
-        if addr not in self.parent.resolvedStrings:
-            self.parent.ResolveString(addr)
+        self.parent.ResolveString(addr)
 
     def OnNopInstruction(self, row):
         addrStr = self.GetItemText(row, 0)

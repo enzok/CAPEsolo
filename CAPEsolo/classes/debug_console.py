@@ -40,6 +40,7 @@ from .debug_controls import (
     ModulesListCtrl,
     RegsTextCtrl,
     StackListCtrl,
+    StaticSlotAddress,
     ThreadListCtrl,
 )
 from .debug_pipe import CommandPipeHandler
@@ -69,6 +70,10 @@ TAG_DEREF = "DEREF"
 TAG_STR = "STR"
 TAG_STRW = "STRW"
 TAG_PAGE = "PAGE"
+TAG_PTRS = "PTRS"
+# Slot addresses per RD request. capemon caps a reply at MAX_READ_ENTRIES (512) entries, so
+# this stays under that and the rest of a larger set goes in further requests.
+MAX_READ_BATCH = 256
 STALE_MONITOR_MSG = (
     "Untagged debugger response: the monitor is older than this build of CAPEsolo. "
     "Update the monitor dlls."
@@ -260,8 +265,6 @@ class ConsolePanel(wx.Panel):
         self.moduleRanges = []
         self.patchHistory: list[PatchEntry] = []
         self.patchHistoryByAddr: dict[int, list[PatchEntry]] = defaultdict(list)
-        self.derefCount = 0
-        self.derefPending: set[int] = set()
         self.dumpFilePath = None
         self.assembler = None
         self.firstBreak = True
@@ -815,6 +818,7 @@ class ConsolePanel(wx.Panel):
             CMD_PAGE_LOAD: self.HandlePageLoad,
             CMD_REG_UPDATE: self.HandleRegUpdate,
             CMD_MEM_DUMP: self.HandleMemDump,
+            CMD_READ_POINTERS: self.HandleReadPointers,
             CMD_STACK_UPDATE: self.HandleStackUpdate,
             CMD_CALL_STACK: self.HandleCallStack,
             CMD_THREAD_INSPECT: self.HandleThreadInspect,
@@ -882,6 +886,15 @@ class ConsolePanel(wx.Panel):
         for page in DistantPages(list(self.unreadablePages), self.cip, PAGE_SIZE, KEEP_PAGES):
             self.unreadablePages.discard(page)
 
+        # Same bound BoundInstructions uses, so a name is dropped exactly when the instruction
+        # it belongs to leaves the retained stream. ResolveCallSlots adds an entry per indirect
+        # call and now runs on every decode instead of on request, so without this the dict
+        # grows for as long as the session does. A pinned instruction that outlives its entry
+        # is simply asked about again on the next decode.
+        span = KEEP_PAGES * PAGE_SIZE
+        for instAddr in [a for a in self.resolvedExports if not self.cip - span <= a <= self.cip + span]:
+            del self.resolvedExports[instAddr]
+
         # Drop the hot pages so a stale copy can never be decoded if the re-read fails.
         for page in hot:
             self.pageBuffers.pop(page, None)
@@ -941,8 +954,15 @@ class ConsolePanel(wx.Panel):
         # SetInstructions owns decodeCache: assigning it here first would make the incremental
         # diff see the new stream as already rendered and skip every row.
         self.disassemblyConsole.SetInstructions(prefix + insts)
+        self.ResolveCallSlots()
 
-    def UpdateDisassemblyView(self):
+    def RenderDisassembly(self):
+        """Re-run the annotation over the decoded stream, without re-fetching anything.
+
+        Already-annotated text is left alone: an operand replaced by a symbol no longer looks
+        like an address to either regex, so a second pass over it is a no-op and a name once
+        applied is not lost by a later pass.
+        """
         insts: list[DecodedInstruction] = []
         cache = getattr(self.disassemblyConsole, "decodeCache", [])
         for inst in cache:
@@ -950,34 +970,118 @@ class ConsolePanel(wx.Panel):
             insts.append(DecodedInstruction(inst.address, inst.bytes, patchText))
 
         self.disassemblyConsole.SetInstructions(insts)
+
+    def UpdateDisassemblyView(self):
+        self.RenderDisassembly()
         self.RefreshViewState()
 
-    def DeReferenceCalls(self):
-        cache = getattr(self.disassemblyConsole, "decodeCache", [])
-        for inst in cache:
-            if "call" not in inst.text.lower():
+    def ResolveCallSlots(self):
+        """Name the indirect calls in the current view, one request per batch of slots.
+
+        Runs by default after a decode, which the batch is what makes affordable: capemon
+        sleeps 100ms between commands, so the per-slot memory dump this replaces cost ~110ms
+        each and a window's worth of calls took seconds.
+
+        Only calls through a slot the instruction alone determines are collected, so this
+        neither evaluates registers nor reads the register pane - which ParseOperandAddress
+        does per call, and which is the other reason the old bulk resolve had to be manual.
+
+        Each site is recorded with an empty name as it is asked about. That is what keeps the
+        next decode from asking again about a slot that turned out to hold something other
+        than an export, or that could not be read at all - neither of which comes back with
+        anything to show. Resolve Symbol re-asks on demand if a slot is populated later.
+        """
+        slots: dict[int, list[int]] = {}
+        for inst in getattr(self.disassemblyConsole, "decodeCache", []):
+            if inst.address in self.resolvedExports:
+                continue
+
+            m = JMP_CALL_ADDR_RX.search(inst.text)
+            if not m or m.group("mnemonic").lower() != "call":
+                continue
+
+            ripBase = inst.address + len(inst.bytes) // 2
+            slot = StaticSlotAddress(m.group("operand"), ripBase)
+            if slot is not None:
+                slots.setdefault(slot, []).append(inst.address)
+
+        if not slots:
+            return
+
+        for slot, sites in slots.items():
+            for instAddr in sites:
+                self.resolvedExports[instAddr] = {slot: ""}
+
+        addrs = list(slots)
+        for start in range(0, len(addrs), MAX_READ_BATCH):
+            batch = addrs[start : start + MAX_READ_BATCH]
+            self.SendCommand(
+                CMD_READ_POINTERS, ",".join(f"{addr:#x}" for addr in batch), tag=self.NextTag(TAG_PTRS)
+            )
+
+    def SitesBySlot(self) -> dict[int, list[int]]:
+        """slot address -> the instruction addresses referring to it, from resolvedExports.
+
+        Built once per reply rather than scanned per slot: a batch answers up to a few hundred
+        slots, and the per-address scan this replaces was O(resolvedExports) for each one.
+        """
+        sites: dict[int, list[int]] = {}
+        for instAddr, exportMap in self.resolvedExports.items():
+            for slot in exportMap:
+                sites.setdefault(slot, []).append(instAddr)
+
+        return sites
+
+    def HandleReadPointers(self, payload):
+        """Apply a batch of slot reads: `<tag>|<slot>,<value>|<slot>,<value>|...`.
+
+        A slot capemon could not read is absent from the reply rather than flagged, and a
+        value that is not an export has no name to show; both leave the instruction showing
+        its operand, which is what the empty name recorded at request time already does.
+        """
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Read pointers: %s", payload)
+            return
+
+        try:
+            tag, entries = payload.split("|", 1)
+        except ValueError:
+            log.error("[DEBUG CONSOLE] Read pointers payload invalid: %s", payload)
+            return
+
+        # A slot's value is a fact about an address rather than about this break, so a late
+        # reply is not wrong in itself - but the sites it would name are found by walking the
+        # current decode, and rewritten bytes can put a different instruction at one of them.
+        if tag.split(":", 1)[-1] != TAG_PTRS:
+            log.debug("[DEBUG] Ignoring pointer read response with foreign tag %s", tag)
+            return
+
+        resolved = {}
+        for entry in entries.split("|"):
+            if not entry:
                 continue
 
             try:
-                ripBase = inst.address + len(inst.bytes) // 2
-                targetAddr = self.disassemblyConsole.ParseOperandAddress(inst.text, ripBase)
-            except Exception:
+                slotStr, valueStr = entry.split(",", 1)
+                slot, value = int(slotStr, 16), int(valueStr, 16)
+            except ValueError:
                 continue
 
-            if targetAddr is None:
-                continue
+            export = self.exports.get(value)
+            if export:
+                resolved[slot] = export
 
-            if targetAddr not in self.derefPending:
-                self.derefPending.add(targetAddr)
-                self.derefCount += 1
+        if not resolved:
+            return
 
-            self.resolvedExports[inst.address] = {targetAddr: ""}
+        sites = self.SitesBySlot()
+        for slot, export in resolved.items():
+            for instAddr in sites.get(slot, ()):
+                self.resolvedExports[instAddr] = {slot: export}
 
-            wx.CallLater(1, self.ResolveRef, targetAddr)
-
-        # Nothing to resolve means no response will arrive to re-enable the menu item.
-        if not self.derefCount:
-            self.disassemblyConsole.resolveAllRefsStatus = True
+        # Rows only: a batch can arrive several times per decode, and RefreshViewState would
+        # put its six commands on the wire for each one.
+        self.RenderDisassembly()
 
     def GetCip(self, data):
         m = re.search(r"0x[0-9a-fA-F]+", data)
@@ -1018,31 +1122,58 @@ class ConsolePanel(wx.Panel):
 
         return s
 
+    def OperandName(self, addr: int, operand: str) -> str | None:
+        """The symbol to show in place of `operand`, or None to leave the operand alone.
+
+        `addr` is the instruction's address and `operand` its reference, as the regexes below
+        captured it: a bracketed expression for an indirect reference, a bare 0x literal for a
+        direct one.
+
+        A direct target is in the instruction itself, so naming it is a lookup in the export
+        table that is already fully loaded - no pipe traffic, which is why it is done for every
+        instruction rather than on request. An indirect one names the memory holding the
+        target, not the target, so it can only be answered by reading that memory; those stay
+        on the Resolve menu items, which record what they learn in resolvedExports.
+
+        Each kind consults only its own source. resolvedExports is keyed by instruction
+        address, so it outlives the bytes it describes: if the sample rewrites an indirect
+        call into a direct one, the entry from before the rewrite is still there and would
+        name the new target after the old one.
+        """
+        if not operand.startswith("0x"):
+            exportMap = self.resolvedExports.get(addr)
+            if exportMap:
+                return next(iter(exportMap.values()), None) or None
+
+            return None
+
+        return self.exports.get(int(operand, 16))
+
     def PatchDisasmText(self, addr: int, disasmText: str) -> str:
-        export = None
-        exportMap = self.resolvedExports.get(addr)
-        if exportMap:
-            export = next(iter(exportMap.values()), None)
+        m = JMP_CALL_ADDR_RX.search(disasmText)
+        if m:
+            mnemonic = m.group("mnemonic")
+            dest = None
+            operand = m.group("operand")
+        else:
+            m2 = LEA_MOV_ADDR_RX.search(disasmText)
+            if not m2:
+                return disasmText
 
-        name = export or self.exports.get(addr) or self.resolvedStrings.get(addr)
-        if name:
-            m = JMP_CALL_ADDR_RX.search(disasmText)
-            if m:
-                mnemonic = m.group("mnemonic")
-                dest = None
-                raw = m.group("operand")
-            else:
-                m2 = LEA_MOV_ADDR_RX.search(disasmText)
-                if not m2:
-                    return disasmText
+            mnemonic = m2.group("mnemonic")
+            dest = m2.group("dest")
+            operand = m2.group("source")
 
-                mnemonic = m2.group("mnemonic")
-                dest = m2.group("dest")
-                raw = m2.group("source")
+        # Keyed on the operand, not on `addr`. Looking the instruction's own address up in the
+        # export table answers "is this the entry point of an export", which is a label and
+        # not what the operand refers to: direct calls therefore never got named, and an
+        # import thunk - sitting at an export, and a jmp - was rewritten to its own name
+        # rather than its target's.
+        name = self.OperandName(addr, operand)
+        if not name:
+            return disasmText
 
-            return f"{mnemonic} {dest}, {name}" if dest else f"{mnemonic} {name}"
-
-        return disasmText
+        return f"{mnemonic} {dest}, {name}" if dest else f"{mnemonic} {name}"
 
     def GetAllExports(self, modules: list[tuple[str, str, str, str]]):
         self.exportModules = list(modules)
@@ -1386,15 +1517,6 @@ class ConsolePanel(wx.Panel):
 
     def HandleMemDump(self, payload):
         if payload.startswith("Failed"):
-            if hasattr(self, "derefPending"):
-                m = re.search(r"0x[0-9a-fA-F]+", payload)
-                if m:
-                    failedAddr = int(m.group(0), 16)
-                    if failedAddr in self.derefPending:
-                        self.derefPending.remove(failedAddr)
-                        if self.derefCount > 0:
-                            self.derefCount -= 1
-
             log.debug("[DEBUG] MemDump fault detected, refreshing PageMap + ModuleList")
             self.RefreshPageMap()
             self.RefreshModuleList()
@@ -1437,31 +1559,17 @@ class ConsolePanel(wx.Panel):
 
             return
 
+        # One slot, read because Resolve Symbol asked about an operand the automatic pass does
+        # not cover: a register-dependent one, or a slot populated since. Bulk resolution goes
+        # through CMD_READ_POINTERS instead, so there is no run to count down any more - this
+        # renders straight away, which a single resolve never used to do.
         if purpose == TAG_DEREF:
             export = self.GetExport(data)
-            instAddrs = [instAddr for instAddr, exportMap in self.resolvedExports.items() if addr in exportMap]
-            for instAddr in instAddrs:
-                if export:
-                    self.resolvedExports[instAddr][addr] = export
-                else:
-                    del self.resolvedExports[instAddr]
+            for instAddr in self.SitesBySlot().get(addr, ()):
+                self.resolvedExports[instAddr] = {addr: export or ""}
 
-            if addr in self.derefPending:
-                self.derefPending.remove(addr)
-                if self.derefCount > 0:
-                    self.derefCount -= 1
-
-            if export:
-                self.AppendConsole(export)
-
-            # Only a bulk resolve (which clears resolveAllRefsStatus) should rebuild the whole
-            # view. Without this gate every single-pointer resolve ran a full rebuild plus a
-            # RefreshViewState, and printed a bogus "Completed resolving calls."
-            if not self.disassemblyConsole.resolveAllRefsStatus and self.derefCount == 0:
-                self.AppendConsole("Completed resolving calls.")
-                self.UpdateDisassemblyView()
-                self.disassemblyConsole.resolveAllRefsStatus = True
-
+            self.AppendConsole(export or f"No export at the address in {addr:#x}")
+            self.RenderDisassembly()
             return
 
         if purpose == TAG_STR:
