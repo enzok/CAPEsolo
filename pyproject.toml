@@ -1,6 +1,6 @@
 [project]
 name = "CAPEsolo"
-version = "0.5.32"
+version = "0.5.34"
 description = "Standalone CAPEMON"
 authors = [{name = "enzok", email = "<7831008+enzok@users.noreply.github.com>"}]
 readme = "README.md"
@@ -19,7 +19,7 @@ dependencies = [
     "dnspython>=2.8.0",
     "tldextract>=5.3.1",
     "bs2json>=0.3.0",
-    "cape-parsers>=0.1.67",
+    "cape-parsers>=0.1.68",
     "pytest>=9.0.3",
     "setuptools>=84.0.0",
     "typing-extensions==4.16.0",

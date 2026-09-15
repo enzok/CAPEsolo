@@ -91,19 +91,51 @@ def Payloads(analysisDir):
 
 
 def Configs(yara, analysisDir):
-    configHits = []
-    detections = []
-    for filehits in yara:
-        paths = filehits.keys()
-        for file in paths:
-            for hit in filehits[file]:
-                capename = get_cape_name_from_yara_hit(hit)
-                if capename:
-                    configHits.append({file: capename})
-                    if not capename in detections:
-                        detections.append(capename)
+    """Extract a config for every CAPE name yara matched, draining parser-dumped files.
 
-    configs = Extract(configHits, analysisDir, jsonResults=True)
+    Takes the ProcessYara instance rather than its results because a parser can hand files
+    back via "dump_files". Yara has already run by the time configs are extracted, so each
+    dumped file is scanned on its own and its CAPE names parsed in the next round, mirroring
+    the Configs tab (configs_panel.ExtractConfigs).
+    """
+    configs = []
+    configHits = []
+    # Persists across rounds so a hit parsed in an earlier round is not parsed again, which
+    # is what makes re-flattening the whole hit list each round cheap.
+    processed = set()
+    while True:
+        configHits = []
+        for filehits in yara.yara_results:
+            paths = filehits.keys()
+            for file in paths:
+                for hit in filehits[file]:
+                    capename = get_cape_name_from_yara_hit(hit)
+                    if capename:
+                        configHits.append({file: capename})
+
+        newPayloads = []
+        configs += Extract(
+            configHits,
+            analysisDir,
+            jsonResults=True,
+            newPayloads=newPayloads,
+            seen=processed,
+        )
+        # Terminates because the writes are content addressed -- DumpParserFiles appends to
+        # newPayloads only when it actually writes a file it has not seen before.
+        if not newPayloads:
+            break
+
+        # ScanPayload appends to yara_results, so the next round sees these hits.
+        for relPath in newPayloads:
+            yara.ScanPayload(relPath)
+
+    # Built from the final round, so a family detected only in a dumped file is included.
+    detections = []
+    for hit in configHits:
+        capename = next(iter(hit.values()))
+        if not capename in detections:
+            detections.append(capename)
 
     return configs, detections
 
@@ -201,7 +233,7 @@ def GetResults(targetFile, analysisDir, writeFile=True, includeStrings=True, pca
                 if extracted:
                     payload[path]["strings"] = sorted(list(set(extracted)), key=lambda x: (len(x), x))
 
-    results["configs"], results["detections"] = Configs(yara.yara_results, analysisDir)
+    results["configs"], results["detections"] = Configs(yara, analysisDir)
     if writeFile:
         return WriteJsonFile(results)
     else:

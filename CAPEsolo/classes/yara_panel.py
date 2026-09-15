@@ -273,6 +273,7 @@ class YaraPanel(wx.Panel, KeyEventHandlerMixin):
         # that sizes it, matching SignaturesPanel.
         self.grid.Show()
         self.AddTableData()
+        self.UpdatePayloadCapeTypes()
         self.yaraButton.Disable()
         self.yaraComplete = True
 
@@ -292,6 +293,51 @@ class YaraPanel(wx.Panel, KeyEventHandlerMixin):
         selected = self.GetFilterFile()
         self.LoadFileFilter(selected)
         self.AddTableData()
+        self.UpdatePayloadCapeTypes()
+
+    def GetMainFrame(self):
+        parent = self.GetParent()
+        while parent and not isinstance(parent, wx.Frame):
+            parent = parent.GetParent()
+
+        return parent
+
+    def CapeTypesByFile(self):
+        """Map each scanned file to a CAPE-type label built from its Yara hits.
+
+        Prefer the cape_type meta of CAPE-family rules; for a file that is yara-positive only
+        against rules with no cape_type, fall back to the matched rule name(s) so a positive
+        file still shows what hit it.
+        """
+        capeTypes, ruleNames = {}, {}
+        for hit in self.hits:
+            file = hit["file"]
+            capeType = (hit.get("meta") or {}).get("cape_type", "")
+            if capeType:
+                names = capeTypes.setdefault(file, [])
+                if capeType not in names:
+                    names.append(capeType)
+
+            rule = hit.get("rule", "")
+            if rule:
+                rules = ruleNames.setdefault(file, [])
+                if rule not in rules:
+                    rules.append(rule)
+
+        labels = {}
+        for file in set(capeTypes) | set(ruleNames):
+            if capeTypes.get(file):
+                labels[file] = ", ".join(capeTypes[file])
+            elif ruleNames.get(file):
+                labels[file] = "Yara: " + ", ".join(ruleNames[file])
+
+        return labels
+
+    def UpdatePayloadCapeTypes(self):
+        """Hand the Payloads tab the CAPE type per file so it can update its Type rows."""
+        payloadsTab = getattr(self.GetMainFrame(), "payloadsTab", None)
+        if payloadsTab:
+            payloadsTab.ApplyYaraCapeTypes(self.CapeTypesByFile())
 
     def UpdateYaraButtonState(self):
         if not self.yaraComplete and self.parent.targetFile:

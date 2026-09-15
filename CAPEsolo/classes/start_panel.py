@@ -21,6 +21,11 @@ from CAPEsolo.capelib.path_utils import path_exists
 from CAPEsolo.capelib.resultserver import ResultServer
 from CAPEsolo.capelib.utils import sanitize_filename
 from CAPEsolo.lib.common.hashing import hash_file
+from CAPEsolo.lib.common.zip_utils import (
+    get_file_names,
+    get_interesting_files,
+    get_zip_file_names,
+)
 from CAPEsolo.utils.download_sample import (
     configured_sources,
     desktop_dir,
@@ -82,20 +87,61 @@ SANDBOXPACKAGES = (
     "zip",
 )
 
+# Every action accepted by capemon's ActionDispatcher (CAPE/Trace.c). Names are bare:
+# GetDebuggerOptions appends ":<value>" from the value field for those taking an
+# argument (If, hooks, Jmp, Count, SetDump, DumpSize, SetEax, ...). capemon compares
+# with stricmp/strnicmp, so the casing here is for legibility only.
 DEBUGACTIONS = [
-    "dump",
-    "dumpimage",
-    "jmp",
-    "scan",
-    "skip",
-    "sleep",
-    "setbp0",
-    "setbp1",
-    "setbp2",
-    "setbp3",
-    "setdump",
-    "setdst",
-    "setsrc",
+    "Call",
+    "ClearCarryFlag",
+    "ClearSignFlag",
+    "ClearZeroFlag",
+    "Count",
+    "Dump",
+    "DumpImage",
+    "DumpSize",
+    "DumpStack",
+    "DumpStrings",
+    "Exit",
+    "FlipCarryFlag",
+    "FlipSignFlag",
+    "FlipZeroFlag",
+    "GoTo",
+    "Guard",
+    "hook-watch",
+    "hooks",
+    "If",
+    "Jmp",
+    "Nop",
+    "Pop",
+    "Print",
+    "Push",
+    "Ret",
+    "Scan",
+    "SetBp0",
+    "SetBp1",
+    "SetBp2",
+    "SetBp3",
+    "SetCarryFlag",
+    "SetDst",
+    "SetDump",
+    "SetEax",
+    "SetEbx",
+    "SetEcx",
+    "SetEdi",
+    "SetEdx",
+    "SetEsi",
+    "SetPtr",
+    "SetSignFlag",
+    "SetSrc",
+    "SetZeroFlag",
+    "Skip",
+    "Sleep",
+    "Step2OEP",
+    "Stop",
+    "String",
+    "Unwind",
+    "Wret",
 ]
 
 YARARULE = """
@@ -301,6 +347,7 @@ class StartPanel(scrolled.ScrolledPanel):
         hbox2 = wx.BoxSizer(wx.HORIZONTAL)
         packageLabel = wx.StaticText(self, label="Packages")
         self.packageDropdown = wx.ComboBox(self, style=wx.CB_READONLY)
+        self.packageDropdown.Bind(wx.EVT_COMBOBOX, self.OnPackageSelected)
         self.PackageDropdown()
         self.packageDropdown.SetValue("Auto-detect")
         self.runFromCurrentDirCheckbox = wx.CheckBox(self, label="Run sample from current directory")
@@ -313,6 +360,20 @@ class StartPanel(scrolled.ScrolledPanel):
         hbox2.Add(self.packageDropdown, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=10)
         hbox2.Add(self.runFromCurrentDirCheckbox, flag=wx.ALIGN_CENTER_VERTICAL)
         hbox2.Add(self.manualExecutionCheckbox, flag=wx.ALIGN_CENTER_VERTICAL)
+
+        # Archive member selector: shown only for the archive/zip packages, lets the analyst
+        # pick which file inside the archive to run (writes file=<name> into the Options box).
+        # Hidden until RefreshArchiveFiles reveals it.
+        self.hboxArchive = wx.BoxSizer(wx.HORIZONTAL)
+        self.archiveFilesLabel = wx.StaticText(self, label="Archive file:")
+        self.archiveFilesDropdown = wx.ComboBox(self, style=wx.CB_READONLY)
+        self.archiveFilesDropdown.Bind(wx.EVT_COMBOBOX, self.OnArchiveFileSelected)
+        self.archiveFilesLabel.Hide()
+        self.archiveFilesDropdown.Hide()
+        self.hboxArchive.Add(
+            self.archiveFilesLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10
+        )
+        self.hboxArchive.Add(self.archiveFilesDropdown, proportion=1, flag=wx.EXPAND)
 
         # Optional Arguments Input
         hbox3 = wx.BoxSizer(wx.HORIZONTAL)
@@ -603,6 +664,7 @@ class StartPanel(scrolled.ScrolledPanel):
         vbox.Add(hbox1, flag=wx.EXPAND | wx.ALL, border=10)
         vbox.Add(dlBox, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(hbox2, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+        vbox.Add(self.hboxArchive, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(hbox3, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(hboxHelp, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         vbox.Add(hboxTimeout, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
@@ -683,15 +745,36 @@ class StartPanel(scrolled.ScrolledPanel):
         ]
 
         hbox = wx.BoxSizer(wx.HORIZONTAL)
-        helpList = wx.ComboBox(self, style=wx.CB_READONLY)
+        self.helpList = wx.ComboBox(self, style=wx.CB_READONLY)
+        self.helpList.SetToolTip("Select an option, then right-click to add it to the Options field.")
+        self.helpList.Bind(wx.EVT_CONTEXT_MENU, self.OnOptionsHelpContext)
         helpOptions = sorted(help, key=lambda x: x[0])
         formattedHelp = [f"{name} - {comment}" if comment else name for name, comment in helpOptions]
-        helpList.Append("Options Help")
-        helpList.AppendItems(formattedHelp)
-        helpList.SetSelection(0)
-        hbox.Add(helpList, proportion=1, flag=wx.LEFT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        self.helpList.Append("Options Help")
+        self.helpList.AppendItems(formattedHelp)
+        self.helpList.SetSelection(0)
+        hbox.Add(self.helpList, proportion=1, flag=wx.LEFT | wx.ALIGN_CENTER_VERTICAL, border=5)
 
         return hbox
+
+    def OnOptionsHelpContext(self, event):
+        # Index 0 is the "Options Help" placeholder, not a real option.
+        if self.helpList.GetSelection() <= 0:
+            return
+        menu = wx.Menu()
+        item = menu.Append(wx.ID_ANY, "Add to options")
+        self.Bind(wx.EVT_MENU, self.OnAddHelpOption, item)
+        self.PopupMenu(menu)
+        menu.Destroy()
+
+    def OnAddHelpOption(self, event):
+        # Entries are "name - comment" or just "name"; some list several names comma-separated
+        # (e.g. "typestring, typestring0, ...") - take the first. SetOption writes "name=" ready
+        # for the analyst to type a value; a bare key with no "=" is dropped by get_options.
+        selection = self.helpList.GetStringSelection()
+        name = selection.split(" - ", 1)[0].split(",", 1)[0].strip()
+        if name:
+            self.SetOption(name, "")
 
     def AddDebuggerControls(self, index):
         hboxBp = wx.BoxSizer(wx.HORIZONTAL)
@@ -1050,6 +1133,118 @@ class StartPanel(scrolled.ScrolledPanel):
                 "Error",
                 wx.OK | wx.ICON_ERROR,
             )
+        # A new target may need a fresh member list when archive/zip is already selected.
+        self.RefreshArchiveFiles()
+
+    def OnPackageSelected(self, event):
+        self.RefreshArchiveFiles()
+        event.Skip()
+
+    def FindSevenZip(self):
+        """Locate 7z.exe for listing non-zip archive types, matching where the
+        archive/zip packages expect it (ProgramFiles\\7-Zip). None if unavailable."""
+        candidates = []
+        for env in ("ProgramFiles", "ProgramFiles(x86)"):
+            base = os.environ.get(env)
+            if base:
+                candidates.append(os.path.join(base, "7-Zip", "7z.exe"))
+        candidates.append(shutil.which("7z"))
+        candidates.append(shutil.which("7z.exe"))
+        for path in candidates:
+            if path and os.path.isfile(path):
+                return path
+        return None
+
+    def ListArchiveMembers(self, path):
+        """Return the member paths of the archive at *path*, or [] if it cannot be read.
+
+        Pure-Python zipfile first (zip/msix/jar/apk); falls back to 7z.exe for the broader
+        archive types (7z/iso/vhd/rar/...) the archive package supports.
+        """
+        with wx.BusyCursor():
+            try:
+                return get_zip_file_names(path)
+            except Exception:
+                pass
+            seven = self.FindSevenZip()
+            if seven:
+                try:
+                    return get_file_names(seven, path)
+                except Exception:
+                    log.exception("Failed to list archive members with 7-Zip: %s", path)
+        return []
+
+    def RefreshArchiveFiles(self):
+        """Show and populate the archive member selector for archive/zip packages only."""
+        package = self.packageDropdown.GetValue()
+        target = self.targetPath.GetValue()
+        show = package in ("archive", "zip") and os.path.isfile(target)
+        if show:
+            self.PopulateArchiveFiles(target)
+        else:
+            self.archiveFilesDropdown.Clear()
+            self.archiveFilesLabel.Hide()
+            self.archiveFilesDropdown.Hide()
+        self.Layout()
+        self._UpdateVirtualSize()
+
+    def PopulateArchiveFiles(self, path):
+        members = [
+            name
+            for name in self.ListArchiveMembers(path)
+            if name and not name.endswith("/")
+        ]
+        # Executables first so the likely target is easy to spot; keep the rest after.
+        interesting = get_interesting_files(members)
+        ordered = interesting + [name for name in members if name not in interesting]
+
+        self.archiveFilesDropdown.Clear()
+        if ordered:
+            self.archiveFilesDropdown.Append("<Select file to run>")
+            self.archiveFilesDropdown.AppendItems(ordered)
+        else:
+            self.archiveFilesDropdown.Append("<no files found / 7-Zip not available>")
+            self.GetMainFrame().statusBar.SetMessage(
+                "Could not list archive contents (unsupported type or 7-Zip not installed)."
+            )
+        self.archiveFilesDropdown.SetSelection(0)
+        self.archiveFilesLabel.Show()
+        self.archiveFilesDropdown.Show()
+
+    def OnArchiveFileSelected(self, event):
+        if self.archiveFilesDropdown.GetSelection() <= 0:
+            event.Skip()
+            return
+        member = self.archiveFilesDropdown.GetStringSelection()
+        # The options string is comma-delimited (split by Config.get_options), so a comma in
+        # the member name would corrupt parsing - refuse it rather than write a broken option.
+        if "," in member:
+            self.GetMainFrame().statusBar.SetMessage(
+                "Cannot set file option: archive member name contains a comma."
+            )
+            event.Skip()
+            return
+        self.SetOption("file", member)
+        event.Skip()
+
+    def SetOption(self, key, value):
+        """Upsert key=value into the free-text Options box, preserving any other options."""
+        text = self.optionsCtrl.GetValue().strip()
+        if text == "option1=value, option2=value, etc...":
+            text = ""
+        pairs = []
+        replaced = False
+        for field in (f.strip() for f in text.split(",")):
+            if not field:
+                continue
+            if "=" in field and field.split("=", 1)[0].strip() == key:
+                pairs.append(f"{key}={value}")
+                replaced = True
+            else:
+                pairs.append(field)
+        if not replaced:
+            pairs.append(f"{key}={value}")
+        self.optionsCtrl.SetValue(", ".join(pairs))
 
     def OnBrowseDownloadDir(self, event):
         current = self.downloadPathInput.GetValue().strip()

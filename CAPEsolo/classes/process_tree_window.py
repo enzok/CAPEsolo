@@ -19,6 +19,9 @@ log = logging.getLogger(__name__)
 
 REFRESH_MS = 1500
 EXITED_COLOUR = wx.Colour(140, 140, 140)
+WINDOW_SIZE = wx.Size(520, 640)
+# Gap left between the window and the edges of the screen it is parked against.
+SCREEN_MARGIN = 12
 
 # The ResultServer's process line as written to analysis.log (resultserver.py:625):
 #   "Process <pid> (parent <ppid>): <name>, path <module_path>"
@@ -79,8 +82,33 @@ class ProcessTreeWindow(wx.Frame):
         vbox.Add(self.tree, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
         panel.SetSizer(vbox)
         apply_theme(self)
-        self.SetSize(wx.Size(520, 640))
-        self.SetPosition(wx.Point(position.x + 40, position.y + 40))
+        self.SetSize(WINDOW_SIZE)
+        self.SetPosition(self.StartPosition(position))
+
+    def StartPosition(self, mainPosition: wx.Point) -> wx.Point:
+        """Bottom right of the work area belonging to the display the main window is on.
+
+        This used to open at the main window's position offset by (40, 40), which dropped a
+        520x640 frame squarely on top of the analysis tabs. Nor is there a gap beside the main
+        frame to use: LoggerWindow is created just before this one and takes the full width to
+        its right, so the bottom right corner is the nearest clear space.
+
+        Measured against GetClientArea rather than DisplaySize so the taskbar is excluded, and
+        against the display under the main window rather than the primary one, so the tree
+        follows the main window instead of jumping to another monitor.
+        """
+        index = wx.Display.GetFromPoint(mainPosition)
+        if index == wx.NOT_FOUND:
+            index = 0
+
+        area = wx.Display(index).GetClientArea()
+        width, height = self.GetSize()
+        # max() keeps the window on-screen if it is larger than the work area, where the
+        # subtraction would otherwise place its top left corner off the top or left edge.
+        return wx.Point(
+            area.x + max(0, area.width - width - SCREEN_MARGIN),
+            area.y + max(0, area.height - height - SCREEN_MARGIN),
+        )
 
     # --- data ---------------------------------------------------------------
     def _analyzer(self):

@@ -9,15 +9,12 @@ from pathlib import Path
 import wx
 import wx.grid as gridlib
 
+from CAPEsolo.capelib.cape_utils import PARSER_EXTRACTED
 from CAPEsolo.capelib.path_utils import path_exists, path_mkdir
 
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
-
-# Host-side only: a file handed back by a config parser via "dump_files". Deliberately
-# outside the monitor's range so it can't collide with a code in cape\cape.h.
-PARSER_EXTRACTED = 0x10000
 
 # A payload is named by its sha256 and a config value can be a long list, so autosizing
 # either column alone can take the whole width and push the rest of the row off screen.
@@ -63,7 +60,10 @@ def DumpParserFiles(cfg, analysisDir, newPayloads):
                     "filepath": "",
                     "pids": [],
                     "ppids": [],
-                    "metadata": f"{PARSER_EXTRACTED};?;?;?",
+                    # No ";?" fields: they carry the process and module that produced a
+                    # monitor dump, and a host-side parser dump has neither. Emitting them
+                    # empty put blank process_path/module_path on the payload.
+                    "metadata": f"{PARSER_EXTRACTED}",
                     "category": "CAPE",
                 }
                 # Append-writes are atomic
@@ -133,7 +133,7 @@ def FormatValue(value):
     return str(value)
 
 
-def Extract(configHits, analysisDir, jsonResults=False, newPayloads=None):
+def Extract(configHits, analysisDir, jsonResults=False, newPayloads=None, seen=None):
     """Run the config parser for every CAPE name yara matched.
 
     Returns the list of {path: config} the JSON report expects when *jsonResults* is set,
@@ -144,10 +144,24 @@ def Extract(configHits, analysisDir, jsonResults=False, newPayloads=None):
     configs = []
     if newPayloads is None:
         newPayloads = []
+    if seen is None:
+        seen = set()
     CAPE_PARSERS = ("core", "community")
     customParsers = os.path.join(os.path.expanduser("~"), "Desktop", "custom")
 
+    # The same file+family reaches configHits from more than one place (the Yara and Payloads
+    # tabs both append {file: capename}), which would otherwise run the same parser twice and
+    # duplicate its rows. Keep the first occurrence of each (path, family).
+    uniqueHits = []
     for hit in configHits:
+        hitPath = list(hit.keys())[0]
+        key = (str(hitPath), hit.get(hitPath, ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        uniqueHits.append(hit)
+
+    for hit in uniqueHits:
         decoderModule = ""
         hitPath = list(hit.keys())[0]
         hitName = hit.get(hitPath, "")
@@ -291,14 +305,27 @@ class ConfigsPanel(wx.Panel, KeyEventHandlerMixin):
         apply_theme(self)
 
     def ExtractConfigs(self, event):
-        newPayloads = []
-        entries = Extract(self.configHits, self.analysisDir, newPayloads=newPayloads)
+        entries = []
+        # Persists across rounds so a hit parsed in an earlier round is not parsed again.
+        processed = set()
+        pending = list(self.configHits)
+        # A dumped payload can itself yield a config that dumps more files. Terminates
+        # because the writes are content addressed -- DumpParserFiles skips an existing
+        # blob and never re-queues it -- and *processed* bounds the parser runs.
+        while pending:
+            newPayloads = []
+            entries += Extract(pending, self.analysisDir, newPayloads=newPayloads, seen=processed)
+            if not newPayloads:
+                break
+            mark = len(self.configHits)
+            # Yara scans each new payload and appends its CAPE names to self.configHits.
+            self.UpdatePayloadPanels(newPayloads)
+            pending = self.configHits[mark:]
+
         # Shown before the rows go in, so the Layout that AddTableData ends with is the one
         # that sizes it, matching SignaturesPanel.
         self.grid.Show()
         self.AddTableData(entries)
-        if newPayloads:
-            self.UpdatePayloadPanels(newPayloads)
         self.configsButton.Disable()
         self.configsComplete = True
 
@@ -309,39 +336,58 @@ class ConfigsPanel(wx.Panel, KeyEventHandlerMixin):
             self.grid.DeleteRows(0, rows)
 
     def AddTableData(self, entries):
-        """Rebuild the grid, one row per config field.
+        """Rebuild the grid, grouped by file, one row per config field.
 
         Extraction can be re-run while the tab is open, so this replaces the previous rows
-        rather than appending to them.
+        rather than appending to them. Rows for a file are kept contiguous and the File and
+        Family cells are shown only when they change, so each file (and each family within it)
+        is named once at the top of its run instead of repeated down every field row.
         """
-        self.rows = []
+        # Collate rows by file, preserving the order each file was first seen, so every row for a
+        # file is contiguous even if its hits were interleaved in the entry list.
+        order, byfile = [], {}
         for entry in entries:
-            if "error" in entry:
-                self.rows.append(
-                    {
-                        "path": entry["path"],
-                        "family": entry["family"],
-                        "field": "",
-                        "value": entry["error"],
-                    }
-                )
-                continue
+            path = entry["path"]
+            if path not in byfile:
+                byfile[path] = []
+                order.append(path)
+            byfile[path].append(entry)
 
-            for field, value in entry["fields"]:
-                self.rows.append(
-                    {
-                        "path": entry["path"],
-                        "family": entry["family"],
-                        "field": field,
-                        "value": value,
-                    }
-                )
+        self.rows = []
+        for path in order:
+            for entry in byfile[path]:
+                if "error" in entry:
+                    self.rows.append(
+                        {
+                            "path": path,
+                            "family": entry["family"],
+                            "field": "",
+                            "value": entry["error"],
+                        }
+                    )
+                    continue
+
+                for field, value in entry["fields"]:
+                    self.rows.append(
+                        {
+                            "path": path,
+                            "family": entry["family"],
+                            "field": field,
+                            "value": value,
+                        }
+                    )
 
         self.ClearGrid()
+        prevPath = prevFamily = None
         for row, data in enumerate(self.rows):
             self.grid.AppendRows(1)
-            self.grid.SetCellValue(row, 0, data["path"])
-            self.grid.SetCellValue(row, 1, data["family"])
+            if data["path"] != prevPath:
+                self.grid.SetCellValue(row, 0, data["path"])
+                self.grid.SetCellValue(row, 1, data["family"])
+                prevPath, prevFamily = data["path"], data["family"]
+            elif data["family"] != prevFamily:
+                self.grid.SetCellValue(row, 1, data["family"])
+                prevFamily = data["family"]
             self.grid.SetCellValue(row, 2, data["field"])
             # A config value is arbitrary data lifted out of a binary. A NUL terminates the
             # native cell, dropping the rest of the value with no error anywhere.
@@ -411,7 +457,8 @@ class ConfigsPanel(wx.Panel, KeyEventHandlerMixin):
 
         Both tabs load once and have already run by the time configs can be extracted, so
         they are updated in place rather than reloaded. Any CAPE name the new yara hits
-        produce is appended to configHits, so re-running the extraction picks it up.
+        produce is appended to configHits, which the ExtractConfigs drain then parses in
+        its next round.
         """
         frame = self.GetMainFrame()
         payloadsTab = getattr(frame, "payloadsTab", None)

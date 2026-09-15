@@ -43,9 +43,10 @@ strings:
         $resolver_loadlibrary = {E8 0D 00 00 00 4C 6F 61 64 4C 69 62 72 61 72 79 41 00 [1-10] 41 FF 97 ?? ?? ?? 00}
         $call_decoded_buffer = {49 8D 4D 10 49 8D 87 ?? ?? ?? 00 [0-30] FF (D0 | E0)}
         $alloc = {4? 83 EC ?? [2-12] 4? C7 ?? [4] 4? C7 C0 40 00 00 00 4? 8D ?? 24}
-
+        $resolver_loadlibrary_v2 = {E8 0D 00 00 00 4C 6F 61 64 4C 69 62 72 61 72 79 41 00 [1-20] 41 FF 97 ?? ?? ?? 00}
+        $alloc_v2  = {49 8D ?? ?? ?? ?? ?? 48 83 EC 30 [0-8] 48 C7 C2 ?? ?? ?? ?? [0-40] 49 C7 C0 40 00 00 00 [0-4] 4? 8D 4? 24}
     condition:
-        uint16(0) == 0x5A4D and all of them
+        uint16(0) == 0x5A4D and 2 of them
 }
 
 rule AxolotlLoaderShellCode
