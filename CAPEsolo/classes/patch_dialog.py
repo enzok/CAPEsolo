@@ -5,6 +5,7 @@ import wx
 from CAPEsolo.capelib.cmdconsts import CMD_PATCH_BYTES
 
 from .patch_models import PatchEntry
+from .theme import apply_theme
 
 
 class PatchDialog(wx.Dialog):
@@ -19,6 +20,7 @@ class PatchDialog(wx.Dialog):
         vbox.Add(hbox, 0, wx.ALIGN_CENTER|wx.ALL, 5)
         self.textCtrl.SetValue(instrStr)
         self.SetSizer(vbox)
+        apply_theme(self)
 
     def GetAsmText(self) -> str:
         return self.textCtrl.GetValue()
@@ -40,6 +42,7 @@ class ConfirmPatchDialog(wx.Dialog):
         btnBox.Add(wx.Button(self, wx.ID_CANCEL, label="Cancel"), 0)
         vbox.Add(btnBox, 0, wx.ALIGN_CENTER | wx.ALL, 5)
         self.SetSizer(vbox)
+        apply_theme(self)
 
 
 class PatchHistoryDialog(wx.Dialog):
@@ -75,6 +78,7 @@ class PatchHistoryDialog(wx.Dialog):
         btn.Bind(wx.EVT_BUTTON, lambda evt: self.Close())
         self.historyCtrl.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
         self.Bind(wx.EVT_BUTTON, lambda evt: self.Close(), id=wx.ID_CLOSE)
+        apply_theme(self)
 
     def OnContextMenu(self, event):
         pos = event.GetPosition()

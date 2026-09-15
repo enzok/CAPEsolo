@@ -2,7 +2,7 @@ import re
 
 import wx
 
-from .theme import BG_INPUT, BG_SELECT, FG_PRIMARY, FG_RED_ALERT
+from .theme import BG_INPUT, BG_SELECT, FG_PRIMARY, FG_RED_ALERT, apply_theme
 
 
 class SearchDialog(wx.Dialog):
@@ -86,6 +86,7 @@ class SearchDialog(wx.Dialog):
 
         self.SetSizer(sizer)
         self.Fit()
+        apply_theme(self)
 
     def OnFind(self, event):
         self.FindText()
