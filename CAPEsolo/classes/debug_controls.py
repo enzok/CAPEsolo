@@ -9,6 +9,7 @@ from pathlib import Path
 import wx
 
 from CAPEsolo.capelib.cmdconsts import *
+from CAPEsolo.capelib.page_cache import CommonPrefixLength, FindRegion
 
 from .patch_dialog import ConfirmPatchDialog, PatchDialog, PatchHistoryDialog
 from .patch_models import PatchEntry
@@ -24,6 +25,12 @@ from .theme import (
 
 log = logging.getLogger(__name__)
 
+# Mirrors debug_console.TAG_DUMP; importing it would be circular.
+TAG_DUMP = "DUMP"
+# Breakpoint types as sent to capemon, and how they read in the Breakpoints pane.
+BP_EXEC, BP_WRITE, BP_READWRITE = "x", "w", "rw"
+BP_TYPE_LABELS = {BP_EXEC: "exec", BP_WRITE: "write", BP_READWRITE: "r/w"}
+BP_SIZES = (1, 2, 4, 8)
 COLOR_LIGHT_YELLOW = ACCENT_ORANGE
 COLOR_LIGHT_RED = ACCENT_ERROR
 MAX_IDLE = 1
@@ -67,9 +74,11 @@ def GetClipboardText():
 
 
 class DisassemblyListCtrl(wx.ListCtrl):
-    def __init__(self, parent):
+    def __init__(self, parent, console=None):
         super().__init__(parent, style=wx.LC_REPORT)
-        self.parent = parent
+        # `console` separates the wx parent from the ConsolePanel these controls call
+        # back into: with the splitter layout the wx parent is a splitter pane.
+        self.parent = console or parent
         self.lastTipRow = None
         self.InsertColumn(0, "Address", width=150)
         self.InsertColumn(1, "Hex bytes", width=180)
@@ -79,8 +88,14 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.cacheLock = threading.Lock()
         self.backHistory: list[int] = []
         self.resolveAllRefsStatus = True
+        self.fontItalic = wx.Font(10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL)
+        # Rows are rebuilt on every break, which drops their colours, so breakpoint addresses
+        # are kept here and re-applied. cipRow is the one row holding the CIP highlight.
+        self.bpAddrs: set[int] = set()
+        self.cipRow = None
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
         self.Bind(wx.EVT_MOTION, self.OnOperandHover)
+        self.Bind(wx.EVT_KEY_DOWN, self.OnKeyDown)
 
     def LoadPageMap(self, data: str):
         if not data:
@@ -104,53 +119,56 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.pageMap.sort(key=lambda x: x[0])
 
     def FindPage(self, addr: int) -> tuple[int, int, int] | None:
-        for base, size, prot in self.pageMap:
-            if base <= addr < base + size:
-                return base, size, prot
+        return FindRegion(self.pageMap, addr)
 
-        # log.warning("[DEBUG CONSOLE] Address: 0x%x not in page map, fetching update page map", addr)
-        return None
+    def SetInstructions(self, insts: list[DecodedInstruction]):
+        """Render `insts`, reusing every row the new stream shares with the old one.
 
-    def SetInstructions(self, insts: list[DecodedInstruction], append: bool = False):
-        fontItalic = wx.Font(10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL)
+        A single step normally decodes the same instructions split at a different CIP, so the
+        shared prefix is the whole list and no row is touched at all. The previous version
+        called DeleteAllItems and re-inserted every row on every break.
+        """
         self.Freeze()
         try:
             with self.cacheLock:
-                if not append:
-                    self.decodeCache = []
-                    self.DeleteAllItems()
+                firstChanged = CommonPrefixLength(self.decodeCache, insts)
+                self.decodeCache = list(insts)
+                for row in range(self.GetItemCount() - 1, firstChanged - 1, -1):
+                    self.DeleteItem(row)
 
-                startRow = len(self.decodeCache)
-                self.decodeCache.extend(insts)
-                for offset, inst in enumerate(insts):
-                    row = startRow + offset
-                    row = self.InsertItem(row, f"{inst.address:016X}")
-                    self.SetItem(row, 1, inst.bytes.upper())
-                    self.SetItem(row, 2, inst.text)
-                    mnemonic = inst.text.split()[0].lower()
-                    if mnemonic == "call":
-                        self.SetItemTextColour(row, ACCENT_CALL)
-                    elif mnemonic in ("jmp", "je", "jne", "jg", "jl"):
-                        self.SetItemTextColour(row, ACCENT_JUMP)
+                if self.cipRow is not None and self.cipRow >= firstChanged:
+                    self.cipRow = None
 
-                    if inst.address in self.parent.patchHistoryByAddr:
-                        self.SetItemFont(row, fontItalic)
-
+                for row in range(firstChanged, len(self.decodeCache)):
+                    self._InsertRow(row, self.decodeCache[row])
         finally:
             self.Thaw()
 
         self.Refresh()
-        if not append:
-            cipRow = self.GetCipRow()
-            if cipRow != -1:
-                self.HighlightCip(cipRow)
+        self.HighlightCip(self.GetCipRow())
+
+    def _InsertRow(self, row: int, inst: DecodedInstruction):
+        row = self.InsertItem(row, f"{inst.address:016X}")
+        self.SetItem(row, 1, inst.bytes.upper())
+        self.SetItem(row, 2, inst.text)
+        mnemonic = inst.text.split()[0].lower()
+        if mnemonic == "call":
+            self.SetItemTextColour(row, ACCENT_CALL)
+        elif mnemonic in ("jmp", "je", "jne", "jg", "jl"):
+            self.SetItemTextColour(row, ACCENT_JUMP)
+
+        if inst.address in self.parent.patchHistoryByAddr:
+            self.SetItemFont(row, self.fontItalic)
+
+        if inst.address in self.bpAddrs:
+            self.SetItemBackgroundColour(row, COLOR_LIGHT_RED)
 
     def GetCipRow(self, cip=None):
         row = -1
-        if not cip:
+        if cip is None:
             cip = self.parent.cip
         if cip is None:
-            return
+            return row
 
         with self.cacheLock:
             for i, inst in enumerate(self.decodeCache):
@@ -170,40 +188,48 @@ class DisassemblyListCtrl(wx.ListCtrl):
         return row
 
     def ClearHighlight(self):
-        for i in range(self.GetItemCount()):
-            if self.GetItemBackgroundColour(i) != COLOR_LIGHT_RED:
-                self.SetItemBackgroundColour(i, BG_INPUT)
+        """Repaint only the previously highlighted row; the rest were never recoloured."""
+        if self.cipRow is None:
+            return
+
+        if 0 <= self.cipRow < self.GetItemCount():
+            with self.cacheLock:
+                inst = self.decodeCache[self.cipRow] if self.cipRow < len(self.decodeCache) else None
+
+            bp = inst is not None and inst.address in self.bpAddrs
+            self.SetItemBackgroundColour(self.cipRow, COLOR_LIGHT_RED if bp else BG_INPUT)
+
+        self.cipRow = None
 
     def HighlightCip(self, row):
-        if row >= 0:
-            self.ClearHighlight()
-            self.SetItemBackgroundColour(row, ACCENT_GREEN)
-            self.CenterRow(row)
-        else:
-            log.warning("[DEBUG CONSOLE] Instruction %#x not found in disassembly", self.parent.cip)
+        self.ClearHighlight()
+        if row < 0:
+            cip = self.parent.cip
+            log.warning("[DEBUG CONSOLE] Instruction %s not found in disassembly", f"{cip:#x}" if cip else "(unknown)")
+            self.Refresh()
+            return
 
+        self.cipRow = row
+        self.SetItemBackgroundColour(row, ACCENT_GREEN)
+        self.CenterRow(row)
         self.Refresh()
 
     def CenterRow(self, row):
-        """Center the specified row in the view."""
+        """Center the specified row in the view with a single scroll."""
+        count = self.GetItemCount()
+        if row < 0 or count == 0:
+            return
+
         visRows = self.GetCountPerPage()
         if visRows <= 0:
-            rowH = 15
-            rect = self.GetItemRect(0, wx.LIST_RECT_BOUNDS)
-            rowH = rect.height if rect and rect.height > 0 else rowH
-            clientH = self.GetClientSize().height
-            visRows = clientH // rowH
+            self.EnsureVisible(row)
+            return
 
-        visRows = min(visRows, len(self.decodeCache))
-        if visRows <= 0:
-            visRows = 15
-
-        anchor = max(0, row + (visRows // 2))
-        maxTop = max(0, len(self.decodeCache) - visRows)
-        anchor = min(anchor, maxTop)
-
-        self.EnsureVisible(row)
-        self.EnsureVisible(anchor)
+        # Two EnsureVisible calls scroll twice, which shows as a jump on every step.
+        target = max(0, min(row - visRows // 2, count - visRows))
+        self.ScrollLines(target - self.GetTopItem())
+        if not self.IsVisible(row):
+            self.EnsureVisible(row)
 
     def TopRow(self, row):
         """Scroll the specified row so it becomes the topmost visible row."""
@@ -222,6 +248,26 @@ class DisassemblyListCtrl(wx.ListCtrl):
         row = row + visRows - 1
         if row < self.GetItemCount():
             self.EnsureVisible(row)
+
+    def OnKeyDown(self, event):
+        """Spacebar patches the selected instruction.
+
+        This was a frame-wide accelerator, so it fired wherever the focus was - pressing
+        Space after clicking a step button opened the patch dialog instead of stepping.
+        """
+        if event.ControlDown() and event.GetKeyCode() == ord("C"):
+            self.OnCopy(event)
+            return
+
+        if event.GetKeyCode() != wx.WXK_SPACE:
+            event.Skip()
+            return
+
+        row = self.GetNextItem(-1, wx.LIST_NEXT_ALL, wx.LIST_STATE_SELECTED)
+        if row == -1:
+            return
+
+        self.OnPatchBytes(row)
 
     def OnContextMenu(self, event):
         pos = event.GetPosition()
@@ -262,6 +308,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
             self.Bind(wx.EVT_MENU, lambda e, s=slot: self.OnSetBreakpoint(row, s), id=bpId)
 
         menu.AppendSubMenu(bpMenu, "Set Breakpoint")
+        miDataBp = menu.Append(wx.ID_ANY, "Set Data Breakpoint...")
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnDataBreakpoint(r), miDataBp)
 
         self.Bind(wx.EVT_MENU, self.OnCopy, miCopy)
         self.Bind(wx.EVT_MENU, self.OnGoTo, miGoTo)
@@ -270,11 +318,11 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.Bind(wx.EVT_MENU, lambda e: self.OnNopInstruction(row), miNopInstruction)
         self.Bind(wx.EVT_MENU, lambda e: self.OnPatchBytes(row), miPatchBytes)
         self.Bind(wx.EVT_MENU, self.OnPatchHistory, miPatchHistory)
-        self.Bind(wx.EVT_MENU, self.OnDumpAddress, miDumpAddress)
-        self.Bind(wx.EVT_MENU, self.OnResolveAddress, miResolveAddress)
-        self.Bind(wx.EVT_MENU, self.OnResolveRef, miResolveRef)
-        self.Bind(wx.EVT_MENU, self.OnStringAddress, miStringAddress)
-        self.Bind(wx.EVT_MENU, self.OnStringRef, miStringRef)
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnDumpAddress(r), miDumpAddress)
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnResolveAddress(r), miResolveAddress)
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnResolveRef(r), miResolveRef)
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnStringAddress(r), miStringAddress)
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnStringRef(r), miStringRef)
         self.Bind(wx.EVT_MENU, self.OnStepInto, miStepInto)
         self.Bind(wx.EVT_MENU, self.OnStepOver, miStepOver)
         self.Bind(wx.EVT_MENU, self.OnStepOut, miStepOut)
@@ -385,21 +433,32 @@ class DisassemblyListCtrl(wx.ListCtrl):
         except ValueError:
             wx.MessageBox(f"Invalid address for Set Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
+    def OnDataBreakpoint(self, row):
+        """Prefill with the address the instruction references, else its own address."""
+        addr = self.OperandAddressAt(row)
+        if addr is None:
+            addr = self.GetItemText(row, 0).strip()
+
+        self.parent.PromptBreakpoint(addr)
+
     def ClearBpBackground(self, addr):
+        self.bpAddrs.discard(addr)
         row = self.GetInstructionRow(addr)
         if row == wx.NOT_FOUND:
             return
 
-        self.SetItemBackgroundColour(row, BG_INPUT)
+        self.SetItemBackgroundColour(row, ACCENT_GREEN if row == self.cipRow else BG_INPUT)
         self.Refresh()
 
     def SetBpBackground(self, addr):
+        self.bpAddrs.add(addr)
         row = self.GetInstructionRow(addr)
         if row == wx.NOT_FOUND:
             return
 
-        self.SetItemBackgroundColour(row, COLOR_LIGHT_RED)
-        self.Refresh()
+        if row != self.cipRow:
+            self.SetItemBackgroundColour(row, COLOR_LIGHT_RED)
+            self.Refresh()
 
     def GoToInstruction(self, addr):
         addr = int(addr, 16)
@@ -484,12 +543,14 @@ class DisassemblyListCtrl(wx.ListCtrl):
                 addr += regVals[seg]
             return addr
 
-        m2 = re.search(r"\b0x[0-9A-Fa-f]{8,16}\b", inst)
-        if m2:
-            try:
-                return self.SafeEval(m2.group(0))
-            except ValueError:
-                return None
+        # Accept any 0x literal that is plausibly an address, rather than counting digits.
+        # The old bound was {8,16}, so a 32-bit target based at 0x400000 - where a direct call
+        # disassembles as `CALL 0x401000`, six digits - resolved no operands at all.
+        # IsValidHexAddress is the project's own notion of plausible, and still rejects the
+        # small immediates the digit count was there to exclude.
+        for match in re.finditer(r"\b0x[0-9A-Fa-f]+\b", inst):
+            if IsValidHexAddress(match.group(0)):
+                return int(match.group(0), 16)
 
         return None
 
@@ -516,9 +577,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
             self.lastTipRow = None
             return event.Skip()
 
-        addrStr = f"{addr:#x}"
-        self.SetToolTip(f"{addrStr} copied.")
-        SetClipboard(addrStr)
+        # Tooltip only: hover used to overwrite the clipboard on every row change.
+        self.SetToolTip(f"{addr:#x}")
         self.lastTipRow = row
         return event.Skip()
 
@@ -532,61 +592,92 @@ class DisassemblyListCtrl(wx.ListCtrl):
         else:
             addr = self.parent.cip
 
+        if addr is None:
+            return
+
         row = self.GetInstructionRow(addr)
         if row != -1:
             self.HighlightCip(row)
-        else:
-            wx.MessageBox(f"Address {addr:#x} not in history.", "Info", wx.OK | wx.ICON_INFORMATION)
+            return
 
-    def OnDumpAddress(self, event):
-        sel = GetClipboardText().strip()
-        if sel and IsValidHexAddress(sel):
-            self.parent.SendCommand(CMD_MEM_DUMP, sel)
+        # History addresses are pinned against eviction, so this only happens when the region
+        # itself was flushed (module unload, fault, page map change). Re-fetching here would
+        # mean calling JumpTo, which sets self.cip and would highlight this address as the
+        # current instruction when it is not.
+        wx.MessageBox(f"Address {addr:#x} is no longer mapped.", "Info", wx.OK | wx.ICON_INFORMATION)
 
-    def OnResolveAddress(self, event):
-        addrStr = GetClipboardText().strip()
+    def OperandAddressAt(self, row: int) -> int | None:
+        """The address the instruction on `row` references, or None if it references none.
+
+        These actions used to take their operand from the clipboard, which hover happened to
+        fill in. That made the clipboard a load-bearing data channel: copying anything else
+        between hovering and right-clicking silently redirected the action, and OnResolveRef
+        additionally used the last *hovered* row rather than the one you clicked.
+        """
+        if row < 0 or row >= self.GetItemCount():
+            return None
+
         try:
-            addrInt = int(addrStr, 16)
+            instLen = len(self.GetItemText(row, 1)) // 2
+            ripBase = int(self.GetItemText(row, 0), 16) + instLen
+        except ValueError:
+            return None
+
+        return self.ParseOperandAddress(self.GetItemText(row, 2), ripBase)
+
+    def OnDumpAddress(self, row):
+        addr = self.OperandAddressAt(row)
+        if addr is None:
+            self.parent.AppendConsole("No address operand on this instruction.")
+            return
+
+        self.parent.SendCommand(CMD_MEM_DUMP, f"{addr:#x}", tag=self.parent.NextTag(TAG_DUMP))
+
+    def OnResolveAddress(self, row):
+        addr = self.OperandAddressAt(row)
+        if addr is None:
+            self.parent.AppendConsole("No address operand on this instruction.")
+            return
+
+        export = self.parent.exports.get(addr)
+        self.parent.AppendConsole(export or f"No export known at {addr:#x}")
+
+    def OnResolveRef(self, row):
+        target = self.OperandAddressAt(row)
+        if target is None:
+            self.parent.AppendConsole("No address operand on this instruction.")
+            return
+
+        try:
+            instAddr = int(self.GetItemText(row, 0), 16)
         except ValueError:
             return
 
-        export = self.parent.exports.get(addrInt)
-        self.parent.AppendConsole(export)
-
-    def OnResolveRef(self, event):
-        targetAddrStr = GetClipboardText().strip()
-        try:
-            targetAddrInt = int(targetAddrStr, 16)
-            addrStr = self.GetItemText(self.lastTipRow, 0)
-            addrInt = int(addrStr, 16)
-        except ValueError:
-            return
-        if addrInt not in self.parent.resolvedExports:
-            self.parent.resolvedExports[addrInt] = {targetAddrInt: ""}
-            self.parent.ResolveRef(targetAddrStr)
+        if instAddr not in self.parent.resolvedExports:
+            self.parent.resolvedExports[instAddr] = {target: ""}
+            self.parent.ResolveRef(target)
 
     def OnResolveAllRefs(self, event):
         self.resolveAllRefsStatus = False
-        self.parent.DereferenceCalls()
+        self.parent.DeReferenceCalls()
 
-    def OnStringAddress(self, event):
-        addrStr = GetClipboardText().strip()
-        try:
-            addrInt = int(addrStr, 16)
-        except ValueError:
+    def OnStringAddress(self, row):
+        addr = self.OperandAddressAt(row)
+        if addr is None:
+            self.parent.AppendConsole("No address operand on this instruction.")
             return
 
-        string = self.parent.resolvedStrings.get(addrInt)
-        self.parent.AppendConsole(string)
+        string = self.parent.resolvedStrings.get(addr)
+        self.parent.AppendConsole(string or f"No string resolved at {addr:#x}")
 
-    def OnStringRef(self, event):
-        addrStr = GetClipboardText().strip()
-        try:
-            addrInt = int(addrStr, 16)
-        except ValueError:
+    def OnStringRef(self, row):
+        addr = self.OperandAddressAt(row)
+        if addr is None:
+            self.parent.AppendConsole("No address operand on this instruction.")
             return
-        if addrInt not in self.parent.resolvedStrings:
-            self.parent.ResolveString(addrStr)
+
+        if addr not in self.parent.resolvedStrings:
+            self.parent.ResolveString(addr)
 
     def OnNopInstruction(self, row):
         addrStr = self.GetItemText(row, 0)
@@ -647,16 +738,19 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
 
 class RegsTextCtrl(wx.TextCtrl):
-    def __init__(self, parent, style):
+    def __init__(self, parent, style, console=None):
         """TextCtrl subclass"""
         super().__init__(parent, style=style)
-        self.parent = parent
+        # `console` separates the wx parent from the ConsolePanel these controls call
+        # back into: with the splitter layout the wx parent is a splitter pane.
+        self.parent = console or parent
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
 
     def OnContextMenu(self, event):
         menu = wx.Menu()
         miCopy = menu.Append(wx.ID_ANY, "Copy")
         miDumpAddress = menu.Append(wx.ID_ANY, "Dump Memory Address")
+        miDataBp = menu.Append(wx.ID_ANY, "Set Data Breakpoint...")
         miFollowAddress = menu.Append(wx.ID_ANY, "Follow Address")
         miExportAddress = menu.Append(wx.ID_ANY, "Resolve Export Name From Address")
         miExportDeref = menu.Append(wx.ID_ANY, "Resolve Export Name From Dereference")
@@ -674,6 +768,7 @@ class RegsTextCtrl(wx.TextCtrl):
         miFlipCarryFlag = menu.Append(wx.ID_ANY, "Flip Carry Flag")
 
         self.Bind(wx.EVT_MENU, self.OnDumpAddress, miDumpAddress)
+        self.Bind(wx.EVT_MENU, lambda e: self.parent.PromptBreakpoint(self.GetStringSelection().strip()), miDataBp)
         self.Bind(wx.EVT_MENU, self.OnFollowAddress, miFollowAddress)
         self.Bind(wx.EVT_MENU, self.OnResolveAddress, miExportAddress)
         self.Bind(wx.EVT_MENU, self.OnResolveRef, miExportDeref)
@@ -787,9 +882,11 @@ class RegsTextCtrl(wx.TextCtrl):
 
 
 class StackListCtrl(wx.ListCtrl):
-    def __init__(self, parent):
+    def __init__(self, parent, console=None):
         super().__init__(parent, style=wx.LC_REPORT)
-        self.parent = parent
+        # `console` separates the wx parent from the ConsolePanel these controls call
+        # back into: with the splitter layout the wx parent is a splitter pane.
+        self.parent = console or parent
         self.spVal = None
         self.InsertColumn(0, "Address", width=170)
         self.InsertColumn(1, "Value", width=170)
@@ -955,9 +1052,11 @@ class StackListCtrl(wx.ListCtrl):
 
 
 class MemDumpListCtrl(wx.ListCtrl):
-    def __init__(self, parent):
+    def __init__(self, parent, console=None):
         super().__init__(parent, style=wx.LC_REPORT)
-        self.parent = parent
+        # `console` separates the wx parent from the ConsolePanel these controls call
+        # back into: with the splitter layout the wx parent is a splitter pane.
+        self.parent = console or parent
         self.InsertColumn(0, "Address", width=170)
         self.InsertColumn(1, "Hex Dump", width=400)
         self.InsertColumn(2, "Ascii", width=150)
@@ -1003,11 +1102,16 @@ class MemDumpListCtrl(wx.ListCtrl):
     def OnContextMenu(self, event):
         pos = event.GetPosition()
         pos = self.ScreenToClient(pos)
+        row, _ = self.HitTest(pos)
         menu = wx.Menu()
         miCopy = menu.Append(wx.ID_ANY, "Copy")
         miSaveToFile = menu.Append(wx.ID_ANY, "Save Memory To File...")
         self.Bind(wx.EVT_MENU, self.OnCopy, miCopy)
         self.Bind(wx.EVT_MENU, self.OnSaveMemoryToFile, miSaveToFile)
+        if row != wx.NOT_FOUND and row < len(self.data):
+            menu.AppendSeparator()
+            miDataBp = menu.Append(wx.ID_ANY, "Set Data Breakpoint...")
+            self.Bind(wx.EVT_MENU, lambda e, r=row: self.parent.PromptBreakpoint(self.data[r][0]), miDataBp)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
@@ -1171,6 +1275,7 @@ class ThreadListCtrl(wx.ListCtrl):
         self.InsertColumn(1, "Start Address", width=160)
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
         self.Bind(wx.EVT_MOTION, self.OnMouseOver)
+        self.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.OnActivated)
 
     def UpdateData(self, threadEntries: list[tuple[str, str]]):
         """Populate the list with thread info: (tid, start address)."""
@@ -1194,8 +1299,23 @@ class ThreadListCtrl(wx.ListCtrl):
         menu = wx.Menu()
         miFollowStartAddress = menu.Append(wx.ID_ANY, "Follow Start Address")
         self.Bind(wx.EVT_MENU, lambda e: self.OnFollowStartAddress(row), miFollowStartAddress)
+        miInspect = menu.Append(wx.ID_ANY, "Inspect Thread" if row else "Return To Halted Thread")
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnInspectThread(r), miInspect)
         self.PopupMenu(menu, pos)
         menu.Destroy()
+
+    def OnActivated(self, event):
+        self.OnInspectThread(event.GetIndex())
+
+    def OnInspectThread(self, row):
+        """Row 0 is the halted thread - HandleThreads always sorts it first."""
+        if row == 0:
+            self.parent.ReturnToHaltedThread()
+            return
+
+        tid = self.GetItemText(row, 0).strip()
+        if tid:
+            self.parent.InspectThread(tid)
 
     def OnFollowStartAddress(self, row):
         addrStr = self.GetItemText(row, 1).strip()
@@ -1227,43 +1347,42 @@ class BreakpointsListCtrl(wx.ListCtrl):
     def __init__(self, parent):
         super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
         self.parent = parent
-        self.data: list[tuple[str, str]] = []
         self.InsertColumn(0, "DR", width=40)
         self.InsertColumn(1, "Address", width=160)
+        self.InsertColumn(2, "Type", width=50)
+        self.InsertColumn(3, "Size", width=45)
         self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
 
-    def UpdateData(self, bps: list[tuple[str, str]]):
-        """Populate the list with thread info: (dr, address)."""
+    def UpdateData(self, bps: list[tuple[str, str, str, str]]):
+        """Populate the list with (dr, address, type, size)."""
         self.DeleteAllItems()
-        if not bps:
-            return
-
-        self.data = bps
-        for i, (dr, addr) in enumerate(bps):
+        for i, (dr, addr, bpType, size) in enumerate(bps):
             row = self.InsertItem(i, dr)
             self.SetItem(row, 1, addr)
+            self.SetItem(row, 2, BP_TYPE_LABELS.get(bpType, bpType))
+            self.SetItem(row, 3, size)
 
     def OnContextMenu(self, event):
         pos = event.GetPosition()
         pos = self.ScreenToClient(pos)
         row, flags = self.HitTest(pos)
-        if row == wx.NOT_FOUND:
-            return
 
         menu = wx.Menu()
-        miDeleteBreakpoint = menu.Append(wx.ID_ANY, "Delete Breakpoint")
-        menu.AppendSeparator()
-        miFollowBreakpoint = menu.Append(wx.ID_ANY, "Follow Address")
-
-        self.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(row), miDeleteBreakpoint)
-        self.Bind(wx.EVT_MENU, lambda e: self.OnFollowBreakpoint(row), miFollowBreakpoint)
+        # Available on empty space too, so a breakpoint can be added with nothing selected.
+        miAddBreakpoint = menu.Append(wx.ID_ANY, "Add Breakpoint...")
+        self.Bind(wx.EVT_MENU, lambda e: self.parent.PromptBreakpoint(), miAddBreakpoint)
+        if row != wx.NOT_FOUND:
+            menu.AppendSeparator()
+            miDeleteBreakpoint = menu.Append(wx.ID_ANY, "Delete Breakpoint")
+            miFollowBreakpoint = menu.Append(wx.ID_ANY, "Follow Address")
+            self.Bind(wx.EVT_MENU, lambda e: self.OnDeleteBreakpoint(row), miDeleteBreakpoint)
+            self.Bind(wx.EVT_MENU, lambda e: self.OnFollowBreakpoint(row), miFollowBreakpoint)
         self.PopupMenu(menu, pos)
         menu.Destroy()
 
     def OnDeleteBreakpoint(self, row):
-        index = self.parent.breakpointsDisplay.GetItemText(row, 0).strip()
-        payload = f"{index}"
-        self.parent.SendCommand(CMD_DELETE_BREAKPOINT, payload)
+        index = self.GetItemText(row, 0).strip()
+        self.parent.SendCommand(CMD_DELETE_BREAKPOINT, index)
 
     def OnFollowBreakpoint(self, row):
         addrStr = self.GetItemText(row, 1).strip()
@@ -1390,3 +1509,149 @@ class ExportsDialog(wx.Dialog):
         dlg = SearchDialog(self)
         dlg.ShowModal()
         dlg.Destroy()
+
+
+class BreakpointDialog(wx.Dialog):
+    """Address, type, size and slot for a hardware breakpoint.
+
+    Data watches are what debug registers are actually good at - break when a buffer is
+    written rather than when code runs - but the debugger only ever set BP_EXEC before.
+    """
+
+    def __init__(self, parent, address: str = ""):
+        super().__init__(parent, title="Set Breakpoint")
+        self.types = [BP_EXEC, BP_WRITE, BP_READWRITE]
+
+        grid = wx.FlexGridSizer(rows=0, cols=2, hgap=8, vgap=8)
+        grid.AddGrowableCol(1, 1)
+
+        grid.Add(wx.StaticText(self, label="Address:"), flag=wx.ALIGN_CENTER_VERTICAL)
+        self.addressCtrl = wx.TextCtrl(self, value=address)
+        grid.Add(self.addressCtrl, flag=wx.EXPAND)
+
+        grid.Add(wx.StaticText(self, label="Type:"), flag=wx.ALIGN_CENTER_VERTICAL)
+        self.typeCtrl = wx.Choice(self, choices=[BP_TYPE_LABELS[t] for t in self.types])
+        self.typeCtrl.SetSelection(0)
+        self.typeCtrl.Bind(wx.EVT_CHOICE, self.OnTypeChanged)
+        grid.Add(self.typeCtrl, flag=wx.EXPAND)
+
+        grid.Add(wx.StaticText(self, label="Size:"), flag=wx.ALIGN_CENTER_VERTICAL)
+        self.sizeCtrl = wx.Choice(self, choices=[str(s) for s in BP_SIZES])
+        self.sizeCtrl.SetSelection(0)
+        grid.Add(self.sizeCtrl, flag=wx.EXPAND)
+
+        grid.Add(wx.StaticText(self, label="Slot:"), flag=wx.ALIGN_CENTER_VERTICAL)
+        self.slotCtrl = wx.Choice(self, choices=["next", "0", "1", "2", "3"])
+        self.slotCtrl.SetSelection(0)
+        grid.Add(self.slotCtrl, flag=wx.EXPAND)
+
+        outer = wx.BoxSizer(wx.VERTICAL)
+        outer.Add(grid, 1, wx.EXPAND | wx.ALL, 10)
+        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        outer.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        self.SetSizerAndFit(outer)
+
+        self.OnTypeChanged(None)
+        self.Bind(wx.EVT_BUTTON, self.OnOk, id=wx.ID_OK)
+
+    def OnTypeChanged(self, event):
+        # An execute breakpoint must keep LEN at one byte, so size is not a choice there.
+        self.sizeCtrl.Enable(self.SelectedType() != BP_EXEC)
+
+    def SelectedType(self) -> str:
+        return self.types[self.typeCtrl.GetSelection()]
+
+    def OnOk(self, event):
+        values = self.GetValues()
+        if values is None:
+            return
+
+        self.EndModal(wx.ID_OK)
+
+    def GetValues(self):
+        """Return (slot, type, size, address) or None, reporting why if it is invalid."""
+        text = self.addressCtrl.GetValue().strip()
+        if not IsValidHexAddress(text):
+            wx.MessageBox(f"'{text}' is not a valid address.", "Set Breakpoint", wx.OK | wx.ICON_ERROR)
+            return None
+
+        address = int(text, 16)
+        bpType = self.SelectedType()
+        size = BP_SIZES[self.sizeCtrl.GetSelection()] if bpType != BP_EXEC else 1
+        # x86 requires a data breakpoint's address to be aligned to its length; a misaligned
+        # one silently watches the wrong bytes rather than failing.
+        if bpType != BP_EXEC and address % size:
+            wx.MessageBox(
+                f"A {size}-byte watch needs a {size}-byte aligned address.\n"
+                f"{address:#x} is not aligned; try {address - (address % size):#x}.",
+                "Set Breakpoint",
+                wx.OK | wx.ICON_ERROR,
+            )
+            return None
+
+        return self.slotCtrl.GetStringSelection(), bpType, size, address
+
+
+class CallStackListCtrl(wx.ListCtrl):
+    """Walked call frames: where each one returns to, and the call that made it.
+
+    The Stack pane beside this one shows raw stack words, which is what you want for
+    arguments and locals; this answers the different question of how execution got here.
+    """
+
+    def __init__(self, parent, console=None):
+        super().__init__(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        self.parent = console or parent
+        self.data: list[tuple[str, str, str, str]] = []
+        self.InsertColumn(0, "#", width=35)
+        self.InsertColumn(1, "Return To", width=150)
+        self.InsertColumn(2, "Symbol", width=200)
+        self.InsertColumn(3, "Frame", width=150)
+        self.InsertColumn(4, "Call Site", width=220)
+        self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
+        self.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.OnActivated)
+
+    def UpdateData(self, frames: list[tuple[str, str, str, str]]):
+        """Populate from (index, returnAddress, framePointer, callSite)."""
+        self.DeleteAllItems()
+        self.data = frames
+        for i, (index, returnAddr, framePtr, callSite) in enumerate(frames):
+            row = self.InsertItem(i, index)
+            self.SetItem(row, 1, returnAddr)
+            self.SetItem(row, 2, self.ResolveSymbol(returnAddr))
+            self.SetItem(row, 3, framePtr)
+            self.SetItem(row, 4, callSite)
+
+    def ResolveSymbol(self, addrStr: str) -> str:
+        """Nearest known export, falling back to the containing module's name."""
+        try:
+            addr = int(addrStr, 16)
+        except ValueError:
+            return ""
+
+        return self.parent.NearestExport(addr) or self.parent.ModuleNameFor(addr)
+
+    def OnActivated(self, event):
+        self.FollowFrame(event.GetIndex())
+
+    def OnContextMenu(self, event):
+        pos = self.ScreenToClient(event.GetPosition())
+        row, _ = self.HitTest(pos)
+        if row == wx.NOT_FOUND:
+            return
+
+        menu = wx.Menu()
+        miFollow = menu.Append(wx.ID_ANY, "Follow Return Address")
+        miCopy = menu.Append(wx.ID_ANY, "Copy")
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.FollowFrame(r), miFollow)
+        self.Bind(wx.EVT_MENU, lambda e, r=row: SetClipboard("\t".join(self.data[r])), miCopy)
+        self.PopupMenu(menu, pos)
+        menu.Destroy()
+
+    def FollowFrame(self, row: int):
+        if row < 0 or row >= len(self.data):
+            return
+
+        addrStr = self.data[row][1]
+        if self.parent.disassemblyConsole.GoToInstruction(addrStr) == wx.NOT_FOUND:
+            self.parent.AppendConsole(f"Frame address {addrStr} is not in the decoded window.")

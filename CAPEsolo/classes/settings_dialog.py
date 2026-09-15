@@ -14,7 +14,7 @@ import wx.lib.scrolledpanel as scrolled
 
 from CAPEsolo.capelib.config_paths import config_paths, user_config_path
 
-from .theme import apply_theme, is_dark
+from .theme import FONT_CODE, apply_theme, is_dark
 
 # Each row: (section, key, label, kind, choices, default).
 # kind: bool | choice | dir | text | int | float. Encrypted key blobs are opaque text: the
@@ -79,6 +79,10 @@ class SettingsDialog(wx.Dialog):
                 grid.Add(wx.StaticText(boxParent, label=f"{label}:"), flag=wx.ALIGN_CENTER_VERTICAL)
                 self._add_value_widget(grid, boxParent, section, key, kind, choices, current)
             box.Add(grid, proportion=1, flag=wx.EXPAND | wx.ALL, border=6)
+            if groupLabel == "MCP server":
+                helpBtn = wx.Button(boxParent, label="Command line...")
+                helpBtn.Bind(wx.EVT_BUTTON, self.OnMcpHelp)
+                box.Add(helpBtn, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=6)
             vbox.Add(box, flag=wx.EXPAND | wx.ALL, border=8)
 
         panel.SetSizer(vbox)
@@ -140,6 +144,57 @@ class SettingsDialog(wx.Dialog):
             if dlg.ShowModal() == wx.ID_OK:
                 ctrl.SetValue(dlg.GetPath())
 
+    def OnMcpHelp(self, event):
+        """Show how to start the server, since CAPEsolo itself never does."""
+        def widget(key):
+            return self._widgets[("mcp_server", key)][0]
+
+        transport = widget("transport").GetStringSelection()
+        host = widget("host").GetValue().strip() or "127.0.0.1"
+        port = widget("port").GetValue().strip() or "8000"
+        path = widget("path").GetValue().strip() or "/mcp"
+        if transport == "stdio":
+            effect = "stdio opens no port - the MCP client launches the server itself."
+        else:
+            effect = f"Clients connect to http://{host}:{port}{path}"
+
+        text = (
+            "CAPEsolo does not start the MCP server. Save these settings, then run it\n"
+            "yourself from a command prompt in this VM:\n"
+            "\n"
+            "    CAPEsolo-mcp\n"
+            "\n"
+            "It reads the settings above, so no flags are needed. Equivalent:\n"
+            "\n"
+            "    python -m CAPEsolo.mcp_server\n"
+            "\n"
+            "Flag syntax, overriding the saved values for one run:\n"
+            "\n"
+            "    CAPEsolo-mcp --transport streamable-http\n"
+            f"        --host {host} --port {port} --path {path}\n"
+            "\n"
+            "Require a bearer token on every HTTP request (set it before starting):\n"
+            "\n"
+            "    set CAPESOLO_MCP_TOKEN=some-long-random-value\n"
+            "\n"
+            f"Current transport is {transport}. {effect}\n"
+            "\n"
+            "The server refuses to start unless 'Enable MCP server' is checked. Full guide:\n"
+            "github.com/CAPESandbox/CAPEsolo - mcp_server.md"
+        )
+
+        dlg = wx.Dialog(self, title="Starting the MCP server", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        ctrl = wx.TextCtrl(dlg, value=text, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL)
+        ctrl.SetFont(FONT_CODE)
+        sizer.Add(ctrl, proportion=1, flag=wx.EXPAND | wx.ALL, border=8)
+        sizer.Add(wx.Button(dlg, wx.ID_OK, "Close"), flag=wx.ALIGN_RIGHT | wx.RIGHT | wx.BOTTOM, border=10)
+        dlg.SetSizer(sizer)
+        apply_theme(dlg)
+        dlg.SetSize(wx.Size(700, 520))
+        dlg.ShowModal()
+        dlg.Destroy()
+
     def OnSave(self, event):
         collected = []
         for _, items in SETTINGS_SCHEMA:
@@ -183,8 +238,10 @@ class SettingsDialog(wx.Dialog):
             self.parent.RefreshTheme()
 
         wx.MessageBox(
-            f"Settings saved to:\n{path}\n\nThe theme applies now. Other changes (analysis "
-            "directory, MCP/result server, download enable) take effect after restarting CAPEsolo.",
+            f"Settings saved to:\n{path}\n\nThe theme applies now. Analysis directory, result "
+            "server and download enable take effect after restarting CAPEsolo.\n\nMCP settings "
+            "apply to the separate CAPEsolo-mcp process, which CAPEsolo does not start - "
+            "restarting CAPEsolo will not open the port. See \"Command line...\" under MCP server.",
             "Settings saved",
             wx.OK | wx.ICON_INFORMATION,
         )

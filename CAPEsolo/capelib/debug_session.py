@@ -95,11 +95,18 @@ def ParseStack(payload: str) -> list[dict[str, str]]:
 
 
 def ParseMemDump(payload: str) -> tuple[int | None, str]:
-    """Split a memory dump payload into its request address and hex data."""
-    if "|" not in payload:
+    """Split a memory dump payload into its request address and hex data.
+
+    The wire shape is `<addr>|<tag>|<data>`: capemon echoes back the request tag so a reply
+    can be matched to the request that caused it. This path is synchronous - one command at a
+    time - so the tag is dropped rather than checked, but a two-field payload means the
+    monitor DLLs predate tagging and nothing here can be trusted to mean what it says.
+    """
+    parts = payload.split("|", 2)
+    if len(parts) < 3:
         return None, ""
 
-    requestAddr, data = payload.split("|", 1)
+    requestAddr, _tag, data = parts
     try:
         return int(requestAddr, 16), data.strip()
     except ValueError:
@@ -121,19 +128,56 @@ def ParseThreads(payload: str) -> list[dict[str, Any]]:
 
 
 def ParseBreakpoints(payload: str) -> list[dict[str, str]]:
-    """Parse breakpoint entries of the form 'dr,address' joined by '|'."""
+    """Parse breakpoint entries of the form 'dr,address,type,size' joined by '|'.
+
+    Monitors predating data breakpoints sent only 'dr,address'; those are execute
+    breakpoints one byte wide. Without the four-field form this returned an empty list
+    for every breakpoint, silently.
+    """
     if "No" in payload:
         return []
 
     breakpoints = []
     for bp in payload.split("|"):
-        parts = bp.split(",")
-        if len(parts) != 2:
+        parts = [part.strip() for part in bp.split(",")]
+        if len(parts) == 2:
+            parts += ["x", "1"]
+
+        if len(parts) != 4:
             continue
 
-        breakpoints.append({"dr": parts[0].strip(), "address": parts[1].strip()})
+        breakpoints.append({"dr": parts[0], "address": parts[1], "type": parts[2], "size": parts[3]})
 
     return breakpoints
+
+
+def ParseCallStack(payload: str) -> list[dict[str, str]]:
+    """Parse walked frames of the form 'index,returnAddress,framePointer,callSiteBytes'.
+
+    call_bytes is the memory immediately preceding the return address; decoding backwards to
+    find the CALL is left to the consumer, which is the only party that knows the bitness.
+    """
+    frames = []
+    for entry in payload.split("|"):
+        parts = [part.strip() for part in entry.split(",")]
+        if len(parts) != 4:
+            continue
+
+        try:
+            returnAddress = int(parts[1], 16)
+        except ValueError:
+            continue
+
+        frames.append(
+            {
+                "index": parts[0],
+                "return_address": f"{returnAddress:#x}",
+                "frame_pointer": parts[2],
+                "call_bytes": parts[3],
+            }
+        )
+
+    return frames
 
 
 def ParseModules(payload: str) -> list[dict[str, str]]:

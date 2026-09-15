@@ -21,6 +21,7 @@ from sflock.main import unpack as sflock_unpack
 
 from CAPEsolo.capelib.cmdconsts import (
     CMD_BREAKPOINT_LIST,
+    CMD_CALL_STACK,
     CMD_CONTINUE,
     CMD_DELETE_BREAKPOINT,
     CMD_MEM_DUMP,
@@ -83,12 +84,17 @@ DBG_FLAG_ACTIONS = (
     "FlipCarryFlag",
 )
 DBG_BREAKPOINT_SLOTS = ("next", "0", "1", "2", "3")
+DBG_BREAKPOINT_TYPES = ("x", "w", "rw")
+DBG_BREAKPOINT_SIZES = (1, 2, 4, 8)
 MCP_TRANSPORTS = ("stdio", "streamable-http")
 DEFAULT_MCP_TRANSPORT = "stdio"
 DEFAULT_MCP_HOST = "127.0.0.1"
 DEFAULT_MCP_PORT = 8000
 DEFAULT_MCP_PATH = "/mcp"
 MCP_TOKEN_ENV = "CAPESOLO_MCP_TOKEN"
+# Request tag for debugger memory dumps; capemon echoes it back so a reply can be matched
+# to its request. The GUI console varies the id, but this path is one command at a time.
+MCP_DUMP_TAG = "0:DUMP"
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 ANALYSIS_LOG_FORMAT = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
 MAX_REQUEST_BODY_SIZE = 32 * 1024 * 1024
@@ -1268,7 +1274,10 @@ class AnalysisJobManager:
         if error:
             return error
 
-        payload, error = self._command(session, CMD_MEM_DUMP, f"{addr:#x}|{size:#x}")
+        # Memory dumps carry a request tag that capemon echoes back; see ParseMemDump. This
+        # path is synchronous so a constant tag is enough, but it must be present or the
+        # monitor parses the address as the tag and the size as the address.
+        payload, error = self._command(session, CMD_MEM_DUMP, f"{MCP_DUMP_TAG}|{addr:#x}|{size:#x}")
         if error:
             return error
 
@@ -1364,13 +1373,31 @@ class AnalysisJobManager:
             return {"ok": False, "error": f"Invalid address: {address}"}
         return self.debugger_execute(CMD_RUN_UNTIL, f"{addr:#X}", timeout_seconds=timeout_seconds)
 
-    def debugger_set_breakpoint(self, address: Any, slot: str = "next") -> dict[str, Any]:
+    def debugger_set_breakpoint(self, address: Any, slot: str = "next", type: str = "x", size: Any = 1) -> dict[str, Any]:
         addr = self._dbg.ParseAddress(address)
         if addr is None:
             return {"ok": False, "error": f"Invalid address: {address}"}
         if not isinstance(slot, str) or slot.strip().lower() not in DBG_BREAKPOINT_SLOTS:
             return {"ok": False, "error": f"slot must be one of {', '.join(DBG_BREAKPOINT_SLOTS)}."}
-        return self._simple_command(CMD_SET_BREAKPOINT, f"{slot.strip().lower()}|{addr:#X}")
+
+        bpType = type.strip().lower() if isinstance(type, str) else ""
+        if bpType not in DBG_BREAKPOINT_TYPES:
+            return {"ok": False, "error": f"type must be one of {', '.join(DBG_BREAKPOINT_TYPES)}."}
+
+        try:
+            width = int(size)
+        except (TypeError, ValueError):
+            width = 0
+
+        if bpType == "x":
+            width = 1
+        elif width not in DBG_BREAKPOINT_SIZES:
+            return {"ok": False, "error": f"size must be one of {', '.join(str(s) for s in DBG_BREAKPOINT_SIZES)}."}
+        elif addr % width:
+            # x86 watches the wrong bytes for a misaligned data breakpoint rather than failing.
+            return {"ok": False, "error": f"A {width}-byte watch needs a {width}-byte aligned address; {addr:#x} is not."}
+
+        return self._simple_command(CMD_SET_BREAKPOINT, f"{slot.strip().lower()}|{addr:#X}|{bpType}|{width}")
 
     def debugger_delete_breakpoint(self, index: Any) -> dict[str, Any]:
         error = {"ok": False, "error": "index must be a debug register number between 0 and 3."}
@@ -1386,6 +1413,9 @@ class AnalysisJobManager:
 
     def debugger_list_breakpoints(self) -> dict[str, Any]:
         return self._simple_command(CMD_BREAKPOINT_LIST, key="breakpoints", parser=self._dbg.ParseBreakpoints)
+
+    def debugger_call_stack(self) -> dict[str, Any]:
+        return self._simple_command(CMD_CALL_STACK, key="frames", parser=self._dbg.ParseCallStack)
 
     def debugger_get_stack(self) -> dict[str, Any]:
         return self._simple_command(CMD_STACK_UPDATE, key="stack", parser=self._dbg.ParseStack)
@@ -1675,6 +1705,17 @@ if mcp:
 
 
     @mcp.tool()
+    def capesolo_dbg_call_stack() -> dict[str, Any]:
+        """Walk the call stack from the current break and return one entry per frame.
+
+        Each frame gives the address it returns to, its frame pointer, and call_bytes: the
+        16 bytes ending at the return address, which contain the CALL that made the frame.
+        x64 frames come from unwind data, x86 from the frame-pointer chain.
+        """
+        return manager.debugger_call_stack()
+
+
+    @mcp.tool()
     def capesolo_dbg_get_stack() -> dict[str, Any]:
         """Read the stack window around the current stack pointer."""
         return manager.debugger_get_stack()
@@ -1693,9 +1734,14 @@ if mcp:
 
 
     @mcp.tool()
-    def capesolo_dbg_set_breakpoint(address: str, slot: str = "next") -> dict[str, Any]:
-        """Set a hardware breakpoint at address. slot is next or a debug register 0-3."""
-        return manager.debugger_set_breakpoint(address, slot)
+    def capesolo_dbg_set_breakpoint(address: str, slot: str = "next", type: str = "x", size: int = 1) -> dict[str, Any]:
+        """Set a hardware breakpoint at address. slot is next or a debug register 0-3.
+
+        type is "x" to break on execute, "w" on write, or "rw" on read or write. A data
+        breakpoint reads size bytes (1, 2, 4 or 8) and its address must be aligned to that
+        width. size is ignored for "x", which is always one byte.
+        """
+        return manager.debugger_set_breakpoint(address, slot, type, size)
 
 
     @mcp.tool()

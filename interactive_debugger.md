@@ -46,7 +46,7 @@ The most common debugging actions are available via buttons and global hotkeys:
 
 **Features:**
 - **Color Coding:**
-  - Cyan background: Current instruction pointer (CIP).
+  - Green background: Current instruction pointer (CIP).
   - Blue text: CALL instructions.
   - Green text: JMP and conditional jumps.
   - Red background: Instruction with a breakpoint.

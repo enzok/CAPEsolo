@@ -2,9 +2,9 @@ import bisect
 import logging
 import re
 import struct
-import zlib
 from collections import defaultdict
 from contextlib import suppress
+from queue import Queue
 from threading import Condition, Lock, Thread
 
 import pywintypes
@@ -14,10 +14,24 @@ import wx
 from distorm3 import Decode, Decode32Bits, Decode64Bits
 
 from CAPEsolo.capelib.cmdconsts import *
+from CAPEsolo.capelib.page_cache import (
+    BoundInstructions,
+    ContiguousSpan,
+    CoversAddress,
+    DistantPages,
+    FindRegion,
+    HotPages,
+    PageChanged,
+    PageHash,
+    PagesOfSpan,
+    SelectWindowPages,
+)
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
 
 from .debug_controls import (
+    BreakpointDialog,
     BreakpointsListCtrl,
+    CallStackListCtrl,
     DecodedInstruction,
     DisassemblyListCtrl,
     IsValidHexAddress,
@@ -30,7 +44,7 @@ from .debug_controls import (
 from .debug_pipe import CommandPipeHandler
 from .patch_assembler import Assembler
 from .patch_models import PatchEntry
-from .theme import FONT_CODE, apply_theme
+from .theme import ACCENT_ORANGE, BG_CARD, FONT_CODE, apply_theme
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +52,26 @@ MAX_LEN = 256
 PAGE_SIZE = 4 * 1024
 BUFFER_SIZE = 65 * 1024
 CHUNK_SIZE = BUFFER_SIZE // 2
+# Buffered pages kept either side of CIP before eviction, so the retained cache is bounded
+# at (2 * KEEP_PAGES + 1) * PAGE_SIZE regardless of how long the session runs.
+KEEP_PAGES = 16
+# Smallest a splitter pane may be dragged to, so no view can be collapsed out of reach.
+MIN_PANE = 80
 DBGCMD = "DBGCMD"
+# Request tags, sent as a leading "<id>:<purpose>|" field and echoed by capemon in the
+# response. Replaces guessing a response's purpose from its length, which could not tell a
+# 4-byte pointer read from a 4-byte panel dump, and lets a page load be matched to the
+# request that caused it rather than merely counted.
+TAG_DUMP = "DUMP"
+TAG_FILE = "FILE"
+TAG_DEREF = "DEREF"
+TAG_STR = "STR"
+TAG_STRW = "STRW"
+TAG_PAGE = "PAGE"
+STALE_MONITOR_MSG = (
+    "Untagged debugger response: the monitor is older than this build of CAPEsolo. "
+    "Update the monitor dlls."
+)
 DEBUG_PIPE = r"\\.\pipe\debugger_pipe"
 REGISTERS = {
     "RAX",
@@ -135,8 +168,9 @@ class ConsoleFrame(wx.Frame):
         self.ID_CONTINUE = wx.NewIdRef()
         self.ID_BACK = wx.NewIdRef()
         self.ID_SEARCH = wx.NewIdRef()
-        self.ID_PATCH = wx.NewIdRef()
 
+        # Space is handled by DisassemblyListCtrl.OnKeyDown, not here: as an accelerator it
+        # fired frame-wide and stole activation from whichever button had focus.
         accels = wx.AcceleratorTable(
             [
                 (wx.ACCEL_NORMAL, wx.WXK_F4, self.ID_RUN_UNTIL),
@@ -145,14 +179,12 @@ class ConsoleFrame(wx.Frame):
                 (wx.ACCEL_NORMAL, wx.WXK_F9, self.ID_STEP_OUT),
                 (wx.ACCEL_NORMAL, wx.WXK_F10, self.ID_CONTINUE),
                 (wx.ACCEL_NORMAL, wx.WXK_ESCAPE, self.ID_BACK),
-                (wx.ACCEL_NORMAL, wx.WXK_SPACE, self.ID_PATCH),
                 (wx.ACCEL_CTRL, ord("Q"), self.ID_STOP),
                 (wx.ACCEL_CMD, ord("F"), self.ID_SEARCH),
             ]
         )
         self.SetAcceleratorTable(accels)
         self.Bind(wx.EVT_MENU, self.consolePanel.OnRunUntilAccel, id=self.ID_RUN_UNTIL)
-        self.Bind(wx.EVT_MENU, self.consolePanel.OnPatchAccel, id=self.ID_PATCH)
         self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_STEP_INTO), id=self.ID_STEP_INTO)
         self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_STEP_OVER), id=self.ID_STEP_OVER)
         self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.SendCommand(CMD_STEP_OUT), id=self.ID_STEP_OUT)
@@ -180,7 +212,16 @@ class ConsoleFrame(wx.Frame):
 
 
 class ConsolePanel(wx.Panel):
-    """A wxPython panel that supports multi-threaded debugging with labeled sections, hotkeys, and logging."""
+    """A wxPython panel that supports multi-threaded debugging with labeled sections, hotkeys, and logging.
+
+    Threading: the page cache (pageBuffers, pendingPages, pageHashes) and the resolution
+    maps are touched only from the wx main thread. PipeLoop is the sole reader thread and it
+    marshals every message through wx.CallAfter, and CommandPipeHandler talks to DebugConsole
+    via breakCondition rather than to this panel. There is deliberately no lock: the previous
+    pageLock was taken by the writers but not by DoHotDecode, so it advertised a guarantee it
+    did not provide. Anything moved off the main thread has to reintroduce locking at every
+    reader as well.
+    """
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -189,17 +230,22 @@ class ConsolePanel(wx.Panel):
         self.pipeHandle = None
         self.connected = False
         self.readLock = Lock()
+        self.writeQueue = Queue()
         self.slotCount = 512
-        self.prevHighlight = None
         self.initMemDump = True
+        self.sashesPlaced = False
+        self.inspectedTid = None
         self.cip = None
         self.bits = None
         self.pageBuffers: dict[int, bytes] = {}
-        self.requestedPages = set()
-        self.pageLock = Lock()
+        # request tag -> page base, for the page loads still outstanding. Correlating by tag
+        # means a late response from an earlier break cannot satisfy this break's request.
+        self.pendingPages: dict[str, int] = {}
+        self.requestId = 0
         self.pageHashes = {}
-        self.idleDecodeQueue = []
         self.exports: dict[int, str] = {}
+        # Sorted export addresses for nearest-symbol lookup, rebuilt when exports grow.
+        self.exportAddrs: list[int] = []
         self.exportModules = []
         self.export = None
         self.resolvedExports: dict[int, dict[int, str]] = {}
@@ -212,7 +258,6 @@ class ConsolePanel(wx.Panel):
         self.derefCount = 0
         self.derefPending: set[int] = set()
         self.dumpFilePath = None
-        self.dumpMemFile = False
         self.assembler = None
         self.firstBreak = True
         self.CMD_PAGE_MAP = None
@@ -239,57 +284,93 @@ class ConsolePanel(wx.Panel):
         mainSizer = wx.BoxSizer(wx.VERTICAL)
         fontCourier = FONT_CODE
 
+        # The four main views live in splitter panes so their boundaries can be dragged; the
+        # panes were fixed sizer proportions before. Controls that call back into this panel
+        # are given console=self, because their wx parent is now a pane rather than the panel.
+        self.paneSplitter = wx.SplitterWindow(self, style=wx.SP_LIVE_UPDATE | wx.SP_3DSASH)
+        self.topSplitter = wx.SplitterWindow(self.paneSplitter, style=wx.SP_LIVE_UPDATE | wx.SP_3DSASH)
+        self.bottomSplitter = wx.SplitterWindow(self.paneSplitter, style=wx.SP_LIVE_UPDATE | wx.SP_3DSASH)
+        for splitter in (self.paneSplitter, self.topSplitter, self.bottomSplitter):
+            splitter.SetMinimumPaneSize(MIN_PANE)
+
         # Disassembly
+        disasmPane = wx.Panel(self.topSplitter)
         consoleSizer = wx.BoxSizer(wx.VERTICAL)
-        consoleSizer.Add(wx.StaticText(self, label="Disassembly Console"), 0, wx.ALL, 5)
-        self.disassemblyConsole = DisassemblyListCtrl(self)
+        consoleSizer.Add(wx.StaticText(disasmPane, label="Disassembly Console"), 0, wx.ALL, 5)
+        self.disassemblyConsole = DisassemblyListCtrl(disasmPane, console=self)
         self.disassemblyConsole.SetFont(fontCourier)
-        consoleSizer.Add(self.disassemblyConsole, 2, wx.EXPAND | wx.ALL, 5)
+        consoleSizer.Add(self.disassemblyConsole, 1, wx.EXPAND | wx.ALL, 5)
+        disasmPane.SetSizer(consoleSizer)
 
         # Registers
+        regsPane = wx.Panel(self.topSplitter)
         regsSizer = wx.BoxSizer(wx.VERTICAL)
-        regsSizer.Add(wx.StaticText(self, label="Registers"), 0, wx.ALL, 5)
-        self.regsDisplay = RegsTextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        regsSizer.Add(wx.StaticText(regsPane, label="Registers"), 0, wx.ALL, 5)
+        self.threadBanner = wx.StaticText(regsPane, label="")
+        self.threadBanner.Hide()
+        regsSizer.Add(self.threadBanner, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 5)
+        self.regsDisplay = RegsTextCtrl(regsPane, style=wx.TE_MULTILINE | wx.TE_READONLY, console=self)
         self.regsDisplay.SetFont(fontCourier)
         regsSizer.Add(self.regsDisplay, 1, wx.EXPAND | wx.ALL, 5)
-
-        topSizer = wx.BoxSizer(wx.HORIZONTAL)
-        topSizer.Add(consoleSizer, 6, wx.EXPAND)
-        topSizer.Add(regsSizer, 4, wx.EXPAND)
-        mainSizer.Add(topSizer, 1, wx.EXPAND)
+        regsPane.SetSizer(regsSizer)
 
         # Memory Dump
+        memPane = wx.Panel(self.bottomSplitter)
         memSizer = wx.BoxSizer(wx.VERTICAL)
-        memSizer.Add(wx.StaticText(self, label="Memory Dump"), 0, wx.ALL, 5)
-        self.memDumpDisplay = MemDumpListCtrl(self)
+        memSizer.Add(wx.StaticText(memPane, label="Memory Dump"), 0, wx.ALL, 5)
+        self.memDumpDisplay = MemDumpListCtrl(memPane, console=self)
         self.memDumpDisplay.SetFont(fontCourier)
-        memSizer.Add(self.memDumpDisplay, 2, wx.EXPAND | wx.ALL, 5)
+        memSizer.Add(self.memDumpDisplay, 1, wx.EXPAND | wx.ALL, 5)
 
         # Address input field
         memInput = wx.BoxSizer(wx.HORIZONTAL)
-        memInput.Add(wx.StaticText(self, label="Memory Dump Address:"), 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 5)
-        self.memAddressInput = wx.TextCtrl(self, style=wx.TE_PROCESS_ENTER)
+        memInput.Add(wx.StaticText(memPane, label="Memory Dump Address:"), 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 5)
+        self.memAddressInput = wx.TextCtrl(memPane, style=wx.TE_PROCESS_ENTER)
         self.memAddressInput.SetFont(fontCourier)
         memInput.Add(self.memAddressInput, 1, wx.EXPAND | wx.ALL, 5)
         self.memAddressInput.Bind(wx.EVT_TEXT_ENTER, self.OnAddressEnter)
 
         # Dump to File button
-        btnDumpToFile = wx.Button(self, label="Dump Memory to File")
+        btnDumpToFile = wx.Button(memPane, label="Dump Memory to File")
         btnDumpToFile.Bind(wx.EVT_BUTTON, self.OnDumpToFile)
         memInput.Add(btnDumpToFile, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 5)
         memSizer.Add(memInput, 0, wx.EXPAND | wx.ALL, 5)
+        memPane.SetSizer(memSizer)
 
-        # Stack
+        # Stack and Call Stack share the pane: raw stack words answer "what is on the
+        # stack", walked frames answer "how did execution get here".
+        stackPane = wx.Panel(self.bottomSplitter)
         stackSizer = wx.BoxSizer(wx.VERTICAL)
-        stackSizer.Add(wx.StaticText(self, label="Stack"), 0, wx.ALL, 5)
-        self.stackDisplay = StackListCtrl(self)
-        self.stackDisplay.SetFont(fontCourier)
-        stackSizer.Add(self.stackDisplay, 1, wx.EXPAND | wx.ALL, 5)
+        self.stackNotebook = wx.Notebook(stackPane)
 
-        bottomSizer = wx.BoxSizer(wx.HORIZONTAL)
-        bottomSizer.Add(memSizer, 7, wx.EXPAND)
-        bottomSizer.Add(stackSizer, 3, wx.EXPAND)
-        mainSizer.Add(bottomSizer, 1, wx.EXPAND)
+        rawPage = wx.Panel(self.stackNotebook)
+        rawSizer = wx.BoxSizer(wx.VERTICAL)
+        self.stackDisplay = StackListCtrl(rawPage, console=self)
+        self.stackDisplay.SetFont(fontCourier)
+        rawSizer.Add(self.stackDisplay, 1, wx.EXPAND | wx.ALL, 3)
+        rawPage.SetSizer(rawSizer)
+        self.stackNotebook.AddPage(rawPage, "Stack")
+
+        framePage = wx.Panel(self.stackNotebook)
+        frameSizer = wx.BoxSizer(wx.VERTICAL)
+        self.callStackDisplay = CallStackListCtrl(framePage, console=self)
+        self.callStackDisplay.SetFont(fontCourier)
+        frameSizer.Add(self.callStackDisplay, 1, wx.EXPAND | wx.ALL, 3)
+        framePage.SetSizer(frameSizer)
+        self.stackNotebook.AddPage(framePage, "Call Stack")
+
+        stackSizer.Add(self.stackNotebook, 1, wx.EXPAND | wx.ALL, 5)
+        stackPane.SetSizer(stackSizer)
+
+        # Gravity keeps the old proportions when the window itself is resized; the sash
+        # positions are set once the panel has a real size, in _InitSashes.
+        self.topSplitter.SplitVertically(disasmPane, regsPane)
+        self.topSplitter.SetSashGravity(0.6)
+        self.bottomSplitter.SplitVertically(memPane, stackPane)
+        self.bottomSplitter.SetSashGravity(0.7)
+        self.paneSplitter.SplitHorizontally(self.topSplitter, self.bottomSplitter)
+        self.paneSplitter.SetSashGravity(0.5)
+        mainSizer.Add(self.paneSplitter, 1, wx.EXPAND | wx.ALL, 5)
 
         # Console box
         consoleSizer = wx.BoxSizer(wx.VERTICAL)
@@ -369,17 +450,59 @@ class ConsolePanel(wx.Panel):
 
         self.SetSizer(mainSizer)
         apply_theme(self)
+        # SplitterWindow is not a wx.Panel, so apply_theme leaves the sash the native grey.
+        for splitter in (self.paneSplitter, self.topSplitter, self.bottomSplitter):
+            splitter.SetBackgroundColour(BG_CARD)
+
+        self.Bind(wx.EVT_SIZE, self.OnSize)
+
+    def OnSize(self, event):
+        """Place the sashes on the first real size event, then leave them to the user.
+
+        Sash positions cannot be set meaningfully in InitGUI because the panel has no size
+        yet, and re-applying them on every resize would fight whatever the user has dragged.
+        """
+        event.Skip()
+        if self.sashesPlaced:
+            return
+
+        # Each sash is a fraction of its own splitter, not of the panel: the misc row and the
+        # command row sit below paneSplitter, so the panel is taller than it is.
+        width, height = self.paneSplitter.GetClientSize()
+        if width <= MIN_PANE * 2 or height <= MIN_PANE * 2:
+            return
+
+        self.sashesPlaced = True
+        self.paneSplitter.SetSashPosition(int(height * 0.5))
+        self.topSplitter.SetSashPosition(int(width * 0.6))
+        self.bottomSplitter.SetSashPosition(int(width * 0.7))
 
     def IsAddressKnown(self, addr: int) -> bool:
         pageMap = getattr(self.disassemblyConsole, "pageMap", None)
         if not pageMap:
             return False
 
-        for base, size, prot in pageMap:
-            if base <= addr < base + size:
-                return True
+        return FindRegion(pageMap, addr) is not None
 
-        return False
+    def PromptBreakpoint(self, address=""):
+        """Ask for breakpoint details and set it. Shared by every entry point."""
+        if isinstance(address, int):
+            address = f"{address:#x}"
+
+        dlg = BreakpointDialog(self, address or "")
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+
+            values = dlg.GetValues()
+        finally:
+            dlg.Destroy()
+
+        if values is None:
+            return
+
+        slot, bpType, size, addr = values
+        self.SendCommand(CMD_SET_BREAKPOINT, f"{slot}|{addr:#X}|{bpType}|{size}")
 
     def OnRunUntilAccel(self, event):
         row = self.disassemblyConsole.GetNextItem(-1, wx.LIST_NEXT_ALL, wx.LIST_STATE_SELECTED)
@@ -392,42 +515,11 @@ class ConsolePanel(wx.Panel):
 
         self.disassemblyConsole.OnRunUntil(row)
 
-    def OnPatchAccel(self, event):
-        if self.inputBox.HasFocus():
-            self.inputBox.WriteText(" ")
-            return
-
-        row = self.disassemblyConsole.GetNextItem(-1, wx.LIST_NEXT_ALL, wx.LIST_STATE_SELECTED)
-        if row == -1:
-            wx.MessageBox("No valid address to patch.", "Error", wx.OK | wx.ICON_ERROR)
-            return
-
-        self.disassemblyConsole.OnPatchBytes(row)
-
-    def OnKeyDown(self, event):
-        if self.FindFocus() == self.inputBox:
-            event.Skip()
-            return
-
-        if self.FindFocus() == self.memAddressInput:
-            event.Skip()
-            return
-
-        if event.GetKeyCode() == wx.WXK_F7 and event.ControlDown():
-            self.SendCommand(CMD_STEP_INTO)
-        elif event.GetKeyCode() == wx.WXK_F8 and event.ControlDown():
-            self.SendCommand(CMD_STEP_OVER)
-        elif event.GetKeyCode() == wx.WXK_F10 and event.ControlDown():
-            self.SendCommand(CMD_CONTINUE)
-        else:
-            event.Skip()
-
     def OnAddressEnter(self, event):
         self.memAddr = self.memAddressInput.GetValue().strip()
         if self.memAddr:
-            self.SendCommand(CMD_MEM_DUMP, self.memAddr)
+            self.SendCommand(CMD_MEM_DUMP, self.memAddr, tag=self.NextTag(TAG_DUMP))
 
-        self.memAddressInput.Clear()
         event.Skip()
 
     def OnDumpToFile(self, event):
@@ -472,8 +564,7 @@ class ConsolePanel(wx.Panel):
 
             self.dumpFilePath = fileDialog.GetPath()
 
-        self.dumpMemFile = True
-        self.SendCommand(CMD_MEM_DUMP, f"{addr:#x}|{size:#x}")
+        self.SendCommand(CMD_MEM_DUMP, f"{addr:#x}|{size:#x}", tag=self.NextTag(TAG_FILE))
 
     def WriteMemToFile(self, data):
         try:
@@ -502,7 +593,12 @@ class ConsolePanel(wx.Panel):
         self.regsDisplay.SetValue(text)
         regsText = self.regsDisplay.GetValue()
         m = re.search(r"\b([ER]IP):\s*([0-9A-Fa-f]+)", regsText)
-        self.cip = int(m.group(2), 16) if m else None
+        # Never drop a known-good CIP: this runs on every break, and nulling it here blanks
+        # the disassembly highlight and takes GetCipRow/DoHotDecode down with it.
+        if m:
+            self.cip = int(m.group(2), 16)
+        else:
+            log.warning("[DEBUG CONSOLE] No instruction pointer in register payload; keeping the previous CIP")
         if not self.bits:
             self.bits = 64 if "RAX" in regsText else 32
             self.assembler = Assembler(self.bits)
@@ -531,6 +627,7 @@ class ConsolePanel(wx.Panel):
         self.statusBar.SetLabel(status)
 
     def InitPipe(self):
+        Thread(target=self.WriteLoop, daemon=True).start()
         Thread(target=self.PipeLoop, daemon=True).start()
 
     def PipeLoop(self):
@@ -584,15 +681,40 @@ class ConsolePanel(wx.Panel):
                 log.error("[DEBUG CONSOLE] Reading response: %s", e)
                 return None
 
-    def SendCommand(self, command, data=""):
+    def NextTag(self, purpose: str) -> str:
+        """Allocate a request tag; the id disambiguates two requests of the same purpose."""
+        self.requestId += 1
+        return f"{self.requestId}:{purpose}"
+
+    def SendCommand(self, command, data="", tag=None):
         if command.lower() != "init" and (not self.connected or not self.pipeHandle):
             log.error("[DEBUG CONSOLE] Cannot send command: Not connected to pipe")
             return
 
+        if tag:
+            data = f"{tag}|{data}"
+
         fullCommand = f"{DBGCMD}:{command.upper()}:{data}".encode() + b"\n"
-        Thread(target=self.BackgroundWrite, args=(fullCommand, 5000), daemon=True).start()
+        self.writeQueue.put(fullCommand)
+
+    def WriteLoop(self):
+        """Serialise pipe writes.
+
+        A thread per command meant RefreshViewState's five commands raced each other onto the
+        same handle, so the debug server received them in an arbitrary order.
+        """
+        while True:
+            buffer = self.writeQueue.get()
+            if buffer is None:
+                return
+
+            self.BackgroundWrite(buffer, 5000)
 
     def BackgroundWrite(self, buffer, timeout=win32event.INFINITE):
+        if not self.pipeHandle:
+            log.error("[DEBUG CONSOLE] Dropping command: pipe is closed")
+            return
+
         overlapped = pywintypes.OVERLAPPED()
         overlapped.hEvent = win32event.CreateEvent(None, 0, 0, None)
         try:
@@ -644,6 +766,7 @@ class ConsolePanel(wx.Panel):
     def close(self):
         """Stops the reading thread."""
         self.connected = False
+        self.writeQueue.put(None)
         if self.pipeHandle:
             try:
                 win32file.CloseHandle(self.pipeHandle)
@@ -654,17 +777,23 @@ class ConsolePanel(wx.Panel):
                 log.info("[DEBUG CONSOLE] Pipe handle closed")
 
     def RefreshViewState(self):
+        if self.inspectedTid is not None:
+            self.inspectedTid = None
+            self.ShowThreadBanner(None)
+
         self.SendCommand(CMD_REG_UPDATE)
         if self.initMemDump:
-            self.SendCommand(CMD_MEM_DUMP)
+            self.SendCommand(CMD_MEM_DUMP, tag=self.NextTag(TAG_DUMP))
             self.initMemDump = False
         else:
+            # Re-dump whatever region is on screen. This used to overwrite the address box
+            # and fire a synthetic EVT_TEXT_ENTER, which blanked the field on every break.
             addr = self.memDumpDisplay.GetFirstHexAddress()
             if addr is not None:
-                self.memAddressInput.SetValue(addr)
-                self.OnAddressEnter(wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, self.memAddressInput.GetId()))
+                self.SendCommand(CMD_MEM_DUMP, addr, tag=self.NextTag(TAG_DUMP))
 
         self.SendCommand(CMD_STACK_UPDATE)
+        self.SendCommand(CMD_CALL_STACK)
         self.SendCommand(CMD_THREADS)
         self.SendCommand(CMD_BREAKPOINT_LIST)
 
@@ -682,6 +811,8 @@ class ConsolePanel(wx.Panel):
             CMD_REG_UPDATE: self.HandleRegUpdate,
             CMD_MEM_DUMP: self.HandleMemDump,
             CMD_STACK_UPDATE: self.HandleStackUpdate,
+            CMD_CALL_STACK: self.HandleCallStack,
+            CMD_THREAD_INSPECT: self.HandleThreadInspect,
             CMD_SET_BREAKPOINT: self.HandleSetBreakpoint,
             CMD_DELETE_BREAKPOINT: self.HandleDeleteBreakpoint,
             CMD_BREAKPOINT_LIST: self.HandleBreakpointsList,
@@ -709,7 +840,9 @@ class ConsolePanel(wx.Panel):
             log.warning("[DEBUG CONSOLE] Unknown command '%s' received", command)
 
     def RequestPage(self, pageBase: int):
-        self.SendCommand(CMD_PAGE_LOAD, hex(pageBase))
+        tag = self.NextTag(TAG_PAGE)
+        self.pendingPages[tag] = pageBase
+        self.SendCommand(CMD_PAGE_LOAD, hex(pageBase), tag=tag)
 
     def JumpTo(self, address: int):
         """Use pageMap to find page."""
@@ -722,78 +855,76 @@ class ConsolePanel(wx.Panel):
             self.RefreshPageMap()
             return
 
-        desiredStart = self.cip
-        desiredEnd = self.cip + CHUNK_SIZE
-        pageMap = self.disassemblyConsole.pageMap
-        pages = set()
-        for base, size, prot in pageMap:
-            regionEnd = base + size
-            if regionEnd < desiredStart or base > desiredEnd:
-                continue
-
-            firstPage = (base // PAGE_SIZE) * PAGE_SIZE
-            lastPage = ((base + size - 1) // PAGE_SIZE) * PAGE_SIZE
-            page = firstPage
-            while page <= lastPage:
-                if desiredStart - PAGE_SIZE <= page <= desiredEnd:
-                    pages.add(page)
-                page += PAGE_SIZE
-
+        pages = SelectWindowPages(self.disassemblyConsole.pageMap, self.cip, PAGE_SIZE, CHUNK_SIZE)
         if not pages:
             log.error("[DEBUG CONSOLE] No valid pages found for address %#x", address)
             return
 
-        with self.pageLock:
+        # Landing outside every buffered page means a jump to a different region, so nothing
+        # held is worth keeping. Within a region the cache is retained: re-reading the whole
+        # 36 KB window took ~9 pipe round-trips to advance one instruction.
+        regionChange = not CoversAddress(self.pageBuffers, self.cip, PAGE_SIZE)
+        hot = set(HotPages(self.cip, PAGE_SIZE)) & set(pages)
+        if regionChange:
             self.pageBuffers.clear()
-            self.requestedPages.clear()
-            for page in sorted(pages):
-                self.requestedPages.add(page)
-                self.RequestPage(page)
+
+        for page in DistantPages(list(self.pageBuffers), self.cip, PAGE_SIZE, KEEP_PAGES):
+            del self.pageBuffers[page]
+            self.pageHashes.pop(page, None)
+
+        # Drop the hot pages so a stale copy can never be decoded if the re-read fails.
+        for page in hot:
+            self.pageBuffers.pop(page, None)
+
+        # HotPages always contributes CIP's own page, so this is never empty and a page
+        # load response is always coming to trigger the decode.
+        for page in sorted(page for page in pages if page not in self.pageBuffers):
+            self.RequestPage(page)
 
         self.RefreshViewState()
 
     def DoHotDecode(self):
-        """Decode only the first PAGE_SIZE bytes from CIP and update the view."""
-        cache = getattr(self.disassemblyConsole, "decodeCache", [])
-        prefix = [ins for ins in cache if ins.address < self.cip]
-        sortedPages = sorted(self.pageBuffers.keys())
-        baseAddress = self.cip
-        hotData = bytearray()
-        for page in sortedPages:
-            pageData = self.pageBuffers[page]
-            start = max(self.cip, page)
-            end = min(self.cip + PAGE_SIZE, page + len(pageData))
-            if start < end:
-                hotData.extend(pageData[start - page : end - page])
+        """Decode the contiguous buffered span from CIP forward and update the view."""
+        if self.cip is None:
+            log.warning("[DEBUG CONSOLE] Hot decode skipped: no current instruction pointer")
+            return
 
+        spanData = ContiguousSpan(self.pageBuffers, self.cip, PAGE_SIZE, CHUNK_SIZE)
+        if not spanData:
+            log.warning("[DEBUG CONSOLE] No contiguous page data at CIP %#x; refreshing page map", self.cip)
+            self.RefreshPageMap()
+            return
+
+        cache = self.disassemblyConsole.decodeCache
+        # pageHashes still holds the hashes from before this break's re-read (HandlePageLoad
+        # records the new ones after this returns), so this asks whether the code changed.
+        rewritten = any(
+            PageChanged(self.pageHashes, page, self.pageBuffers.get(page))
+            for page in PagesOfSpan(self.cip, len(spanData), PAGE_SIZE)
+        )
+        # A plain step usually decodes the same instructions with the split moved along by
+        # one, so when the bytes are untouched and CIP is already a known boundary there is
+        # nothing to decode and nothing to re-render - just move the highlight.
+        if not rewritten and self.disassemblyConsole.GetCipRow() != -1:
+            self.disassemblyConsole.HighlightCip(self.disassemblyConsole.GetCipRow())
+            return
+
+        # Keep anywhere the user can navigate back to, or has marked, regardless of distance.
+        pinned = set(self.disassemblyConsole.backHistory)
+        pinned |= self.disassemblyConsole.bpAddrs
+        pinned |= set(self.patchHistoryByAddr)
+        prefix = BoundInstructions(
+            [ins for ins in cache if ins.address < self.cip], self.cip, KEEP_PAGES * PAGE_SIZE, pinned
+        )
         mode = Decode64Bits if self.bits == 64 else Decode32Bits
         insts: list[DecodedInstruction] = []
-        for address, size, text, hexBytes in Decode(baseAddress, bytes(hotData), mode):
+        for address, size, text, hexBytes in Decode(self.cip, spanData, mode):
             patchText = self.PatchDisasmText(address, text)
             insts.append(DecodedInstruction(address, hexBytes, patchText))
 
-        insts = prefix + insts
-        self.disassemblyConsole.decodeCache = insts
-        self.disassemblyConsole.SetInstructions(insts)
-
-    def ProcessNextIdlePage(self):
-        """Decode one page at a time in idle to fill out the rest of the context."""
-        if not self.idleDecodeQueue:
-            return
-
-        pageBase = self.idleDecodeQueue.pop(0)
-        pageData = self.pageBuffers.get(pageBase)
-        if pageData:
-            mode = Decode64Bits if self.bits == 64 else Decode32Bits
-            insts = []
-            for address, size, text, hexBytes in Decode(pageBase, pageData, mode):
-                patchText = self.PatchDisasmText(address, text)
-                insts.append(DecodedInstruction(address, hexBytes, patchText))
-
-            self.disassemblyConsole.SetInstructions(insts, append=True)
-
-        if self.idleDecodeQueue:
-            wx.CallLater(1, self.ProcessNextIdlePage)
+        # SetInstructions owns decodeCache: assigning it here first would make the incremental
+        # diff see the new stream as already rendered and skip every row.
+        self.disassemblyConsole.SetInstructions(prefix + insts)
 
     def UpdateDisassemblyView(self):
         insts: list[DecodedInstruction] = []
@@ -820,14 +951,17 @@ class ConsolePanel(wx.Panel):
             if targetAddr is None:
                 continue
 
-            with self.pageLock:
-                if targetAddr not in self.derefPending:
-                    self.derefPending.add(targetAddr)
-                    self.derefCount += 1
+            if targetAddr not in self.derefPending:
+                self.derefPending.add(targetAddr)
+                self.derefCount += 1
 
-                self.resolvedExports[inst.address] = {targetAddr: ""}
+            self.resolvedExports[inst.address] = {targetAddr: ""}
 
             wx.CallLater(1, self.ResolveRef, targetAddr)
+
+        # Nothing to resolve means no response will arrive to re-enable the menu item.
+        if not self.derefCount:
+            self.disassemblyConsole.resolveAllRefsStatus = True
 
     def GetCip(self, data):
         m = re.search(r"0x[0-9a-fA-F]+", data)
@@ -842,7 +976,7 @@ class ConsolePanel(wx.Panel):
 
         if addrStr and IsValidHexAddress(addrStr):
             size = 4 if self.bits == 32 else 8
-            self.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{hex(size)}")
+            self.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{hex(size)}", tag=self.NextTag(TAG_DEREF))
 
     def ResolveString(self, addr: int):
         addrStr = addr
@@ -850,7 +984,7 @@ class ConsolePanel(wx.Panel):
             addrStr = f"{addr:#x}"
 
         if addrStr and IsValidHexAddress(addrStr):
-            self.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{hex(MAX_LEN)}")
+            self.SendCommand(CMD_MEM_DUMP, f"{addrStr}|{hex(MAX_LEN)}", tag=self.NextTag(TAG_STR))
 
     @staticmethod
     def ProcessStringDump(raw: bytes, secondPass: bool = False) -> str:
@@ -870,10 +1004,9 @@ class ConsolePanel(wx.Panel):
 
     def PatchDisasmText(self, addr: int, disasmText: str) -> str:
         export = None
-        with self.pageLock:
-            exportMap = self.resolvedExports.get(addr)
-            if exportMap:
-                export = next(iter(exportMap.values()), None)
+        exportMap = self.resolvedExports.get(addr)
+        if exportMap:
+            export = next(iter(exportMap.values()), None)
 
         name = export or self.exports.get(addr) or self.resolvedStrings.get(addr)
         if name:
@@ -936,27 +1069,23 @@ class ConsolePanel(wx.Panel):
 
         self.DispatchCommand(command, payload)
 
-    def PageCrcChanged(self, pageBase: int) -> bool:
-        """Return if the bytes at `pageBase` have changed since the last check."""
-        pageData = self.pageBuffers.get(pageBase)
-        if pageData is None:
-            return False
+    def BuildModuleRanges(self, modules: list[tuple[str, str, str, str]]) -> bool:
+        """Rebuild the sorted module ranges, returning whether the set changed.
 
-        newHash = zlib.adler32(pageData) & 0xFFFFFFFF
-        oldHash = self.pageHashes.get(pageBase)
-        if newHash != oldHash:
-            self.pageHashes[pageBase] = newHash
-            return True
-
-        return False
-
-    def BuildModuleRanges(self, modules: list[tuple[str, str, str, str]]):
+        This used to append without clearing, so every module list refresh duplicated every
+        entry and unloaded modules were never dropped - AddressInModules kept reporting freed
+        ranges as live.
+        """
+        ranges = []
         for modBase, modSize, modName, modPath in modules:
             start = int(modBase, 16)
             end = start + int(modSize, 16)
-            self.moduleRanges.append((start, end, modName))
+            ranges.append((start, end, modName))
 
-        self.moduleRanges.sort()
+        ranges.sort()
+        changed = ranges != self.moduleRanges
+        self.moduleRanges = ranges
+        return changed
 
     def AddressInModules(self, cip: int) -> bool:
         idx = bisect.bisect_right(self.moduleRanges, (cip,))
@@ -1016,10 +1145,18 @@ class ConsolePanel(wx.Panel):
             return
 
         for bp in payload.split("|"):
-            try:
-                bps.append(bp.split(","))
-            except ValueError:
+            # str.split never raises, so the old `except ValueError` here was dead and a
+            # short entry reached UpdateData, where unpacking it killed the whole handler.
+            # Entries are "dr,address,type,size"; older monitors sent only the first two.
+            parts = [part.strip() for part in bp.split(",")]
+            if len(parts) == 2:
+                parts += ["x", "1"]
+
+            if len(parts) != 4:
+                log.warning("[DEBUG CONSOLE] Skipping malformed breakpoint entry: %r", bp)
                 continue
+
+            bps.append(tuple(parts))
         if bps:
             self.UpdateBreakpoints(bps)
 
@@ -1064,7 +1201,11 @@ class ConsolePanel(wx.Panel):
                 continue
 
         if modules:
-            self.BuildModuleRanges(modules)
+            # A load or unload changes what is mapped, so retained pages can no longer be
+            # trusted; drop them and let the next JumpTo re-read the window.
+            if self.BuildModuleRanges(modules):
+                self.pageBuffers.clear()
+
             self.GetAllExports(modules)
             self.UpdateModules(modules)
 
@@ -1106,43 +1247,22 @@ class ConsolePanel(wx.Panel):
 
     def HandlePageMap(self, payload):
         self.disassemblyConsole.LoadPageMap(payload)
-        with self.pageLock:
-            self.pageBuffers.clear()
-            self.requestedPages.clear()
-            self.pageHashes.clear()
-            self.idleDecodeQueue.clear()
+        self.pageBuffers.clear()
+        self.pendingPages.clear()
+        self.pageHashes.clear()
 
         cip = self.cip
         if not self.IsAddressKnown(cip):
             log.debug(f"[DEBUG] CIP 0x{cip:X} is not present in the new PageMap; waiting for next execution update.")
             return
 
-        desiredStart = cip
-        desiredEnd = cip + CHUNK_SIZE
-        pageMap = self.disassemblyConsole.pageMap
-        pagesToRequest = set()
-        for base, size, prot in pageMap:
-            regionEnd = base + size
-            if regionEnd < desiredStart or base > desiredEnd:
-                continue
-
-            firstPage = (base // PAGE_SIZE) * PAGE_SIZE
-            lastPage = ((base + size - 1) // PAGE_SIZE) * PAGE_SIZE
-            page = firstPage
-            while page <= lastPage:
-                if desiredStart - PAGE_SIZE <= page <= desiredEnd:
-                    pagesToRequest.add(page)
-
-                page += PAGE_SIZE
-
+        pagesToRequest = SelectWindowPages(self.disassemblyConsole.pageMap, cip, PAGE_SIZE, CHUNK_SIZE)
         if not pagesToRequest:
             self.JumpTo(cip)
             return
 
-        with self.pageLock:
-            for pageBase in sorted(pagesToRequest):
-                self.requestedPages.add(pageBase)
-                self.RequestPage(pageBase)
+        for pageBase in sorted(pagesToRequest):
+            self.RequestPage(pageBase)
 
         self.RefreshViewState()
 
@@ -1154,10 +1274,20 @@ class ConsolePanel(wx.Panel):
             return
 
         try:
-            requestAddr, pageData = payload.split("|", 1)
+            requestAddr, tag, pageData = payload.split("|", 2)
             pageBase = int(requestAddr, 16)
         except ValueError as e:
             log.error("[DEBUG CONSOLE] Page load payload invalid: %s (%s)", payload, str(e))
+            log.error("[DEBUG CONSOLE] %s", STALE_MONITOR_MSG)
+            # This branch cannot name the page, so let the page map round-trip clear the set
+            # rather than leaving a request outstanding and the view frozen.
+            self.RefreshPageMap()
+            return
+
+        # A tag from an earlier break is not an answer to the current request: dropping it
+        # here is what keeps a stale page out of the buffers when stepping quickly.
+        if self.pendingPages.pop(tag, None) is None:
+            log.debug("[DEBUG] Ignoring unsolicited or stale page response for 0x%X (tag %s)", pageBase, tag)
             return
 
         if pageData in ("UNREADABLE", "NODATA"):
@@ -1174,23 +1304,25 @@ class ConsolePanel(wx.Panel):
 
         if validPages:
             region = self.disassemblyConsole.FindPage(pageBase)
-            if region:
-                expected = min(PAGE_SIZE, region[1] - (pageBase - region[0]))
-                if len(pageData) > expected:
-                    pageData = pageData[:expected]
+            if not region:
+                # The map cannot place this page, so its true extent is unknown and trimming
+                # is impossible; buffering it would let a decode run past the region.
+                log.debug("[DEBUG] Page 0x%X is not in the page map; discarding and refreshing.", pageBase)
+                self.RefreshPageMap()
+                return
 
-            with self.pageLock:
-                self.pageBuffers[pageBase] = pageData
+            expected = min(PAGE_SIZE, region[1] - (pageBase - region[0]))
+            if len(pageData) > expected:
+                pageData = pageData[:expected]
 
-        with self.pageLock:
-            self.requestedPages.discard(pageBase)
-            complete = not self.requestedPages
+            self.pageBuffers[pageBase] = pageData
 
-        if complete:
+        if not self.pendingPages:
+            # DoHotDecode compares against the hashes from before this read to decide whether
+            # the code was rewritten, so it has to run before they are replaced.
             self.DoHotDecode()
-            self.idleDecodeQueue.clear()
-            self.idleDecodeQueue = [p for p in self.pageBuffers if p >= self.cip + PAGE_SIZE and self.PageCrcChanged(p)]
-            wx.CallLater(1, self.ProcessNextIdlePage)
+            for page, data in self.pageBuffers.items():
+                self.pageHashes[page] = PageHash(data)
 
     def HandleRegUpdate(self, payload):
         if payload.startswith("Failed"):
@@ -1244,68 +1376,78 @@ class ConsolePanel(wx.Panel):
             self.RefreshModuleList()
             return
 
-        data = ""
-        addr = None
-        if "|" in payload:
-            requestAddr, data = payload.split("|", 1)
+        # The response carries back the tag of the request that caused it, so the purpose is
+        # known rather than inferred from len(data). Under the old scheme a "Dump Memory to
+        # File" of 4, 8, 256 or 512 bytes was indistinguishable from a pointer or string read.
+        try:
+            requestAddr, tag, data = payload.split("|", 2)
             addr = int(requestAddr, 16)
-
-        if addr is None:
+        except ValueError:
+            log.error("[DEBUG CONSOLE] Memory dump payload invalid: %s", payload)
+            log.error("[DEBUG CONSOLE] %s", STALE_MONITOR_MSG)
+            self.AppendConsole(STALE_MONITOR_MSG)
             return
+
+        purpose = tag.split(":", 1)[-1]
 
         if data in ("UNREADABLE", "NODATA"):
             log.debug(f"[DEBUG] MemDump returned {data} for 0x{addr:X}. Refreshing memory map.")
+            if purpose == TAG_FILE:
+                self.AppendConsole(f"Memory dump to file failed: {addr:#x} is {data}")
+
             self.RefreshPageMap()
             self.RefreshModuleList()
             return
 
-        if self.dumpMemFile and self.dumpFilePath:
-            self.WriteMemToFile(data)
+        if purpose == TAG_FILE:
+            if self.dumpFilePath:
+                self.WriteMemToFile(data)
+
             return
 
-        datalen = len(data)
-        if datalen in (8, 16):
+        if purpose == TAG_DEREF:
             export = self.GetExport(data)
-            with self.pageLock:
-                instAddrs = [instAddr for instAddr, exportMap in self.resolvedExports.items() if addr in exportMap]
-                for instAddr in instAddrs:
-                    if export:
-                        self.resolvedExports[instAddr][addr] = export
-                    else:
-                        del self.resolvedExports[instAddr]
+            instAddrs = [instAddr for instAddr, exportMap in self.resolvedExports.items() if addr in exportMap]
+            for instAddr in instAddrs:
+                if export:
+                    self.resolvedExports[instAddr][addr] = export
+                else:
+                    del self.resolvedExports[instAddr]
 
-                if addr in self.derefPending:
-                    self.derefPending.remove(addr)
-                    if self.derefCount > 0:
-                        self.derefCount -= 1
+            if addr in self.derefPending:
+                self.derefPending.remove(addr)
+                if self.derefCount > 0:
+                    self.derefCount -= 1
 
             if export:
                 self.AppendConsole(export)
 
-            if self.derefCount == 0:
+            # Only a bulk resolve (which clears resolveAllRefsStatus) should rebuild the whole
+            # view. Without this gate every single-pointer resolve ran a full rebuild plus a
+            # RefreshViewState, and printed a bogus "Completed resolving calls."
+            if not self.disassemblyConsole.resolveAllRefsStatus and self.derefCount == 0:
                 self.AppendConsole("Completed resolving calls.")
                 self.UpdateDisassemblyView()
                 self.disassemblyConsole.resolveAllRefsStatus = True
 
             return
 
-        if datalen == MAX_LEN * 2:
+        if purpose == TAG_STR:
             raw = b""
             with suppress(ValueError):
                 raw = bytes.fromhex(data)
 
             s = self.ProcessStringDump(raw, secondPass=False)
             if not s:
-                self.SendCommand(CMD_MEM_DUMP, f"{addr:#x}|{hex(MAX_LEN * 2)}")
+                self.SendCommand(CMD_MEM_DUMP, f"{addr:#x}|{hex(MAX_LEN * 2)}", tag=self.NextTag(TAG_STRW))
                 return
 
             self.AppendConsole(s)
-            with self.pageLock:
-                self.resolvedStrings[addr] = s
+            self.resolvedStrings[addr] = s
 
             return
 
-        if datalen == MAX_LEN * 4:
+        if purpose == TAG_STRW:
             raw = b""
             with suppress(ValueError):
                 raw = bytes.fromhex(data)
@@ -1313,10 +1455,164 @@ class ConsolePanel(wx.Panel):
             s = self.ProcessStringDump(raw, secondPass=True)
             if s:
                 self.AppendConsole(s)
-                with self.pageLock:
-                    self.resolvedStrings[addr] = s
+                self.resolvedStrings[addr] = s
+
+            # A raw hex blob from a string lookup, not the formatted dump the panel parses.
+            return
+
+        if purpose != TAG_DUMP:
+            log.warning("[DEBUG CONSOLE] Unknown memory dump purpose %r for %#x", purpose, addr)
+            return
 
         self.UpdateMemDump(data)
+
+    def DecodeCallSite(self, returnAddr: int, hexBytes: str) -> str:
+        """Find the CALL that ends exactly where a frame returns to.
+
+        capemon sends the bytes preceding the return address so this costs no extra round
+        trip. Decoding backwards is ambiguous, so every start offset is tried and only an
+        instruction that ends precisely at the return address is accepted.
+        """
+        try:
+            data = bytes.fromhex(hexBytes)
+        except ValueError:
+            return ""
+
+        if not data:
+            return ""
+
+        mode = Decode64Bits if self.bits == 64 else Decode32Bits
+        base = returnAddr - len(data)
+        for offset in range(len(data)):
+            decoded = Decode(base + offset, data[offset:], mode)
+            if not decoded:
+                continue
+
+            address, size, text, _ = decoded[0]
+            if address + size == returnAddr and text.lower().startswith("call"):
+                return text
+
+        return ""
+
+    def ParseFrames(self, payload: str):
+        """Turn 'index,returnAddress,framePointer,callBytes' entries into display rows."""
+        frames = []
+        for entry in payload.split("|"):
+            parts = [part.strip() for part in entry.split(",")]
+            if len(parts) != 4:
+                log.warning("[DEBUG CONSOLE] Skipping malformed call stack frame: %r", entry)
+                continue
+
+            index, returnAddr, framePtr, callBytes = parts
+            try:
+                callSite = self.DecodeCallSite(int(returnAddr, 16), callBytes)
+            except ValueError:
+                callSite = ""
+
+            frames.append((index, returnAddr, framePtr, callSite))
+
+        return frames
+
+    def HandleCallStack(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Call stack: %s", payload)
+            return
+
+        self.callStackDisplay.UpdateData(self.ParseFrames(payload))
+
+    def InspectThread(self, tid: str):
+        """Snapshot another thread. Stepping still drives the thread that broke."""
+        self.SendCommand(CMD_THREAD_INSPECT, str(tid))
+
+    def ReturnToHaltedThread(self):
+        """Drop the inspection view and repopulate from the thread that is actually halted."""
+        if self.inspectedTid is None:
+            return
+
+        self.inspectedTid = None
+        self.ShowThreadBanner(None)
+        self.RefreshViewState()
+
+    def ShowThreadBanner(self, tid):
+        """Make it unmissable that the panes are not showing the halted thread."""
+        if tid is None:
+            self.threadBanner.SetLabel("")
+            self.threadBanner.Hide()
+        else:
+            self.threadBanner.SetLabel(f"Viewing thread {tid} - not the halted thread. Double-click the top thread to return.")
+            self.threadBanner.SetForegroundColour(ACCENT_ORANGE)
+            self.threadBanner.Show()
+
+        self.threadBanner.GetParent().Layout()
+
+    def HandleThreadInspect(self, payload):
+        if payload.startswith("Failed"):
+            log.warning("[DEBUG CONSOLE] Thread inspect: %s", payload)
+            self.AppendConsole(payload)
+            return
+
+        sections = {}
+        current = None
+        for line in payload.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                current = stripped[1:-1]
+                sections[current] = []
+            elif current is not None:
+                sections[current].append(line)
+
+        body = {name: "\n".join(lines).strip() for name, lines in sections.items()}
+        tid = body.get("TID", "").strip()
+        if not tid:
+            log.warning("[DEBUG CONSOLE] Thread inspect payload has no TID: %r", payload[:80])
+            return
+
+        self.inspectedTid = tid
+        # Deliberately not UpdateRegs: that parses RIP into self.cip, and this is another
+        # thread's instruction pointer. The disassembly must keep tracking the halted thread.
+        self.regsDisplay.SetValue(body.get("REGS", ""))
+        if body.get("STACK"):
+            self.stackDisplay.UpdateData(body["STACK"])
+
+        self.callStackDisplay.UpdateData(self.ParseFrames(body.get("FRAMES", "")))
+        self.ShowThreadBanner(tid)
+
+    def NearestExport(self, addr: int) -> str:
+        """Nearest export at or below `addr` as module!symbol+offset, or "".
+
+        Bisects a sorted address list rather than scanning the exports map: this runs for
+        every call stack frame on every break, and a fully loaded process has tens of
+        thousands of exports.
+        """
+        if not self.exports:
+            return ""
+
+        if len(self.exportAddrs) != len(self.exports):
+            self.exportAddrs = sorted(self.exports)
+
+        exact = self.exports.get(addr)
+        if exact:
+            return exact
+
+        idx = bisect.bisect_right(self.exportAddrs, addr)
+        if not idx:
+            return ""
+
+        base = self.exportAddrs[idx - 1]
+        if addr - base >= 0x10000:
+            return ""
+
+        return f"{self.exports[base]}+{addr - base:#x}"
+
+    def ModuleNameFor(self, addr: int) -> str:
+        """The module containing `addr`, for frames with no matching export."""
+        idx = bisect.bisect_right(self.moduleRanges, (addr,))
+        if idx:
+            start, end, modName = self.moduleRanges[idx - 1]
+            if start <= addr < end:
+                return modName
+
+        return ""
 
     def HandleStackUpdate(self, payload):
         if payload.startswith("Failed"):
@@ -1333,6 +1629,9 @@ class ConsolePanel(wx.Panel):
             self.AppendConsole(payload)
             self.disassemblyConsole.ClearHighlight()
             log.debug("[DEBUG] Execution fault detected, refreshing PageMap...")
+            # The layout the retained pages were read under is no longer trustworthy.
+            self.pageBuffers.clear()
+
             self.RefreshPageMap()
             self.RefreshModuleList()
             return
