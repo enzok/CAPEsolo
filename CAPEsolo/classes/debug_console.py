@@ -16,6 +16,7 @@ from distorm3 import Decode, Decode32Bits, Decode64Bits
 from CAPEsolo.capelib.api_protos import AppendUserPrototype, LoadPrototypes, ParsePrototypes
 from CAPEsolo.capelib.call_args import PROTECT_VALUES, CallArguments, ParseRegisters
 from CAPEsolo.capelib.cmdconsts import *
+from CAPEsolo.capelib.console_commands import HelpText, ParseCommand
 from CAPEsolo.capelib.page_cache import (
     BoundInstructions,
     ContiguousSpan,
@@ -54,7 +55,7 @@ from .debug_controls import (
 from .debug_pipe import CommandPipeHandler
 from .patch_assembler import Assembler
 from .patch_models import PatchEntry
-from .theme import ACCENT_ORANGE, BG_CARD, FONT_CODE, apply_theme
+from .theme import ACCENT_ORANGE, BG_CARD, FG_PRIMARY, FG_SECONDARY, FONT_CODE, apply_theme
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +72,10 @@ MIN_PANE = 80
 # than a row count so a tall window gives it more than the ~7 text rows it used to be fixed
 # at; the sash is the user's from then on.
 MISC_ROW_FRACTION = 0.28
+# Command box history kept per session.
+MAX_HISTORY = 100
+# Placeholder shown in the empty command box.
+COMMAND_HINT = "command, or 'help' for the list"
 # Share of the width the left pane of each row opens at, shared by both rows so Disassembly
 # and Memory Dump are one column and Registers and Stack are the other. This is the
 # Disassembly/Registers split as it already was; the sashes are the user's after that.
@@ -271,6 +276,11 @@ class ConsolePanel(wx.Panel):
         # which it cannot - refreshing on the latter never terminates.
         self.unreadablePages: set[int] = set()
         self.requestId = 0
+        # Command box history, oldest first, and where Up/Down currently is in it.
+        self.commandHistory: list[str] = []
+        self.historyPos = None
+        # Whether the command box currently holds the placeholder rather than input.
+        self.hintShown = False
         # The page map arrives in pages; these hold the walk in progress. See CollectPageMap.
         self.pageMapPage = 0
         self.pageMapPages: list[str] = []
@@ -483,6 +493,9 @@ class ConsolePanel(wx.Panel):
         inputSizer.Add(wx.StaticText(self, label="Command Input:"), 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 5)
         self.inputBox = wx.TextCtrl(self, style=wx.TE_PROCESS_ENTER)
         self.inputBox.Bind(wx.EVT_TEXT_ENTER, self.OnEnter)
+        self.inputBox.Bind(wx.EVT_KEY_DOWN, self.OnInputKey)
+        self.inputBox.Bind(wx.EVT_SET_FOCUS, self.OnInputFocus)
+        self.inputBox.Bind(wx.EVT_KILL_FOCUS, self.OnInputBlur)
         inputSizer.Add(self.inputBox, 1, wx.EXPAND | wx.ALL, 5)
 
         # Debugging Controls
@@ -519,6 +532,10 @@ class ConsolePanel(wx.Panel):
         # SplitterWindow is not a wx.Panel, so apply_theme leaves the sash the native grey.
         for splitter in (self.outerSplitter, self.paneSplitter, self.topSplitter, self.bottomSplitter):
             splitter.SetBackgroundColour(BG_CARD)
+
+        # After apply_theme, which sets every TextCtrl's foreground to FG_PRIMARY and would
+        # otherwise repaint the placeholder as though it were typed input.
+        self.ShowInputHint()
 
         self.Bind(wx.EVT_SIZE, self.OnSize)
 
@@ -803,32 +820,124 @@ class ConsolePanel(wx.Panel):
                 win32file.CloseHandle(overlapped.hEvent)
 
     def OnEnter(self, event):
-        """Handles user input and processes commands."""
-        inputText = self.inputBox.GetValue().strip()
-        try:
-            cmd, data = inputText.split(" ", 1)
-        except ValueError:
-            cmd = inputText
-            data = ""
+        """Run one line from the command box.
 
-        cmd = cmd.lower()
-        if cmd == "disconnect":
-            wx.CallAfter(self.statusBar.SetLabel, "Status: Disconnected")
-            win32file.CloseHandle(self.pipeHandle)
-            self.connected = False
-            log.info("[DEBUG CONSOLE] Pipe disconnected successfully.")
-        elif cmd == "quit":
-            self.SendCommand(CMD_CONTINUE)
-            self.ShutdownConsole()
-        elif cmd == "clear":
-            self.outputConsole.Clear()
-        elif cmd in ("",):
-            pass
-        else:
-            self.SendCommand(cmd)
-
+        Everything typed is parsed and validated before anything is sent. The box used to
+        send the command word alone - the arguments were parsed into a variable and then
+        dropped, so `md 0x401000` dumped at CIP and `ru 0x401000` reached the monitor with no
+        address - and anything unrecognised was uppercased and sent for the target to reject.
+        """
+        # The placeholder is real text in the control, so it has to be ruled out here rather
+        # than trusted not to arrive: focus events are what normally clear it, and a path that
+        # reaches Enter without one would otherwise submit the hint as a command.
+        inputText = "" if self.hintShown else self.inputBox.GetValue().strip()
         self.inputBox.Clear()
         event.Skip()
+        if not inputText:
+            return
+
+        # Re-entering a command moves it to the newest end rather than adding a duplicate, and
+        # the list is capped so a long session does not accumulate one entry per keystroke of
+        # trial and error. A rejected line is kept: Up is how you fix a typo.
+        self.commandHistory = [h for h in self.commandHistory if h != inputText] + [inputText]
+        del self.commandHistory[:-MAX_HISTORY]
+        self.historyPos = None
+
+        code, payload, error = ParseCommand(inputText)
+        if error:
+            self.AppendConsole(error)
+            return
+
+        if code is None:
+            if payload is not None:
+                self.RunLocalCommand(payload)
+
+            return
+
+        self.AppendConsole(f"> {inputText}")
+        self.SendCommand(code, payload)
+
+    def RunLocalCommand(self, name: str):
+        """A command the console answers itself rather than sending to the target."""
+        if name == "help":
+            self.AppendConsole(HelpText())
+        elif name == "clear":
+            self.outputConsole.Clear()
+        elif name == "disconnect":
+            wx.CallAfter(self.statusBar.SetLabel, "Status: Disconnected")
+            if self.pipeHandle:
+                win32file.CloseHandle(self.pipeHandle)
+
+            self.connected = False
+            log.info("[DEBUG CONSOLE] Pipe disconnected successfully.")
+        elif name == "quit":
+            self.SendCommand(CMD_CONTINUE)
+            self.ShutdownConsole()
+
+    def ShowInputHint(self):
+        """Put the placeholder in the command box, in muted text, when it is empty.
+
+        Done by hand rather than with SetHint. wx installs its hint by setting the control's
+        foreground to the system grey-text colour, and apply_theme runs afterwards and sets
+        every TextCtrl's foreground to FG_PRIMARY - so the placeholder came out the same
+        colour as real input, reading like something you had to delete before typing.
+
+        Using the theme's own muted colour also keeps it consistent with the other things
+        this UI greys out: a freed region in the memory view, an exited process in the tree.
+        """
+        if self.inputBox.GetValue():
+            # Real content. Normally the focus that preceded it cleared the hint, but a value
+            # set without one - history recall, anything programmatic - would otherwise leave
+            # the muted colour on text the user actually typed.
+            if self.hintShown:
+                self.hintShown = False
+                self.inputBox.SetForegroundColour(FG_PRIMARY)
+
+            return
+
+        self.hintShown = True
+        self.inputBox.SetForegroundColour(FG_SECONDARY)
+        # ChangeValue, not SetValue: this must not look like the user typing.
+        self.inputBox.ChangeValue(COMMAND_HINT)
+
+    def ClearInputHint(self):
+        if not self.hintShown:
+            return
+
+        self.hintShown = False
+        self.inputBox.ChangeValue("")
+        self.inputBox.SetForegroundColour(FG_PRIMARY)
+
+    def OnInputFocus(self, event):
+        self.ClearInputHint()
+        event.Skip()
+
+    def OnInputBlur(self, event):
+        self.ShowInputHint()
+        event.Skip()
+
+    def OnInputKey(self, event):
+        """Up and Down walk the command history, as a command box is expected to."""
+        key = event.GetKeyCode()
+        if key not in (wx.WXK_UP, wx.WXK_DOWN) or not self.commandHistory:
+            event.Skip()
+            return
+
+        if key == wx.WXK_UP:
+            self.historyPos = len(self.commandHistory) - 1 if self.historyPos is None else max(0, self.historyPos - 1)
+        elif self.historyPos is None:
+            return
+        else:
+            self.historyPos += 1
+            if self.historyPos >= len(self.commandHistory):
+                # Past the newest entry is the empty line you started from.
+                self.historyPos = None
+                self.inputBox.SetValue("")
+                self.inputBox.SetInsertionPointEnd()
+                return
+
+        self.inputBox.SetValue(self.commandHistory[self.historyPos])
+        self.inputBox.SetInsertionPointEnd()
 
     def ShutdownConsole(self):
         """Handles graceful shutdown of the console."""
@@ -1978,7 +2087,9 @@ class ConsolePanel(wx.Panel):
         disasm = self.disassemblyConsole
         row = disasm.GetCipRow()
         if disasm.commentRow is not None:
-            disasm.SetItem(disasm.commentRow, COMMENT_COL, "")
+            if disasm.commentRow < disasm.GetItemCount():
+                disasm.SetItem(disasm.commentRow, COMMENT_COL, "")
+
             disasm.commentRow = None
 
         if row == -1 or self.bits is None:
@@ -1988,8 +2099,15 @@ class ConsolePanel(wx.Panel):
         if not text.lower().startswith("call"):
             return
 
-        proto = self.PrototypeFor(text)
         regVals = ParseRegisters(self.regsDisplay.GetValue())
+        # The register pane has to describe the instruction being annotated. Between the
+        # execution reply, which sets cip, and the register reply, which fills the pane, it
+        # still holds the previous break - and this runs on every render, so without the check
+        # a re-render in that window would label the new call with the old values.
+        if regVals.get("rip", regVals.get("eip")) != self.cip:
+            return
+
+        proto = self.PrototypeFor(text)
         argCount = len(proto.params) if proto else None
         args = CallArguments(self.bits, regVals, self.stackDisplay.StackWords(), argCount)
         if proto and not proto.params:

@@ -235,6 +235,11 @@ class DisassemblyListCtrl(wx.ListCtrl):
                 if self.cipRow is not None and self.cipRow >= firstChanged:
                     self.cipRow = None
 
+                # Same reasoning as cipRow: a rebuilt row is inserted without its comment, so
+                # a commentRow at or past the rebuild no longer refers to an annotated row.
+                if self.commentRow is not None and self.commentRow >= firstChanged:
+                    self.commentRow = None
+
                 for row in range(firstChanged, len(self.decodeCache)):
                     self._InsertRow(row, self.decodeCache[row])
         finally:
@@ -299,17 +304,27 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.cipRow = None
 
     def HighlightCip(self, row):
+        """Move the CIP highlight, and re-derive the call argument annotation with it.
+
+        Both are properties of where CIP is rather than of a particular fetch, and this is the
+        one place every path through the view passes: a re-render, Escape coming back from a
+        followed address, Go To EIP/RIP. Annotating only when the stack reply arrived meant
+        following an address dropped the arguments and nothing put them back, because
+        returning is not a break and fetches nothing.
+        """
         self.ClearHighlight()
         if row < 0:
             cip = self.parent.cip
             log.warning("[DEBUG CONSOLE] Instruction %s not found in disassembly", f"{cip:#x}" if cip else "(unknown)")
             self.Refresh()
+            self.parent.ShowCallArguments()
             return
 
         self.cipRow = row
         self.SetItemBackgroundColour(row, ACCENT_GREEN)
         self.CenterRow(row)
         self.Refresh()
+        self.parent.ShowCallArguments()
 
     def CenterRow(self, row):
         """Center the specified row in the view with a single scroll."""
