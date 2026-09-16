@@ -232,10 +232,15 @@ class MainFrame(wx.Frame):
             self.analysisDir = analysisDir
 
     def SetAppIcon(self):
-        icon = wx.Icon()
-        iconPath = os.path.join(self.capesoloRoot, "cape_logo.png")
-        icon.LoadFile(iconPath, wx.BITMAP_TYPE_PNG)
-        self.SetIcon(icon)
+        """Set the window icon from the multi-size .ico.
+
+        SetIcons with a bundle rather than SetIcon with one image: Windows asks for 16px for
+        the title bar and 32px for Alt-Tab and the taskbar, and a bundle lets it take the
+        frame rendered at that size instead of shrinking one bitmap on the fly. The previous
+        icon was a single 39x45 PNG, which is neither of the sizes actually requested.
+        """
+        iconPath = os.path.join(self.capesoloRoot, "capesolo.ico")
+        self.SetIcons(wx.IconBundle(iconPath, wx.BITMAP_TYPE_ICO))
 
     def OnClose(self, event):
         # Kill the download broker so its held key password does not outlive the app.
