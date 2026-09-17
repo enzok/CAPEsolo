@@ -700,6 +700,10 @@ class Picker(_Themed):
             self.choices.append(item)
         self.InvalidateBestSize()
 
+    def AppendItems(self, items):
+        self.choices.extend(items)
+        self.InvalidateBestSize()
+
     def Set(self, items):
         self.choices = list(items)
         self.selection = -1
@@ -851,9 +855,21 @@ class _PickerPopup(wx.PopupTransientWindow):
             self.owner._Choose(index)
         self.Dismiss()
 
+    def Dismiss(self):
+        # OnDismiss only fires for a dismissal the toolkit initiated (a click outside, a
+        # focus loss); calling Dismiss() directly - which is what choosing a row does -
+        # bypasses it, leaving the owner believing its popup is still open and refusing to
+        # open another. Clearing here covers both paths.
+        self._Release()
+        super().Dismiss()
+
     def OnDismiss(self):
-        self.owner._popup = None
-        self.owner.Refresh()
+        self._Release()
+
+    def _Release(self):
+        if self.owner._popup is self:
+            self.owner._popup = None
+            self.owner.Refresh()
 
     def _OnPaint(self, event):
         dc = wx.AutoBufferedPaintDC(self)
@@ -939,9 +955,15 @@ class Field(wx.Panel):
         self.ctrl.Bind(wx.EVT_SET_FOCUS, self._OnFocus)
         self.ctrl.Bind(wx.EVT_KILL_FOCUS, self._OnFocus)
 
-        pad = dip(self, SP_SM)
+        # Asymmetric padding: the horizontal gap keeps text off the rounded corners, the
+        # vertical one only has to clear the caret. Equal padding made every field as tall
+        # as a button and turned each row of the Start tab into its own band.
         sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(self.ctrl, 1, wx.EXPAND | wx.ALL, pad)
+        sizer.Add(
+            self.ctrl, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, dip(self, SP_SM)
+        )
+        sizer.Insert(0, 0, dip(self, SP_XS))
+        sizer.Add(0, dip(self, SP_XS))
         self.SetSizer(sizer)
 
     def _OnFocus(self, event):

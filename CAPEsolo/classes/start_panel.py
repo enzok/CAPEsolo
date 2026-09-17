@@ -41,7 +41,18 @@ from .json_report import GetResults
 from .key_event import EVT_ANALYZER_COMPLETE, EVT_ANALYZER_COMPLETE_ID
 from .logger_window import LoggerWindow
 from .process_tree_window import ProcessTreeWindow
-from .theme import apply_theme
+from . import ui_kit as ui
+from .theme import (
+    BG_MAIN,
+    FONT_CODE,
+    SP_LG,
+    SP_MD,
+    SP_SM,
+    SP_XL,
+    apply_theme,
+    dip,
+    dip_size,
+)
 from .vt_helper import seed_vt_cache
 
 log = logging.getLogger(__name__)
@@ -255,7 +266,7 @@ class _DownloadCredentialsDialog(wx.Dialog):
         return password, keys
 
 
-class StartPanel(scrolled.ScrolledPanel):
+class StartPanel(wx.Panel):
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
@@ -296,123 +307,168 @@ class StartPanel(scrolled.ScrolledPanel):
         """
 
     def InitUi(self):
+        """Build the Start tab: scrolling cards, with the action bar pinned beneath them.
+
+        The panel is a plain wx.Panel holding a ScrolledPanel rather than being one itself,
+        so Launch and Kill stay on screen no matter how far the configuration above has been
+        scrolled. Content is grouped into cards - Target, Package & options, Monitor, and
+        the two collapsible editors - instead of eleven sibling rows separated only by a
+        uniform 10px border, which gave a target picker, a credentials box and sixteen
+        monitor switches exactly the same visual weight.
+        """
+        outer = wx.BoxSizer(wx.VERTICAL)
+        self.scroll = scrolled.ScrolledPanel(self)
+        self.scroll.SetBackgroundColour(BG_MAIN)
+        body = self.scroll
         vbox = wx.BoxSizer(wx.VERTICAL)
 
-        # File Dropdown and Browse Button
-        hbox1 = wx.BoxSizer(wx.HORIZONTAL)
-        self.targetPath = wx.TextCtrl(self)
-        self.targetPath.SetValue("<Target file>")
-        browseBtn = wx.Button(self, label="Browse...")
+        gapS = dip(self, SP_SM)
+        gapM = dip(self, SP_MD)
+        gapL = dip(self, SP_LG)
+
+        # -- Target ---------------------------------------------------------
+        targetCard = ui.Card(body, title="Target")
+
+        pathRow = wx.BoxSizer(wx.HORIZONTAL)
+        self.targetPathField = ui.Field(targetCard, value="<Target file>")
+        self.targetPath = self.targetPathField.ctrl
+        browseBtn = ui.Button(targetCard, label="Browse...")
         browseBtn.Bind(wx.EVT_BUTTON, self.OnBrowse)
-        hbox1.Add(self.targetPath, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5)
-        hbox1.Add(browseBtn, proportion=0)
+        pathRow.Add(self.targetPathField, 1, wx.EXPAND | wx.RIGHT, gapS)
+        pathRow.Add(browseBtn, 0, wx.ALIGN_CENTER_VERTICAL)
+        targetCard.body.Add(pathRow, 0, wx.EXPAND | wx.BOTTOM, gapM)
 
-        # Download a sample by hash and feed it into the same target flow as Browse. Grouped in
-        # a titled box so it's clearly the download feature. The source is auto-selected
-        # (VirusTotal first, then MalwareBazaar) from the hash and which keys are configured; the
-        # controls are enabled once the download broker starts (see _InitDownloadBroker).
-        dlBox = wx.StaticBoxSizer(wx.VERTICAL, self, "Download by hash")
-        dlParent = dlBox.GetStaticBox()
+        # Download a sample by hash and feed it into the same target flow as Browse. The
+        # source is auto-selected (VirusTotal first, then MalwareBazaar) from the hash and
+        # which keys are configured; the controls are enabled once the download broker
+        # starts (see _InitDownloadBroker). A section header rather than a nested group box:
+        # a second etched rectangle inside the first is what made this read as a dialog.
+        targetCard.body.Add(
+            ui.SectionHeader(targetCard, "Download by hash"), 0, wx.EXPAND | wx.BOTTOM, gapS
+        )
 
-        hboxDownload = wx.BoxSizer(wx.HORIZONTAL)
-        self.hashInput = wx.TextCtrl(dlParent)
-        self.hashInput.SetHint("<md5, sha1, sha256>")
+        hashRow = wx.BoxSizer(wx.HORIZONTAL)
+        self.hashInputField = ui.Field(targetCard, hint="<md5, sha1, sha256>")
+        self.hashInput = self.hashInputField.ctrl
         self.hashInput.SetToolTip("MD5/SHA1/SHA256 hex hash. MalwareBazaar requires SHA256.")
-        self.downloadBtn = wx.Button(dlParent, label="Download")
+        self.downloadBtn = ui.Button(targetCard, label="Download")
         self.downloadBtn.Disable()
         self.downloadBtn.Bind(wx.EVT_BUTTON, self.OnDownloadSample)
-        hboxDownload.Add(self.hashInput, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5)
-        hboxDownload.Add(self.downloadBtn, proportion=0)
-        dlBox.Add(hboxDownload, flag=wx.EXPAND | wx.ALL, border=5)
+        hashRow.Add(self.hashInputField, 1, wx.EXPAND | wx.RIGHT, gapS)
+        hashRow.Add(self.downloadBtn, 0, wx.ALIGN_CENTER_VERTICAL)
+        targetCard.body.Add(hashRow, 0, wx.EXPAND | wx.BOTTOM, gapS)
 
         # Where downloaded samples are saved; prefilled with the effective default
         # ([download] directory, else the user's Desktop) and editable per download.
-        hboxDownloadPath = wx.BoxSizer(wx.HORIZONTAL)
-        hboxDownloadPath.Add(
-            wx.StaticText(dlParent, label="Path:"),
-            flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
-            border=5,
+        downloadPathRow = wx.BoxSizer(wx.HORIZONTAL)
+        downloadPathRow.Add(
+            wx.StaticText(targetCard, label="Path:"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            gapS,
         )
-        self.downloadPathInput = wx.TextCtrl(dlParent)
-        self.downloadPathInput.SetValue(download_dir())
+        self.downloadPathField = ui.Field(targetCard, value=download_dir())
+        self.downloadPathInput = self.downloadPathField.ctrl
         self.downloadPathInput.SetToolTip("Directory where downloaded samples are saved.")
         self.downloadPathInput.Disable()
-        self.downloadDirBtn = wx.Button(dlParent, label="Browse...")
+        self.downloadDirBtn = ui.Button(targetCard, label="Browse...")
         self.downloadDirBtn.Disable()
         self.downloadDirBtn.Bind(wx.EVT_BUTTON, self.OnBrowseDownloadDir)
-        hboxDownloadPath.Add(self.downloadPathInput, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5)
-        hboxDownloadPath.Add(self.downloadDirBtn, proportion=0)
-        dlBox.Add(hboxDownloadPath, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=5)
+        downloadPathRow.Add(self.downloadPathField, 1, wx.EXPAND | wx.RIGHT, gapS)
+        downloadPathRow.Add(self.downloadDirBtn, 0, wx.ALIGN_CENTER_VERTICAL)
+        targetCard.body.Add(downloadPathRow, 0, wx.EXPAND)
 
-        hbox2 = wx.BoxSizer(wx.HORIZONTAL)
-        packageLabel = wx.StaticText(self, label="Packages")
-        self.packageDropdown = wx.ComboBox(self, style=wx.CB_READONLY)
+        # -- Package & options ----------------------------------------------
+        packageCard = ui.Card(body, title="Package and options")
+
+        packageRow = wx.BoxSizer(wx.HORIZONTAL)
+        packageRow.Add(
+            wx.StaticText(packageCard, label="Package"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            gapS,
+        )
+        self.packageDropdown = ui.Picker(packageCard)
         self.packageDropdown.Bind(wx.EVT_COMBOBOX, self.OnPackageSelected)
         self.PackageDropdown()
         self.packageDropdown.SetValue("Auto-detect")
-        self.runFromCurrentDirCheckbox = wx.CheckBox(self, label="Run sample from current directory")
+        self.runFromCurrentDirCheckbox = ui.Check(
+            packageCard, label="Run sample from current directory"
+        )
         self.runFromCurrentDirCheckbox.Bind(wx.EVT_CHECKBOX, self.OnCurrentDirCheckboxClick)
         self.runFromCurrentDirCheckbox.SetValue(True)
-        self.manualExecutionCheckbox = wx.CheckBox(self, label="Manual Execution")
+        self.manualExecutionCheckbox = ui.Check(packageCard, label="Manual Execution")
         self.manualExecutionCheckbox.Bind(wx.EVT_CHECKBOX, self.OnManualExecCheckboxClick)
         self.manualExecutionCheckbox.SetValue(False)
-        hbox2.Add(packageLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10)
-        hbox2.Add(self.packageDropdown, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=10)
-        hbox2.Add(self.runFromCurrentDirCheckbox, flag=wx.ALIGN_CENTER_VERTICAL)
-        hbox2.Add(self.manualExecutionCheckbox, flag=wx.ALIGN_CENTER_VERTICAL)
+        packageRow.Add(self.packageDropdown, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gapL)
+        packageRow.Add(
+            self.runFromCurrentDirCheckbox, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gapL
+        )
+        packageRow.Add(self.manualExecutionCheckbox, 0, wx.ALIGN_CENTER_VERTICAL)
+        packageCard.body.Add(packageRow, 0, wx.EXPAND | wx.BOTTOM, gapM)
 
         # Archive member selector: shown only for the archive/zip packages, lets the analyst
         # pick which file inside the archive to run (writes file=<name> into the Options box).
         # Hidden until RefreshArchiveFiles reveals it.
         self.hboxArchive = wx.BoxSizer(wx.HORIZONTAL)
-        self.archiveFilesLabel = wx.StaticText(self, label="Archive file:")
-        self.archiveFilesDropdown = wx.ComboBox(self, style=wx.CB_READONLY)
+        self.archiveFilesLabel = wx.StaticText(packageCard, label="Archive file:")
+        self.archiveFilesDropdown = ui.Picker(packageCard)
         self.archiveFilesDropdown.Bind(wx.EVT_COMBOBOX, self.OnArchiveFileSelected)
         self.archiveFilesLabel.Hide()
         self.archiveFilesDropdown.Hide()
         self.hboxArchive.Add(
-            self.archiveFilesLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10
+            self.archiveFilesLabel, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gapS
         )
-        self.hboxArchive.Add(self.archiveFilesDropdown, proportion=1, flag=wx.EXPAND)
+        self.hboxArchive.Add(self.archiveFilesDropdown, 1, wx.EXPAND)
+        packageCard.body.Add(self.hboxArchive, 0, wx.EXPAND | wx.BOTTOM, gapM)
 
-        # Optional Arguments Input
-        hbox3 = wx.BoxSizer(wx.HORIZONTAL)
-        argsLabel = wx.StaticText(self, label="Options")
-        self.optionsCtrl = wx.TextCtrl(
-            self,
+        optionsRow = wx.BoxSizer(wx.HORIZONTAL)
+        optionsRow.Add(
+            wx.StaticText(packageCard, label="Options"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            gapS,
+        )
+        self.optionsField = ui.Field(
+            packageCard,
             value="option1=value, option2=value, etc...",
             style=wx.TE_PROCESS_ENTER,
         )
+        self.optionsCtrl = self.optionsField.ctrl
         self.optionsCtrl.Bind(wx.EVT_LEFT_DOWN, self.OnOptionInputClick)
         self.optionsCtrl.Bind(wx.EVT_KILL_FOCUS, self.OnOptionInputFocus)
-        hbox3.Add(argsLabel, flag=wx.RIGHT, border=5)
-        hbox3.Add(self.optionsCtrl, proportion=1, flag=wx.EXPAND)
+        optionsRow.Add(self.optionsField, 1, wx.EXPAND)
+        packageCard.body.Add(optionsRow, 0, wx.EXPAND | wx.BOTTOM, gapS)
 
-        hboxHelp = self.AddOptionsHelp()
+        packageCard.body.Add(self.AddOptionsHelp(packageCard), 0, wx.EXPAND)
 
-        # Enforce Timeout heckbox, Timeout, and Minimum and No Hook checkboxes
-        hboxTimeout = wx.BoxSizer(wx.HORIZONTAL)
-        self.enforceTimeoutCheckbox = wx.CheckBox(self, label="Enforce timeout")
+        # -- Monitor ---------------------------------------------------------
+        monitorCard = ui.Card(body, title="Monitor")
+
+        timeoutRow = wx.BoxSizer(wx.HORIZONTAL)
+        self.enforceTimeoutCheckbox = ui.Check(monitorCard, label="Enforce timeout")
         self.enforceTimeoutCheckbox.Bind(wx.EVT_CHECKBOX, self.OnEnforceTimeoutCheckboxClick)
         self.enforceTimeoutCheckbox.SetValue(False)
-        msLabel = wx.StaticText(self, label=" seconds")
-        self.timeoutInput = wx.TextCtrl(self, size=wx.Size(50, -1), value="200")
-        hboxTimeout.Add(
-            self.enforceTimeoutCheckbox,
-            flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL,
-            border=5,
+        self.timeoutField = ui.Field(monitorCard, value="200")
+        self.timeoutField.SetMinSize(dip_size(self, 80, -1))
+        self.timeoutInput = self.timeoutField.ctrl
+        timeoutRow.Add(
+            self.enforceTimeoutCheckbox, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gapM
         )
-        hboxTimeout.Add(self.timeoutInput, flag=wx.ALIGN_CENTER_VERTICAL)
-        hboxTimeout.Add(msLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
-        # Hooking mode. Grouped under a label rather than trailing the timeout controls,
-        # so it is clear these two select how much of the monitor is installed. Note that
-        # minhook is a capemon option while free is handled analyzer-side
-        # (lib/common/abstracts.py), despite sitting together here.
-        hboxHooking = wx.BoxSizer(wx.HORIZONTAL)
-        hboxHooking.Add(
-            wx.StaticText(self, label="Hooking:"),
-            flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL,
-            border=5,
+        timeoutRow.Add(self.timeoutField, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gapS)
+        timeoutRow.Add(
+            wx.StaticText(monitorCard, label="seconds"), 0, wx.ALIGN_CENTER_VERTICAL
+        )
+        monitorCard.body.Add(timeoutRow, 0, wx.EXPAND | wx.BOTTOM, gapM)
+
+        # Hooking mode. Note that minhook is a capemon option while free is handled
+        # analyzer-side (lib/common/abstracts.py), despite sitting together here.
+        hookingRow = wx.BoxSizer(wx.HORIZONTAL)
+        hookingRow.Add(
+            wx.StaticText(monitorCard, label="Hooking:"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            gapS,
         )
         # capemon picks the hook set with a single else-if chain (hooks.c), so these are
         # mutually exclusive: minhook wins over zerohook, which wins over native, and
@@ -429,57 +485,60 @@ class StartPanel(scrolled.ScrolledPanel):
             )
         ):
             style = wx.RB_GROUP if index == 0 else 0
-            radio = wx.RadioButton(self, label=label, style=style)
+            radio = ui.Radio(monitorCard, label=label, style=style)
             radio.SetToolTip(tip)
+            if index == 0:
+                radio.SetValue(True)
             self.hookSets.append((radio, option))
-            hboxHooking.Add(radio, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10)
+            hookingRow.Add(radio, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gapM)
 
-        hboxHooking.AddSpacer(10)
-        self.free = wx.CheckBox(self, label="free")
+        hookingRow.AddSpacer(gapL)
+        self.free = ui.Check(monitorCard, label="free")
         self.free.SetToolTip(
             "Run without the monitor at all (handled by the analyzer, not capemon)"
         )
         self.free.Bind(wx.EVT_CHECKBOX, self.OnFreeChecked)
-        hboxHooking.Add(self.free, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hookingRow.Add(self.free, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gapM)
 
-        self.unhookOnExit = wx.CheckBox(self, label="Unhook on exit")
+        self.unhookOnExit = ui.Check(monitorCard, label="Unhook on exit")
         self.unhookOnExit.SetToolTip(
             "Restore hooked APIs (uninject the monitor) in surviving processes when the "
             "analysis ends, so the machine stays responsive."
         )
         self.unhookOnExit.SetValue(True)
-        hboxHooking.Add(self.unhookOnExit, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hookingRow.Add(self.unhookOnExit, 0, wx.ALIGN_CENTER_VERTICAL)
+        monitorCard.body.Add(hookingRow, 0, wx.EXPAND | wx.BOTTOM, gapM)
 
-        # Monitor logging switches. Laid out as a fixed two-row grid rather than a
-        # WrapSizer: wrapping gave no vertical gap between the lines it created (so they
-        # collided), stretched whichever control landed last on a line, and left the level
-        # dropdowns vertically offset from their checkboxes. The label sits in its own
-        # grid column so the second row aligns under the first without measuring fonts.
-        # log-bps is an alias of log-breakpoints, so only one of the pair is offered.
-        gridLogging = wx.FlexGridSizer(rows=2, cols=2, hgap=12, vgap=6)
+        monitorCard.body.Add(
+            ui.SectionHeader(monitorCard, "Logging"), 0, wx.EXPAND | wx.BOTTOM, gapS
+        )
+
         # capemon reads log-exceptions and force-flush with atoi() and tests them against
         # more than one threshold, so both take a level rather than just on/off. The rest
         # are read as value[0] == '1' and are strictly boolean. See capemon config.c.
-        self.logExceptions = wx.CheckBox(self, label="log-exceptions")
+        # log-bps is an alias of log-breakpoints, so only one of the pair is offered.
+        self.logExceptions = ui.Check(monitorCard, label="log-exceptions")
         self.logExceptions.SetToolTip("Exception logging")
         self.logExceptionsLevel = self._LevelChoice(
+            monitorCard,
             ["1 - error codes only", "2 - all exceptions"],
             "1: only codes >= 0x80000000\n"
             "2: every exception, plus extra detail on access violations",
         )
-        self.logVexcept = wx.CheckBox(self, label="log-vexcept")
+        self.logVexcept = ui.Check(monitorCard, label="log-vexcept")
         self.logVexcept.SetToolTip("Vectored Exception logging")
-        self.logBreakpoints = wx.CheckBox(self, label="log-breakpoints")
+        self.logBreakpoints = ui.Check(monitorCard, label="log-breakpoints")
         self.logBreakpoints.SetToolTip("Breakpoint logging to behavior log")
-        self.fullLogs = wx.CheckBox(self, label="full-logs")
+        self.fullLogs = ui.Check(monitorCard, label="full-logs")
         self.fullLogs.SetToolTip("Disable log suppression before network/file access")
-        self.forceFlush = wx.CheckBox(self, label="force-flush")
+        self.forceFlush = ui.Check(monitorCard, label="force-flush")
         self.forceFlush.SetToolTip("Flush buffered logs instead of relying on batching")
         self.forceFlushLevel = self._LevelChoice(
+            monitorCard,
             ["1 - after each new API", "2 - after every log"],
             "1: flush after any non-duplicate API call\n2: flush after every log entry",
         )
-        self.traceTimes = wx.CheckBox(self, label="trace-times")
+        self.traceTimes = ui.Check(monitorCard, label="trace-times")
         self.traceTimes.SetToolTip("Trace timing")
 
         # (checkbox, option name, level selector or None) drives emission.
@@ -492,12 +551,13 @@ class StartPanel(scrolled.ScrolledPanel):
             (self.traceTimes, "trace-times", None),
         )
 
-        # Row one: the plain toggles. Row two: the two that carry a level, each kept next
-        # to its dropdown in a pair sizer so the two can never be separated.
         toggleRow = wx.BoxSizer(wx.HORIZONTAL)
         for box in (self.logVexcept, self.logBreakpoints, self.fullLogs, self.traceTimes):
-            toggleRow.Add(box, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=12)
+            toggleRow.Add(box, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gapL)
+        monitorCard.body.Add(toggleRow, 0, wx.EXPAND | wx.BOTTOM, gapS)
 
+        # The two that carry a level, each kept next to its dropdown in a pair sizer so the
+        # two can never be separated.
         levelRow = wx.BoxSizer(wx.HORIZONTAL)
         for box, level in (
             (self.logExceptions, self.logExceptionsLevel),
@@ -505,185 +565,147 @@ class StartPanel(scrolled.ScrolledPanel):
         ):
             box.Bind(wx.EVT_CHECKBOX, self.OnLoggingLevelToggle)
             pair = wx.BoxSizer(wx.HORIZONTAL)
-            pair.Add(box, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=6)
-            pair.Add(level, flag=wx.ALIGN_CENTER_VERTICAL)
-            levelRow.Add(pair, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=24)
+            pair.Add(box, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gapS)
+            pair.Add(level, 0, wx.ALIGN_CENTER_VERTICAL)
+            levelRow.Add(pair, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, dip(self, SP_XL))
+        monitorCard.body.Add(levelRow, 0, wx.EXPAND)
 
-        gridLogging.Add(
-            wx.StaticText(self, label="Monitor logging:"), flag=wx.ALIGN_CENTER_VERTICAL
+        # -- Debugger and analysis.conf ---------------------------------------
+        # Both live in one card: they are the same kind of thing (an expandable editor), and
+        # a card each spent a card's worth of padding on a single header row.
+        advancedCard = ui.Card(body)
+        self.debuggerCollapsePane = ui.Collapsible(advancedCard, label="Debugger options")
+        self.debuggerCollapsePane.Bind(
+            wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged
         )
-        gridLogging.Add(toggleRow, flag=wx.ALIGN_CENTER_VERTICAL)
-        gridLogging.AddSpacer(1)
-        gridLogging.Add(levelRow, flag=wx.ALIGN_CENTER_VERTICAL)
-
-        # analysis.conf editor
-        analysisConfSizer = wx.BoxSizer(wx.VERTICAL)
-        self.analysisConfExpander = wx.CollapsiblePane(self, label="analysis.conf")
-        self.analysisConfExpander.Bind(wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged)
-        self.analysisConfExpander.GetPane().SetMinSize(self.GetSize())
-        analysisConfPane = self.analysisConfExpander.GetPane()
-        self.analysisEditor = AnalysisConfPanel(analysisConfPane)
-        analysisConfSizer.Add(self.analysisConfExpander, proportion=1, flag=wx.EXPAND | wx.ALL, border=0)
-        analysisConfPaneSizer = wx.BoxSizer(wx.VERTICAL)
-        analysisConfPaneSizer.Add(self.analysisEditor, proportion=1, flag=wx.EXPAND | wx.ALL, border=0)
-        analysisConfPane.SetSizer(analysisConfPaneSizer)
-        self.analysisConfExpander.Collapse(True)
-        self.OnCollapsiblePaneChanged(None)
-
-        # Debugger Collapsible Pane
-        self.debuggerCollapsePane = wx.CollapsiblePane(self, label="Debugger options")
-        self.debuggerCollapsePane.Bind(wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged)
         self.debuggerPane = self.debuggerCollapsePane.GetPane()
 
-        self.flexDebuggerSizer = wx.FlexGridSizer(rows=8, cols=3, hgap=10, vgap=10)
+        self.flexDebuggerSizer = wx.FlexGridSizer(rows=8, cols=3, hgap=gapM, vgap=gapS)
         self.flexDebuggerSizer.AddGrowableCol(1, 1)
 
         for i in range(4):
             self.debuggerControls[i] = self.AddDebuggerControls(i)
 
         hboxBaseApi = wx.BoxSizer(wx.HORIZONTAL)
-        baseApiLabel = wx.StaticText(self.debuggerPane, label="base-on-api:")
-        self.baseApi = wx.TextCtrl(self.debuggerPane, size=wx.Size(98, -1))
-        hboxBaseApi.Add(baseApiLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
-        hboxBaseApi.Add(self.baseApi, flag=wx.ALIGN_CENTER_VERTICAL)
+        hboxBaseApi.Add(
+            wx.StaticText(self.debuggerPane, label="base-on-api:"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            gapS,
+        )
+        self.baseApiField = ui.Field(self.debuggerPane)
+        self.baseApiField.SetMinSize(dip_size(self, 120, -1))
+        self.baseApi = self.baseApiField.ctrl
+        hboxBaseApi.Add(self.baseApiField, 0, wx.ALIGN_CENTER_VERTICAL)
 
         hboxBreakRet = wx.BoxSizer(wx.HORIZONTAL)
-        breakRetLabel = wx.StaticText(self.debuggerPane, label="break-on-return:")
-        self.apiList = wx.TextCtrl(self.debuggerPane, size=wx.Size(158, -1))
-        hboxBreakRet.Add(breakRetLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
-        hboxBreakRet.Add(self.apiList, flag=wx.ALIGN_CENTER_VERTICAL)
+        hboxBreakRet.Add(
+            wx.StaticText(self.debuggerPane, label="break-on-return:"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            gapS,
+        )
+        self.apiListField = ui.Field(self.debuggerPane)
+        self.apiListField.SetMinSize(dip_size(self, 180, -1))
+        self.apiList = self.apiListField.ctrl
+        hboxBreakRet.Add(self.apiListField, 0, wx.ALIGN_CENTER_VERTICAL)
 
-        self.baseAllocCheckbox = wx.CheckBox(self.debuggerPane, label="base-on-alloc")
+        self.baseAllocCheckbox = ui.Check(self.debuggerPane, label="base-on-alloc")
 
         hboxCount = wx.BoxSizer(wx.HORIZONTAL)
-        countLabel = wx.StaticText(self.debuggerPane, label="count:")
-        self.debugCount = wx.TextCtrl(self.debuggerPane, size=wx.Size(75, -1))
-        hboxCount.Add(countLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=8)
-        hboxCount.Add(self.debugCount, proportion=0, flag=wx.EXPAND)
+        hboxCount.Add(
+            wx.StaticText(self.debuggerPane, label="count:"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            gapS,
+        )
+        self.debugCountField = ui.Field(self.debuggerPane)
+        self.debugCountField.SetMinSize(dip_size(self, 90, -1))
+        self.debugCount = self.debugCountField.ctrl
+        hboxCount.Add(self.debugCountField, 0, wx.ALIGN_CENTER_VERTICAL)
 
         hboxDepth = wx.BoxSizer(wx.HORIZONTAL)
-        depthLabel = wx.StaticText(self.debuggerPane, label="depth:")
-        self.debugDepth = wx.TextCtrl(self.debuggerPane, size=wx.Size(26, -1))
-        hboxDepth.Add(depthLabel, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=2)
-        hboxDepth.Add(self.debugDepth, proportion=0, flag=wx.EXPAND)
+        hboxDepth.Add(
+            wx.StaticText(self.debuggerPane, label="depth:"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            gapS,
+        )
+        self.debugDepthField = ui.Field(self.debuggerPane)
+        self.debugDepthField.SetMinSize(dip_size(self, 60, -1))
+        self.debugDepth = self.debugDepthField.ctrl
+        hboxDepth.Add(self.debugDepthField, 0, wx.ALIGN_CENTER_VERTICAL)
 
         hCountDepth = wx.BoxSizer(wx.HORIZONTAL)
-        hCountDepth.Add(hboxCount, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT)
-        hCountDepth.AddSpacer(10)
-        hCountDepth.Add(hboxDepth, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT)
+        hCountDepth.Add(hboxCount, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gapM)
+        hCountDepth.Add(hboxDepth, 0, wx.ALIGN_CENTER_VERTICAL)
 
-        self.idbgCheckbox = wx.CheckBox(self.debuggerPane, label="Interactive Debugger")
+        self.idbgCheckbox = ui.Check(self.debuggerPane, label="Interactive Debugger")
         self.idbgCheckbox.Bind(wx.EVT_CHECKBOX, self.OnIdbgChecked)
 
-        self.yarascanDisable = wx.CheckBox(self.debuggerPane, label="Disable Monitor Yarascan")
+        self.yarascanDisable = ui.Check(self.debuggerPane, label="Disable Monitor Yarascan")
 
         self.flexDebuggerSizer.AddSpacer(1)
         self.flexDebuggerSizer.AddSpacer(1)
         self.flexDebuggerSizer.AddSpacer(1)
-        self.flexDebuggerSizer.Add(hboxBaseApi, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
-        self.flexDebuggerSizer.Add(hboxBreakRet, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
-        self.flexDebuggerSizer.Add(hCountDepth, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
-        self.flexDebuggerSizer.Add(self.baseAllocCheckbox, proportion=0, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
-        self.flexDebuggerSizer.Add(self.yarascanDisable, proportion=0, flag=wx.EXPAND)
-        self.flexDebuggerSizer.Add(self.idbgCheckbox, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
+        self.flexDebuggerSizer.Add(hboxBaseApi, 0, wx.ALIGN_CENTER_VERTICAL)
+        self.flexDebuggerSizer.Add(hboxBreakRet, 0, wx.ALIGN_CENTER_VERTICAL)
+        self.flexDebuggerSizer.Add(hCountDepth, 0, wx.ALIGN_CENTER_VERTICAL)
+        self.flexDebuggerSizer.Add(self.baseAllocCheckbox, 0, wx.ALIGN_CENTER_VERTICAL)
+        self.flexDebuggerSizer.Add(self.yarascanDisable, 0, wx.ALIGN_CENTER_VERTICAL)
+        self.flexDebuggerSizer.Add(self.idbgCheckbox, 0, wx.ALIGN_CENTER_VERTICAL)
 
         debuggerVert = wx.BoxSizer(wx.VERTICAL)
-        debuggerVert.Add(self.flexDebuggerSizer, proportion=0, border=1)
+        debuggerVert.Add(self.flexDebuggerSizer, 0, wx.BOTTOM, gapM)
 
-        yaraCollapsiblePane = wx.CollapsiblePane(self.debuggerPane, label="Monitor Yara", style=wx.CP_DEFAULT_STYLE)
-        yaraCollapsiblePane.Bind(wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged)
+        yaraCollapsiblePane = ui.Collapsible(self.debuggerPane, label="Monitor Yara")
+        yaraCollapsiblePane.Bind(
+            wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged
+        )
         yaraPane = yaraCollapsiblePane.GetPane()
 
-        self.yaraRule = wx.TextCtrl(yaraPane, style=wx.TE_MULTILINE | wx.HSCROLL | wx.VSCROLL, size=wx.Size(-1, 200))
+        self.yaraRuleField = ui.Field(
+            yaraPane, multiline=True, style=wx.HSCROLL | wx.VSCROLL
+        )
+        self.yaraRuleField.SetMinSize(dip_size(self, -1, 200))
+        self.yaraRule = self.yaraRuleField.ctrl
+        self.yaraRule.SetFont(FONT_CODE)
         self.YaraLoad()
-        yaraSaveBtn = wx.Button(yaraPane, label="Save Rule")
+        yaraSaveBtn = ui.Button(yaraPane, label="Save Rule")
         yaraSaveBtn.Bind(wx.EVT_BUTTON, self.OnYaraSave)
-        yaraDeleteBtn = wx.Button(yaraPane, label="Delete Rule")
+        yaraDeleteBtn = ui.Button(yaraPane, label="Delete Rule", variant=ui.DANGEROUS)
         yaraDeleteBtn.Bind(wx.EVT_BUTTON, self.OnYaraDelete)
 
         hboxYara = wx.BoxSizer(wx.HORIZONTAL)
-        hboxYara.Add(yaraSaveBtn, flag=wx.EXPAND | wx.ALL, border=5)
-        hboxYara.Add(yaraDeleteBtn, flag=wx.EXPAND | wx.ALL, border=5)
+        hboxYara.Add(yaraSaveBtn, 0, wx.RIGHT, gapS)
+        hboxYara.Add(yaraDeleteBtn, 0)
 
         vboxYara = wx.BoxSizer(wx.VERTICAL)
-        vboxYara.Add(self.yaraRule, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
-        vboxYara.Add(hboxYara, flag=wx.ALIGN_RIGHT | wx.ALL, border=5)
-
+        vboxYara.Add(self.yaraRuleField, 1, wx.EXPAND | wx.BOTTOM, gapS)
+        vboxYara.Add(hboxYara, 0, wx.ALIGN_RIGHT)
         yaraPane.SetSizer(vboxYara)
-        debuggerVert.Add(yaraCollapsiblePane, flag=wx.EXPAND | wx.ALL, border=10)
+
+        debuggerVert.Add(yaraCollapsiblePane, 0, wx.EXPAND)
         self.debuggerPane.SetSizer(debuggerVert)
+        advancedCard.body.Add(self.debuggerCollapsePane, 0, wx.EXPAND | wx.BOTTOM, gapS)
 
-        # Bottom section
-        hbox5 = wx.BoxSizer(wx.HORIZONTAL)
-        self.launchAnalyzerBtn = wx.Button(self, label="Launch")
-        self.launchAnalyzerBtn.Disable()
-        self.launchAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnLaunchAnalyzer)
-
-        self.staticAnalysis = wx.CheckBox(self, label="Static analysis")
-        self.staticAnalysis.SetToolTip("Check this box to enable static code analysis.")
-
-        self.autoProcess = wx.CheckBox(self, label="Auto-process")
-        self.autoProcess.SetToolTip("Automatically process and populate the result tabs when a run completes.")
-        self.autoProcess.SetValue(True)
-
-        self.jsonReportBtn = wx.Button(self, label="JSON Report")
-        self.jsonReportBtn.Disable()
-        self.jsonReportBtn.Bind(wx.EVT_BUTTON, self.JsonReport)
-
-        self.htmlReportBtn = wx.Button(self, label="HTML Report")
-        self.htmlReportBtn.Disable()
-        self.htmlReportBtn.Bind(wx.EVT_BUTTON, self.HtmlReport)
-
-        updateYaraBtn = wx.Button(self, label="Update Yara")
-        updateYaraBtn.Bind(wx.EVT_BUTTON, self.OnUpdateYara)
-
-        self.zipResultsBtn = wx.Button(self, label="Zip Results")
-        self.zipResultsBtn.SetToolTip("Zip the analysis directory to the Desktop, to restore in a clean VM.")
-        self.zipResultsBtn.Bind(wx.EVT_BUTTON, self.OnZipResults)
-
-        openDirBtn = wx.Button(self, label="View Analysis Directory")
-        openDirBtn.Bind(wx.EVT_BUTTON, self.OnOpenDirectory)
-        self.terminateAnalyzerBtn = wx.Button(self, label="Kill")
-        self.terminateAnalyzerBtn.Disable()
-        self.terminateAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnTerminateAnalyzer)
-        hbox5.Add(self.launchAnalyzerBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
-        hbox5.AddSpacer(10)
-        hbox5.Add(self.staticAnalysis, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
-        hbox5.Add(self.autoProcess, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
-
-        hbox5.AddStretchSpacer(1)
-        hbox5.Add(self.jsonReportBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
-        hbox5.Add(self.htmlReportBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
-        hbox5.Add(updateYaraBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
-        hbox5.Add(self.zipResultsBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
-        hbox5.Add(openDirBtn, proportion=0, flag=wx.EXPAND | wx.RIGHT, border=5)
-        hbox5.Add(self.terminateAnalyzerBtn, proportion=0, flag=wx.EXPAND)
-        self.terminateAnalyzerBtn.Disable()
-
-        # Layout
-        vbox.Add(hbox1, flag=wx.EXPAND | wx.ALL, border=10)
-        vbox.Add(dlBox, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
-        vbox.Add(hbox2, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
-        vbox.Add(self.hboxArchive, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
-        vbox.Add(hbox3, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
-        vbox.Add(hboxHelp, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
-        vbox.Add(hboxTimeout, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
-        vbox.Add(hboxHooking, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
-        vbox.Add(gridLogging, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
-        vbox.Add(
-            self.debuggerCollapsePane,
-            flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
-            border=10,
+        self.analysisConfExpander = ui.Collapsible(advancedCard, label="analysis.conf")
+        self.analysisConfExpander.Bind(
+            wx.EVT_COLLAPSIBLEPANE_CHANGED, self.OnCollapsiblePaneChanged
         )
-        vbox.Add(analysisConfSizer, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
-        vbox.Add(
-            wx.StaticLine(self, style=wx.LI_HORIZONTAL),
-            flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
-            border=10,
-        )
-        vbox.Add(hbox5, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+        analysisConfPane = self.analysisConfExpander.GetPane()
+        self.analysisEditor = AnalysisConfPanel(analysisConfPane)
+        analysisConfPaneSizer = wx.BoxSizer(wx.VERTICAL)
+        analysisConfPaneSizer.Add(self.analysisEditor, 1, wx.EXPAND)
+        analysisConfPane.SetSizer(analysisConfPaneSizer)
+        advancedCard.body.Add(self.analysisConfExpander, 1, wx.EXPAND)
 
-        self.SetSizer(vbox)
+        # -- scrolling content -----------------------------------------------
+        for card in (targetCard, packageCard, monitorCard):
+            vbox.Add(card, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, gapS)
+        vbox.Add(advancedCard, 1, wx.EXPAND | wx.ALL, gapS)
+
+        self.scroll.SetSizer(vbox)
         # Vertical-only scrolling so the config sections stay reachable when the panel is
         # shorter than its content. SetupScrolling initialises the ScrolledPanel (scroll rate,
         # child-focus scroll), but its FitInside() sets the virtual size from the sizer's min
@@ -691,11 +713,78 @@ class StartPanel(scrolled.ScrolledPanel):
         # horizontal fit GrowFrameToFitContent relies on) and left the virtual height below the
         # client height (an unpainted band that ghosted the bottom-row checkboxes). OnPanelSize
         # corrects the virtual size on every resize.
-        self.SetupScrolling(scroll_x=False, scroll_y=True)
-        self.Bind(wx.EVT_SIZE, self.OnPanelSize)
-        apply_theme(self)
+        self.scroll.SetupScrolling(scroll_x=False, scroll_y=True)
+        self.scroll.Bind(wx.EVT_SIZE, self.OnPanelSize)
 
-    def AddOptionsHelp(self):
+        # -- action bar, pinned outside the scroll area -----------------------
+        self.launchAnalyzerBtn = ui.Button(
+            self, label="Launch", variant=ui.SUCCESSFUL
+        )
+        self.launchAnalyzerBtn.Disable()
+        self.launchAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnLaunchAnalyzer)
+
+        self.staticAnalysis = ui.Check(self, label="Static analysis")
+        self.staticAnalysis.SetToolTip("Check this box to enable static code analysis.")
+
+        self.autoProcess = ui.Check(self, label="Auto-process")
+        self.autoProcess.SetToolTip(
+            "Automatically process and populate the result tabs when a run completes."
+        )
+        self.autoProcess.SetValue(True)
+
+        self.jsonReportBtn = ui.Button(self, label="JSON Report")
+        self.jsonReportBtn.Disable()
+        self.jsonReportBtn.Bind(wx.EVT_BUTTON, self.JsonReport)
+
+        self.htmlReportBtn = ui.Button(self, label="HTML Report")
+        self.htmlReportBtn.Disable()
+        self.htmlReportBtn.Bind(wx.EVT_BUTTON, self.HtmlReport)
+
+        updateYaraBtn = ui.Button(self, label="Update Yara")
+        updateYaraBtn.Bind(wx.EVT_BUTTON, self.OnUpdateYara)
+
+        self.zipResultsBtn = ui.Button(self, label="Zip Results")
+        self.zipResultsBtn.SetToolTip(
+            "Zip the analysis directory to the Desktop, to restore in a clean VM."
+        )
+        self.zipResultsBtn.Bind(wx.EVT_BUTTON, self.OnZipResults)
+
+        openDirBtn = ui.Button(self, label="View Analysis Directory")
+        openDirBtn.Bind(wx.EVT_BUTTON, self.OnOpenDirectory)
+
+        self.terminateAnalyzerBtn = ui.Button(self, label="Kill", variant=ui.DANGEROUS)
+        self.terminateAnalyzerBtn.Disable()
+        self.terminateAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnTerminateAnalyzer)
+
+        actions = wx.BoxSizer(wx.HORIZONTAL)
+        actions.Add(self.launchAnalyzerBtn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gapL)
+        actions.Add(self.staticAnalysis, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gapM)
+        actions.Add(self.autoProcess, 0, wx.ALIGN_CENTER_VERTICAL)
+        actions.AddStretchSpacer(1)
+        for button in (
+            self.jsonReportBtn,
+            self.htmlReportBtn,
+            updateYaraBtn,
+            self.zipResultsBtn,
+            openDirBtn,
+        ):
+            actions.Add(button, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gapS)
+        actions.Add(self.terminateAnalyzerBtn, 0, wx.ALIGN_CENTER_VERTICAL)
+
+        outer.Add(self.scroll, 1, wx.EXPAND)
+        outer.Add(
+            wx.StaticLine(self, style=wx.LI_HORIZONTAL), 0, wx.EXPAND | wx.TOP, gapS
+        )
+        outer.Add(actions, 0, wx.EXPAND | wx.ALL, gapM)
+        self.SetSizer(outer)
+        self.SetBackgroundColour(BG_MAIN)
+
+        apply_theme(self)
+        # apply_theme treats every wx.Panel as a card surface; these two are page background.
+        self.SetBackgroundColour(BG_MAIN)
+        self.scroll.SetBackgroundColour(BG_MAIN)
+
+    def AddOptionsHelp(self, parent):
         help = [
             ("serial", "system volume serial number"),
             ("force-sleepskip", "do we force sleep-skipping despite threads?"),
@@ -745,7 +834,7 @@ class StartPanel(scrolled.ScrolledPanel):
         ]
 
         hbox = wx.BoxSizer(wx.HORIZONTAL)
-        self.helpList = wx.ComboBox(self, style=wx.CB_READONLY)
+        self.helpList = ui.Picker(parent)
         self.helpList.SetToolTip("Select an option, then right-click to add it to the Options field.")
         self.helpList.Bind(wx.EVT_CONTEXT_MENU, self.OnOptionsHelpContext)
         helpOptions = sorted(help, key=lambda x: x[0])
@@ -753,7 +842,7 @@ class StartPanel(scrolled.ScrolledPanel):
         self.helpList.Append("Options Help")
         self.helpList.AppendItems(formattedHelp)
         self.helpList.SetSelection(0)
-        hbox.Add(self.helpList, proportion=1, flag=wx.LEFT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        hbox.Add(self.helpList, proportion=1, flag=wx.EXPAND)
 
         return hbox
 
@@ -779,10 +868,12 @@ class StartPanel(scrolled.ScrolledPanel):
     def AddDebuggerControls(self, index):
         hboxBp = wx.BoxSizer(wx.HORIZONTAL)
         bpTypes = [f"bp{index}", f"br{index}"]
-        bpType = wx.ComboBox(self.debuggerPane, style=wx.CB_READONLY, choices=bpTypes, value=bpTypes[0])
-        addrTypeDropdown = wx.ComboBox(self.debuggerPane, style=wx.CB_READONLY, choices=["RVA", "VA", "ep"], value="RVA")
+        bpType = ui.Picker(self.debuggerPane, choices=bpTypes, value=bpTypes[0])
+        addrTypeDropdown = ui.Picker(self.debuggerPane, choices=["RVA", "VA", "ep"], value="RVA")
         hexLabel = wx.StaticText(self.debuggerPane, label=": 0x")
-        addrTextCtrl = wx.TextCtrl(self.debuggerPane, size=wx.Size(75, -1))
+        addrField = ui.Field(self.debuggerPane)
+        addrField.SetMinSize(dip_size(self, 90, -1))
+        addrTextCtrl = addrField.ctrl
         hboxBp.Add(bpType, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
         hboxBp.Add(
             addrTypeDropdown,
@@ -791,14 +882,16 @@ class StartPanel(scrolled.ScrolledPanel):
             border=0,
         )
         hboxBp.Add(hexLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0)
-        hboxBp.Add(addrTextCtrl, proportion=0, flag=wx.EXPAND)
+        hboxBp.Add(addrField, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL)
 
         hboxAction = wx.BoxSizer(wx.HORIZONTAL)
         actionLabel = wx.StaticText(self.debuggerPane, label=f"action{index}:")
-        actionDropdown = wx.ComboBox(self.debuggerPane, style=wx.CB_READONLY, choices=[""])
+        actionDropdown = ui.Picker(self.debuggerPane, choices=[""])
         actionDropdown.AppendItems(DEBUGACTIONS)
         colon = wx.StaticText(self.debuggerPane, label=":")
-        valueTextCtrl = wx.TextCtrl(self.debuggerPane, size=wx.Size(100, -1))
+        valueField = ui.Field(self.debuggerPane)
+        valueField.SetMinSize(dip_size(self, 120, -1))
+        valueTextCtrl = valueField.ctrl
         hboxAction.Add(
             actionLabel,
             proportion=0,
@@ -807,18 +900,22 @@ class StartPanel(scrolled.ScrolledPanel):
         )
         hboxAction.Add(actionDropdown, proportion=0, flag=wx.RIGHT, border=5)
         hboxAction.Add(colon, proportion=0, flag=wx.RIGHT, border=2)
-        hboxAction.Add(valueTextCtrl, proportion=0, flag=wx.EXPAND)
+        hboxAction.Add(valueField, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL)
 
         hboxCount = wx.BoxSizer(wx.HORIZONTAL)
         countLabel = wx.StaticText(self.debuggerPane, label=f"count{index}: ")
-        countTextCtrl = wx.TextCtrl(self.debuggerPane, size=wx.Size(75, -1))
+        countField = ui.Field(self.debuggerPane)
+        countField.SetMinSize(dip_size(self, 90, -1))
+        countTextCtrl = countField.ctrl
         hboxCount.Add(countLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0)
-        hboxCount.Add(countTextCtrl, proportion=0, flag=wx.EXPAND)
+        hboxCount.Add(countField, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL)
         hboxCount.AddSpacer(20)
         hcLabel = wx.StaticText(self.debuggerPane, label=f"hc{index}: ")
-        hcTextCtrl = wx.TextCtrl(self.debuggerPane, size=wx.Size(35, -1))
+        hcField = ui.Field(self.debuggerPane)
+        hcField.SetMinSize(dip_size(self, 60, -1))
+        hcTextCtrl = hcField.ctrl
         hboxCount.Add(hcLabel, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=0)
-        hboxCount.Add(hcTextCtrl, proportion=0, flag=wx.EXPAND)
+        hboxCount.Add(hcField, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL)
 
         self.flexDebuggerSizer.Add(hboxBp, 0, wx.EXPAND)
         self.flexDebuggerSizer.Add(hboxAction, 0, wx.EXPAND)
@@ -835,12 +932,16 @@ class StartPanel(scrolled.ScrolledPanel):
         )
 
     def OnCollapsiblePaneChanged(self, event):
+        scroll = getattr(self, "scroll", None)
+        if scroll:
+            scroll.Layout()
         self.Layout()
         self.GrowFrameToFitContent()
         # Content height changed, so recompute the scroll range. Guarded because this handler
-        # is also fired from InitUi (line ~315) before SetSizer, where there is no sizer yet.
-        if self.GetSizer() is not None:
+        # can fire before the scroll area has its sizer.
+        if scroll is not None and scroll.GetSizer() is not None:
             self._UpdateVirtualSize()
+            scroll.Layout()
             self.Layout()
             self.Refresh()
         if event:
@@ -855,16 +956,17 @@ class StartPanel(scrolled.ScrolledPanel):
         # visible width (EXPAND) and horizontal growth stays with the frame (no horizontal
         # scrollbar). Keep the virtual height at least the client height so there is never an
         # unpainted band below the content - that band ghosted the bottom-row checkboxes.
-        sizer = self.GetSizer()
+        scroll = getattr(self, "scroll", None)
+        sizer = scroll.GetSizer() if scroll else None
         if sizer is None:
             return
-        client = self.GetClientSize()
+        client = scroll.GetClientSize()
         minHeight = sizer.GetMinSize().height
         target = wx.Size(client.width, max(minHeight, client.height))
         # Only set when it actually changes: toggling a vertical scrollbar changes the client
         # width and re-fires EVT_SIZE, so an unconditional set could churn.
-        if self.GetVirtualSize() != target:
-            self.SetVirtualSize(target)
+        if scroll.GetVirtualSize() != target:
+            scroll.SetVirtualSize(target)
 
     def GrowFrameToFitContent(self):
         """Widen the frame when an expanded pane needs more room than the window has.
@@ -1754,15 +1856,14 @@ class StartPanel(scrolled.ScrolledPanel):
             wx.OK | wx.ICON_INFORMATION,
         )
 
-    def _LevelChoice(self, labels, tooltip):
+    def _LevelChoice(self, parent, labels, tooltip):
         """Read-only selector for an option whose value is a level, not a flag.
 
         Labels start with the numeric value capemon expects, which is what gets emitted.
         Disabled until its checkbox is ticked, so it cannot show a level that is not
         being sent.
         """
-        choice = wx.Choice(self, choices=labels)
-        choice.SetSelection(0)
+        choice = ui.Picker(parent, choices=labels, value=labels[0])
         choice.SetToolTip(tooltip)
         choice.Enable(False)
         return choice
