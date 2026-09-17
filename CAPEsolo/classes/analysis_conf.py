@@ -184,8 +184,8 @@ class AnalysisConfPanel(wx.Panel):
         self.vbox = wx.BoxSizer(wx.VERTICAL)
 
         modeBox = wx.BoxSizer(wx.HORIZONTAL)
-        self.formRadio = wx.RadioButton(self, label="Form", style=wx.RB_GROUP)
-        self.rawRadio = wx.RadioButton(self, label="Raw")
+        self.formRadio = ui.Radio(self, label="Form", style=wx.RB_GROUP)
+        self.rawRadio = ui.Radio(self, label="Raw")
         self.formRadio.SetValue(True)
         for radio in (self.formRadio, self.rawRadio):
             radio.Bind(wx.EVT_RADIOBUTTON, self.OnModeChanged)
@@ -251,23 +251,26 @@ class AnalysisConfPanel(wx.Panel):
     def BuildControl(self, parent, key):
         """One control for one key, with its comment as the tooltip."""
         if key.IsBoolean():
-            key.control = wx.CheckBox(parent, label=key.name)
+            key.control = ui.Check(parent, label=key.name)
             key.control.SetValue(_Coerce(key.value) is True)
             item = key.control
         else:
             row = wx.BoxSizer(wx.HORIZONTAL)
             label = wx.StaticText(parent, label=f"{key.name}:")
             width = 150 if key.name in WIDE_KEYS else 70
-            key.control = wx.TextCtrl(parent, value=key.value, size=wx.Size(width, -1))
+            field = ui.Field(parent, value=key.value, size=wx.Size(width, -1))
+            # key.control is what the save path reads GetValue off, so it stays the
+            # TextCtrl; the sizer gets the drawn wrapper.
+            key.control = field.ctrl
             row.Add(label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=4)
-            row.Add(key.control, flag=wx.ALIGN_CENTER_VERTICAL)
+            row.Add(field, flag=wx.ALIGN_CENTER_VERTICAL)
             item = row
 
         if not key.enabled:
             # Disabled in the default file, so it needs an explicit opt-in before it is
             # written; the checkbox in front of it is that switch.
             wrapper = wx.BoxSizer(wx.HORIZONTAL)
-            key.toggle = wx.CheckBox(parent, label="")
+            key.toggle = ui.Check(parent, label="")
             key.toggle.SetToolTip(f"Write {key.name} to analysis.conf")
             wrapper.Add(key.toggle, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=2)
             wrapper.Add(item, flag=wx.ALIGN_CENTER_VERTICAL)

@@ -1,7 +1,5 @@
 """Shared VirusTotal helpers for the Info and Payloads tabs.
 
-from . import ui_kit as ui
-
 vt_lookup/vt_upload do blocking network calls, so they run on a daemon thread and the result is
 marshalled back to the UI thread with wx.CallAfter - the same pattern start_panel uses for downloads.
 These are the GUI's own (post-launch) VT calls: they use the configured community key from cfg.ini
@@ -19,6 +17,8 @@ import wx
 
 from CAPEsolo.capelib.config_paths import config_paths
 from CAPEsolo.capelib.virustotal import vt_lookup, vt_upload
+
+from . import ui_kit as ui
 
 _community_key_cache = None  # None = not read yet; "" = read, none configured
 

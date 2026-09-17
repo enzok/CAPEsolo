@@ -6,12 +6,11 @@ from . import ui_kit as ui
 from .theme import BG_INPUT, BG_SELECT, FG_PRIMARY, FG_RED_ALERT, apply_theme
 
 
-class SearchDialog(wx.Dialog):
+class SearchDialog(ui.Dialog):
     def __init__(self, parent):
         super(SearchDialog, self).__init__(
             parent,
             title="Find",
-            size=wx.Size(400, 100),
             style=wx.DEFAULT_DIALOG_STYLE | wx.STAY_ON_TOP,
         )
         self.caseSensitive = False
@@ -57,11 +56,14 @@ class SearchDialog(wx.Dialog):
 
     def InitUi(self):
         sizer = wx.BoxSizer(wx.VERTICAL)
-        self.findWindow = wx.TextCtrl(self, style=wx.TE_PROCESS_ENTER)
+        findField = ui.Field(self, style=wx.TE_PROCESS_ENTER)
+        # The rest of the class talks to a TextCtrl (GetValue, EVT_TEXT_ENTER), so keep
+        # findWindow pointing at the inner control and lay out the drawn wrapper.
+        self.findWindow = findField.ctrl
 
-        findButton = wx.Button(self, label="Find")
+        findButton = ui.Button(self, label="Find", variant=ui.PRIMARY)
         findButton.Bind(wx.EVT_BUTTON, self.Finder)
-        findNextButton = wx.Button(self, label="Find Next")
+        findNextButton = ui.Button(self, label="Find Next")
         findNextButton.Bind(wx.EVT_BUTTON, self.FinderNext)
 
         hbox1 = wx.BoxSizer(wx.HORIZONTAL)
@@ -69,11 +71,11 @@ class SearchDialog(wx.Dialog):
         hbox1.Add(findNextButton, proportion=1, flag=wx.EXPAND)
 
 
-        self.chkCase = wx.CheckBox(self, label="Aa")
+        self.chkCase = ui.Check(self, label="Aa")
         self.chkCase.SetValue(False)
         self.chkCase.Bind(wx.EVT_CHECKBOX, self.OnCaseToggle)
 
-        self.chkFull = wx.CheckBox(self, label="\u00A6ab\u00A6")
+        self.chkFull = ui.Check(self, label="\u00A6ab\u00A6")
         self.chkFull.SetValue(False)
         self.chkFull.Bind(wx.EVT_CHECKBOX, self.OnFullWordToggle)
 
@@ -81,11 +83,12 @@ class SearchDialog(wx.Dialog):
         hbox2.Add(self.chkCase, flag=wx.RIGHT, border=10)
         hbox2.Add(self.chkFull)
 
-        sizer.Add(self.findWindow, proportion=0, flag=wx.EXPAND | wx.ALL, border=5)
+        sizer.Add(findField, proportion=0, flag=wx.EXPAND | wx.ALL, border=5)
         sizer.Add(hbox1, proportion=0, flag=wx.EXPAND | wx.ALL, border=5)
         sizer.Add(hbox2, proportion=0, flag=wx.ALIGN_CENTER_HORIZONTAL | wx.ALL, border=5)
 
         self.SetSizer(sizer)
+        self.SetMinSize(wx.Size(400, -1))
         self.Fit()
         apply_theme(self)
 

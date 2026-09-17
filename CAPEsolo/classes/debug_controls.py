@@ -1765,7 +1765,7 @@ class MemoryListCtrl(wx.ListCtrl):
             self.parent.SendCommand(CMD_MEM_DUMP, f"{addr:#x}", tag=self.parent.NextTag(TAG_DUMP))
 
 
-class ExportsDialog(wx.Dialog):
+class ExportsDialog(ui.Dialog):
     def __init__(self, parent, mod_name, exports):
         super().__init__(
             parent, title=f"Exports for {mod_name}", size=wx.Size(500, 600), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
@@ -1795,7 +1795,7 @@ class ExportsDialog(wx.Dialog):
 
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(self.listCtrl, 1, wx.EXPAND | wx.ALL, 10)
-        btn = wx.Button(self, wx.ID_OK, "Close")
+        btn = ui.Button(self, wx.ID_OK, "Close", variant=ui.PRIMARY)
         sizer.Add(btn, 0, wx.ALIGN_CENTER | wx.ALL, 10)
         self.SetSizer(sizer)
         self.Layout()
@@ -1834,7 +1834,7 @@ class ExportsDialog(wx.Dialog):
         dlg.Destroy()
 
 
-class PrototypeDialog(wx.Dialog):
+class PrototypeDialog(ui.Dialog):
     """Paste a function declaration, in the form the documentation gives it.
 
     Deliberately free-text rather than a field per parameter: a declaration can be copied
@@ -1867,7 +1867,7 @@ class PrototypeDialog(wx.Dialog):
             wx.ALL,
             10,
         )
-        outer.Add(self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL), 0, wx.EXPAND | wx.ALL, 10)
+        outer.Add(ui.dialog_buttons(self), 0, wx.EXPAND | wx.ALL, 10)
         self.SetSizer(outer)
         apply_theme(self)
         self.textCtrl.SetFocus()
@@ -1876,7 +1876,7 @@ class PrototypeDialog(wx.Dialog):
         return self.textCtrl.GetValue()
 
 
-class BreakpointDialog(wx.Dialog):
+class BreakpointDialog(ui.Dialog):
     """Address, type, size and slot for a hardware breakpoint.
 
     Data watches are what debug registers are actually good at - break when a buffer is
@@ -1891,28 +1891,30 @@ class BreakpointDialog(wx.Dialog):
         grid.AddGrowableCol(1, 1)
 
         grid.Add(wx.StaticText(self, label="Address:"), flag=wx.ALIGN_CENTER_VERTICAL)
-        self.addressCtrl = wx.TextCtrl(self, value=address)
-        grid.Add(self.addressCtrl, flag=wx.EXPAND)
+        addressField = ui.Field(self, value=address)
+        # GetValues() reads the TextCtrl, so keep addressCtrl pointing at it.
+        self.addressCtrl = addressField.ctrl
+        grid.Add(addressField, flag=wx.EXPAND)
 
         grid.Add(wx.StaticText(self, label="Type:"), flag=wx.ALIGN_CENTER_VERTICAL)
-        self.typeCtrl = wx.Choice(self, choices=[BP_TYPE_LABELS[t] for t in self.types])
+        self.typeCtrl = ui.Picker(self, choices=[BP_TYPE_LABELS[t] for t in self.types])
         self.typeCtrl.SetSelection(0)
         self.typeCtrl.Bind(wx.EVT_CHOICE, self.OnTypeChanged)
         grid.Add(self.typeCtrl, flag=wx.EXPAND)
 
         grid.Add(wx.StaticText(self, label="Size:"), flag=wx.ALIGN_CENTER_VERTICAL)
-        self.sizeCtrl = wx.Choice(self, choices=[str(s) for s in BP_SIZES])
+        self.sizeCtrl = ui.Picker(self, choices=[str(s) for s in BP_SIZES])
         self.sizeCtrl.SetSelection(0)
         grid.Add(self.sizeCtrl, flag=wx.EXPAND)
 
         grid.Add(wx.StaticText(self, label="Slot:"), flag=wx.ALIGN_CENTER_VERTICAL)
-        self.slotCtrl = wx.Choice(self, choices=["next", "0", "1", "2", "3"])
+        self.slotCtrl = ui.Picker(self, choices=["next", "0", "1", "2", "3"])
         self.slotCtrl.SetSelection(0)
         grid.Add(self.slotCtrl, flag=wx.EXPAND)
 
         outer = wx.BoxSizer(wx.VERTICAL)
         outer.Add(grid, 1, wx.EXPAND | wx.ALL, 10)
-        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        buttons = ui.dialog_buttons(self)
         outer.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         self.SetSizerAndFit(outer)
 

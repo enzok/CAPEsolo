@@ -741,6 +741,8 @@ class Picker(_Themed):
         self.InvalidateBestSize()
         self.Refresh()
 
+    SetItems = Set
+
     def Clear(self):
         self.choices = []
         self.selection = -1
@@ -827,11 +829,14 @@ class Picker(_Themed):
         if index == self.selection:
             return
         self.SetSelection(index)
-        chosen = wx.CommandEvent(wx.EVT_COMBOBOX.typeId, self.GetId())
-        chosen.SetEventObject(self)
-        chosen.SetInt(index)
-        chosen.SetString(self.GetValue())
-        self.GetEventHandler().ProcessEvent(chosen)
+        # Both event types: the Picker replaces wx.ComboBox and wx.Choice, and call sites
+        # bind whichever one the control they had used to send.
+        for eventType in (wx.EVT_COMBOBOX, wx.EVT_CHOICE):
+            chosen = wx.CommandEvent(eventType.typeId, self.GetId())
+            chosen.SetEventObject(self)
+            chosen.SetInt(index)
+            chosen.SetString(self.GetValue())
+            self.GetEventHandler().ProcessEvent(chosen)
 
 
 class _PickerPopup(wx.PopupTransientWindow):
@@ -1268,8 +1273,8 @@ class Dialog(wx.Dialog):
     content and call EndModal() with a wx.ID_* value.
     """
 
-    def __init__(self, parent, title, style=wx.DEFAULT_DIALOG_STYLE):
-        super().__init__(parent, title=title, style=style)
+    def __init__(self, parent, title, style=wx.DEFAULT_DIALOG_STYLE, size=wx.DefaultSize):
+        super().__init__(parent, title=title, style=style, size=size)
         self.escapeId = wx.ID_CANCEL
         self.SetBackgroundColour(BG_MAIN)
         self.SetForegroundColour(FG_PRIMARY)
@@ -1286,6 +1291,25 @@ class Dialog(wx.Dialog):
             self.EndModal(self.escapeId)
             return
         event.Skip()
+
+
+def dialog_buttons(parent, ok="OK", cancel="Cancel"):
+    """Right-aligned OK/Cancel row, the themed CreateStdDialogButtonSizer.
+
+    The buttons keep the standard ids, so wxDialog's own wxID_OK / wxID_CANCEL handling
+    closes the dialog and any `Bind(wx.EVT_BUTTON, handler, id=wx.ID_OK)` the dialog
+    installed still runs first and can refuse to close. Pass None for a label to leave
+    that button out.
+    """
+    row = wx.BoxSizer(wx.HORIZONTAL)
+    row.AddStretchSpacer()
+    if cancel is not None:
+        row.Add(Button(parent, wx.ID_CANCEL, cancel), 0, wx.LEFT, dip(parent, SP_SM))
+    if ok is not None:
+        row.Add(
+            Button(parent, wx.ID_OK, ok, variant=PRIMARY), 0, wx.LEFT, dip(parent, SP_SM)
+        )
+    return row
 
 
 # Severity badge glyphs, drawn rather than pulled from wx.ArtProvider: the system icons are

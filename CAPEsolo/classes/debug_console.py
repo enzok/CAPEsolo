@@ -374,13 +374,16 @@ class ConsolePanel(wx.Panel):
         # Address input field
         memInput = wx.BoxSizer(wx.HORIZONTAL)
         memInput.Add(wx.StaticText(memPane, label="Memory Dump Address:"), 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 5)
-        self.memAddressInput = wx.TextCtrl(memPane, style=wx.TE_PROCESS_ENTER)
+        memAddressField = ui.Field(memPane, style=wx.TE_PROCESS_ENTER)
+        # The console reads and writes the TextCtrl directly, so keep memAddressInput
+        # pointing at it and lay out the drawn wrapper.
+        self.memAddressInput = memAddressField.ctrl
         self.memAddressInput.SetFont(fontCourier)
-        memInput.Add(self.memAddressInput, 1, wx.EXPAND | wx.ALL, 5)
+        memInput.Add(memAddressField, 1, wx.EXPAND | wx.ALL, 5)
         self.memAddressInput.Bind(wx.EVT_TEXT_ENTER, self.OnAddressEnter)
 
         # Dump to File button
-        btnDumpToFile = wx.Button(memPane, label="Dump Memory to File")
+        btnDumpToFile = ui.Button(memPane, label="Dump Memory to File")
         btnDumpToFile.Bind(wx.EVT_BUTTON, self.OnDumpToFile)
         memInput.Add(btnDumpToFile, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 5)
         memSizer.Add(memInput, 0, wx.EXPAND | wx.ALL, 5)
@@ -492,20 +495,23 @@ class ConsolePanel(wx.Panel):
         # Input box
         inputSizer = wx.BoxSizer(wx.HORIZONTAL)
         inputSizer.Add(wx.StaticText(self, label="Command Input:"), 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 5)
-        self.inputBox = wx.TextCtrl(self, style=wx.TE_PROCESS_ENTER)
+        inputField = ui.Field(self, style=wx.TE_PROCESS_ENTER)
+        # The hint text, history and key handling all drive the TextCtrl, so inputBox keeps
+        # pointing at it.
+        self.inputBox = inputField.ctrl
         self.inputBox.Bind(wx.EVT_TEXT_ENTER, self.OnEnter)
         self.inputBox.Bind(wx.EVT_KEY_DOWN, self.OnInputKey)
         self.inputBox.Bind(wx.EVT_SET_FOCUS, self.OnInputFocus)
         self.inputBox.Bind(wx.EVT_KILL_FOCUS, self.OnInputBlur)
-        inputSizer.Add(self.inputBox, 1, wx.EXPAND | wx.ALL, 5)
+        inputSizer.Add(inputField, 1, wx.EXPAND | wx.ALL, 5)
 
         # Debugging Controls
         debugButtons = wx.BoxSizer(wx.HORIZONTAL)
-        self.runUntilBtn = wx.Button(self, label="Run Until (F4)")
-        self.stepIntoBtn = wx.Button(self, label="Step Into (F7)")
-        self.stepOverBtn = wx.Button(self, label="Step Over (F8)")
-        self.stepOutBtn = wx.Button(self, label="Step Out (F9)")
-        self.continueBtn = wx.Button(self, label="Continue (F10)")
+        self.runUntilBtn = ui.Button(self, label="Run Until (F4)")
+        self.stepIntoBtn = ui.Button(self, label="Step Into (F7)")
+        self.stepOverBtn = ui.Button(self, label="Step Over (F8)")
+        self.stepOutBtn = ui.Button(self, label="Step Out (F9)")
+        self.continueBtn = ui.Button(self, label="Continue (F10)", variant=ui.PRIMARY)
         self.runUntilBtn.SetMinSize(wx.Size(MAX_BTN_W, -1))
         self.runUntilBtn.Bind(wx.EVT_BUTTON, self.OnRunUntilAccel)
         debugButtons.Add(self.runUntilBtn, 0, wx.LEFT | wx.BOTTOM, 5)

@@ -181,7 +181,7 @@ class AnalyzerCompleteEvent(wx.PyCommandEvent):
         self.message = message
 
 
-class _DownloadCredentialsDialog(wx.Dialog):
+class _DownloadCredentialsDialog(ui.Dialog):
     """Startup prompt for sample downloads. A password decrypts stored encrypted keys; an API
     key can also be entered directly (used as-is, no decryption). All fields are masked."""
 
@@ -201,37 +201,38 @@ class _DownloadCredentialsDialog(wx.Dialog):
         )
 
         # Password (for stored encrypted keys) and directly-entered keys sit in separate
-        # titled boxes for clarity.
+        # cards for clarity.
         self.pwdCtrl = None
         if hasStored:
-            pwdBox = wx.StaticBoxSizer(wx.VERTICAL, self, "Password (unlock stored keys)")
-            self.pwdCtrl = wx.TextCtrl(pwdBox.GetStaticBox(), style=wx.TE_PASSWORD)
-            pwdBox.Add(self.pwdCtrl, flag=wx.EXPAND | wx.ALL, border=8)
-            outer.Add(pwdBox, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
+            pwdCard = ui.Card(self, title="Password (unlock stored keys)")
+            pwdField = ui.Field(pwdCard, style=wx.TE_PASSWORD)
+            self.pwdCtrl = pwdField.ctrl
+            pwdCard.body.Add(pwdField, flag=wx.EXPAND)
+            outer.Add(pwdCard, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
 
-        keyBox = wx.StaticBoxSizer(wx.VERTICAL, self, "Enter API key(s) directly")
-        keyParent = keyBox.GetStaticBox()
+        keyCard = ui.Card(self, title="Enter API key(s) directly")
+        keyParent = keyCard
         grid = wx.FlexGridSizer(rows=2, cols=2, hgap=8, vgap=8)
         grid.AddGrowableCol(1, 1)
         grid.Add(wx.StaticText(keyParent, label="VirusTotal:"), flag=wx.ALIGN_CENTER_VERTICAL)
-        self.vtCtrl = wx.TextCtrl(keyParent, style=wx.TE_PASSWORD)
-        grid.Add(self.vtCtrl, flag=wx.EXPAND)
+        vtField = ui.Field(keyParent, style=wx.TE_PASSWORD)
+        self.vtCtrl = vtField.ctrl
+        grid.Add(vtField, flag=wx.EXPAND)
         grid.Add(wx.StaticText(keyParent, label="MalwareBazaar:"), flag=wx.ALIGN_CENTER_VERTICAL)
-        self.mbCtrl = wx.TextCtrl(keyParent, style=wx.TE_PASSWORD)
-        grid.Add(self.mbCtrl, flag=wx.EXPAND)
-        keyBox.Add(grid, flag=wx.EXPAND | wx.ALL, border=8)
-        outer.Add(keyBox, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
+        mbField = ui.Field(keyParent, style=wx.TE_PASSWORD)
+        self.mbCtrl = mbField.ctrl
+        grid.Add(mbField, flag=wx.EXPAND)
+        keyCard.body.Add(grid, flag=wx.EXPAND)
+        outer.Add(keyCard, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
 
-        # Explicit wx.Buttons rather than CreateButtonSizer: the stock MSW dialog buttons render
+        # Drawn buttons rather than CreateButtonSizer: the stock MSW dialog buttons render
         # natively and ignore SetBackgroundColour, so the theme could not darken them. wx.Dialog
         # still auto-handles the ID_OK / ID_CANCEL ids to end the modal with the right result.
-        btnRow = wx.BoxSizer(wx.HORIZONTAL)
-        okBtn = wx.Button(self, wx.ID_OK, "OK")
-        okBtn.SetDefault()
-        btnRow.AddStretchSpacer(1)
-        btnRow.Add(okBtn, flag=wx.RIGHT, border=8)
-        btnRow.Add(wx.Button(self, wx.ID_CANCEL, "Cancel"))
-        outer.Add(btnRow, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
+        outer.Add(
+            ui.dialog_buttons(self),
+            flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
+            border=12,
+        )
 
         # Enter confirms OK from any field (SetDefault alone is unreliable while a text field
         # has focus); Escape still cancels via the dialog's built-in ID_CANCEL handling.
@@ -241,6 +242,9 @@ class _DownloadCredentialsDialog(wx.Dialog):
         # the dialog to the smaller default font and squish the controls and the button row.
         self.SetSizer(outer)
         apply_theme(self)
+        # apply_theme paints every wx.Panel BG_CARD, including this dialog's own background,
+        # which would flatten the cards into it.
+        self.SetBackgroundColour(BG_MAIN)
         self.Fit()
         if self.GetSize().width < 440:
             self.SetSize(wx.Size(440, self.GetSize().height))

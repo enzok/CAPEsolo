@@ -48,8 +48,8 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
         vbox = wx.BoxSizer(wx.VERTICAL)
 
         hbox = wx.BoxSizer(wx.HORIZONTAL)
-        self.logFileDropdown = wx.ComboBox(self, style=wx.CB_READONLY)
-        viewButton = wx.Button(self, label="View")
+        self.logFileDropdown = ui.Picker(self)
+        viewButton = ui.Button(self, label="View", variant=ui.PRIMARY)
         viewButton.Bind(wx.EVT_BUTTON, self.OnViewButtonClick)
 
         hbox.Add(
@@ -65,11 +65,11 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
         vbox.Add(self.resultsWindow, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
 
         hboxCover = wx.BoxSizer(wx.HORIZONTAL)
-        self.coverBtn = wx.Button(self, label="Create Coverage File")
+        self.coverBtn = ui.Button(self, label="Create Coverage File")
         self.coverBtn.Bind(wx.EVT_BUTTON, self.OnCover)
         self.coverBtn.Disable()
         hboxCover.Add(self.coverBtn, proportion=0, flag=wx.ALL | wx.CENTER, border=5)
-        self.coverageFileBtn = wx.Button(self, label="Copy Coverage File")
+        self.coverageFileBtn = ui.Button(self, label="Copy Coverage File")
         self.coverageFileBtn.Bind(wx.EVT_BUTTON, self.OnCopyPath)
         self.coverageFileBtn.Disable()
         hboxCover.Add(self.coverageFileBtn, proportion=1, flag=wx.ALL | wx.CENTER, border=5)
@@ -221,33 +221,34 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
         picked = self.PickBase(candidates, knownRanges, addrs) if candidates else None
         loaderBase = f"0x{picked[0]:08X}" if picked else ""
 
-        dialog = wx.Dialog(self, title="Generate Coverage File", size=wx.Size(300, 150))
+        dialog = ui.Dialog(self, title="Generate Coverage File", size=wx.Size(340, 170))
         panel = wx.Panel(dialog)
         vbox = wx.BoxSizer(wx.VERTICAL)
 
         hbox1 = wx.BoxSizer(wx.HORIZONTAL)
         currentLabel = wx.StaticText(panel, label="Current ImageBase   0x:")
-        loaderCtrl = wx.TextCtrl(panel, value=f"{loaderBase}")
+        loaderField = ui.Field(panel, value=f"{loaderBase}")
+        loaderCtrl = loaderField.ctrl
         hbox1.Add(currentLabel, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
-        hbox1.Add(loaderCtrl, proportion=1)
+        hbox1.Add(loaderField, proportion=1)
         hbox2 = wx.BoxSizer(wx.HORIZONTAL)
         newLabel = wx.StaticText(panel, label="New ImageBase        0x:")
-        imageCtrl = wx.TextCtrl(panel, value=self.TargetImageBase())
+        imageField = ui.Field(panel, value=self.TargetImageBase())
+        imageCtrl = imageField.ctrl
         hbox2.Add(newLabel, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
-        hbox2.Add(imageCtrl, proportion=1)
+        hbox2.Add(imageField, proportion=1)
 
         vbox.Add(hbox1, flag=wx.EXPAND | wx.ALL, border=5)
         vbox.Add(hbox2, flag=wx.EXPAND | wx.ALL, border=5)
 
-        hbox3 = wx.BoxSizer(wx.HORIZONTAL)
-        okButton = wx.Button(panel, wx.ID_OK, label="Ok")
-        cancelButton = wx.Button(panel, wx.ID_CANCEL, label="Cancel")
-        hbox3.Add(okButton, flag=wx.RIGHT, border=10)
-        hbox3.Add(cancelButton, flag=wx.RIGHT, border=10)
-
-        vbox.Add(hbox3, flag=wx.ALIGN_CENTER | wx.TOP | wx.BOTTOM, border=10)
+        vbox.Add(
+            ui.dialog_buttons(panel, ok="Ok"),
+            flag=wx.EXPAND | wx.TOP | wx.BOTTOM | wx.RIGHT,
+            border=10,
+        )
 
         panel.SetSizer(vbox)
+        apply_theme(dialog)
 
         if dialog.ShowModal() == wx.ID_OK:
             current = loaderCtrl.GetValue().strip()

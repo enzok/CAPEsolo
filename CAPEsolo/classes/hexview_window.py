@@ -159,56 +159,57 @@ class HexViewWindow(wx.Frame, KeyEventHandlerMixin):
 
         self.paginationSizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        self.firstPageButton = wx.Button(self.panel, label="<<")
+        self.firstPageButton = ui.Button(self.panel, label="<<")
         self.firstPageButton.Bind(wx.EVT_BUTTON, self.OnFirstPage)
         self.paginationSizer.Add(self.firstPageButton, 0, wx.ALL, 5)
 
-        self.prevButton = wx.Button(self.panel, label="Previous")
+        self.prevButton = ui.Button(self.panel, label="Previous")
         self.prevButton.Bind(wx.EVT_BUTTON, self.OnPrevPage)
         self.paginationSizer.Add(self.prevButton, 0, wx.ALL, 5)
 
         self.pageLabel = wx.StaticText(self.panel, label="Page 1 of 1")
         self.paginationSizer.Add(self.pageLabel, 0, wx.ALL | wx.CENTER, 5)
 
-        self.pageInput = wx.TextCtrl(
+        self.pageField = ui.Field(
             self.panel, value="1", size=wx.Size(60, -1), style=wx.TE_PROCESS_ENTER
         )
+        self.pageInput = self.pageField.ctrl
         self.pageInput.Bind(wx.EVT_TEXT_ENTER, self.OnGoToPage)
-        self.paginationSizer.Add(self.pageInput, 0, wx.ALL, 5)
+        self.paginationSizer.Add(self.pageField, 0, wx.ALL, 5)
 
-        self.goButton = wx.Button(self.panel, label="Go")
+        self.goButton = ui.Button(self.panel, label="Go")
         self.goButton.Bind(wx.EVT_BUTTON, self.OnGoToPage)
         self.paginationSizer.Add(self.goButton, 0, wx.ALL, 5)
 
-        self.nextButton = wx.Button(self.panel, label="Next")
+        self.nextButton = ui.Button(self.panel, label="Next")
         self.nextButton.Bind(wx.EVT_BUTTON, self.OnNextPage)
         self.paginationSizer.Add(self.nextButton, 0, wx.ALL, 5)
 
-        self.lastPageButton = wx.Button(self.panel, label=">>")
+        self.lastPageButton = ui.Button(self.panel, label=">>")
         self.lastPageButton.Bind(wx.EVT_BUTTON, self.OnLastPage)
         self.paginationSizer.Add(self.lastPageButton, 0, wx.ALL, 5)
 
         self.paginationSizer.Add(
             wx.StaticText(self.panel, label="KB per page:"), 0, wx.ALL | wx.CENTER, 5
         )
-        self.pageSizeDropdown = wx.ComboBox(
+        self.pageSizeDropdown = ui.Picker(
             self.panel,
             value=str(DEFAULT_PAGE_SIZE),
             choices=[str(c) for c in PAGE_SIZE_CHOICES],
-            style=wx.CB_READONLY,
         )
         self.pageSizeDropdown.Bind(wx.EVT_COMBOBOX, self.OnPageSizeChange)
         self.paginationSizer.Add(self.pageSizeDropdown, 0, wx.ALL, 5)
 
-        self.archDropdown = wx.ComboBox(
+        self.archDropdown = ui.Picker(
             self.panel,
             value="x64" if self.defaultBits == 64 else "x86",
             choices=ARCH_CHOICES,
-            style=wx.CB_READONLY,
         )
         self.paginationSizer.Add(self.archDropdown, 0, wx.ALL, 5)
 
-        self.disasmButton = wx.Button(self.panel, label="Disassemble")
+        self.disasmButton = ui.Button(
+            self.panel, label="Disassemble", variant=ui.PRIMARY
+        )
         self.disasmButton.Bind(wx.EVT_BUTTON, self.OnDisassemble)
         self.paginationSizer.Add(self.disasmButton, 0, wx.ALL, 5)
 

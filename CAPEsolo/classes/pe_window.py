@@ -61,7 +61,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         self.vbox.AddSpacer(10)
         data = self.UpdatePeData(self.data)
         self.CreateGrids(data)
-        saveBtn = wx.Button(self.panel, label="Save PE Info")
+        saveBtn = ui.Button(self.panel, label="Save PE Info", variant=ui.PRIMARY)
         saveBtn.Bind(wx.EVT_BUTTON, self.OnSavePeInfo)
         self.vbox.Add(saveBtn, proportion=0, flag=wx.ALL | wx.LEFT, border=5)
 
@@ -368,10 +368,10 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
             ]
             hbox = wx.BoxSizer(wx.HORIZONTAL)
 
-            saveOffsetBtn = wx.Button(self.panel, label="Save Offset")
+            saveOffsetBtn = ui.Button(self.panel, label="Save Offset")
             saveOffsetBtn.Bind(wx.EVT_BUTTON, self.SaveOffset)
             hbox.Add(saveOffsetBtn, proportion=0, flag=wx.ALL, border=5)
-            saveAllBtn = wx.Button(self.panel, label="Save All")
+            saveAllBtn = ui.Button(self.panel, label="Save All")
             saveAllBtn.Bind(wx.EVT_BUTTON, self.SaveAllResources)
             hbox.Add(saveAllBtn, proportion=0, flag=wx.ALL, border=5)
 
