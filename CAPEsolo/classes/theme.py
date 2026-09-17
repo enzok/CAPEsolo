@@ -94,11 +94,105 @@ ACCENT_JUMP = wx.Colour(0,   255, 0)      # #00ff00 - jmp / conditional jumps
 TIMER_WARN = wx.Colour(210, 153, 34)      # #d29922
 
 # ---------------------------------------------------------------------------
+# Surface, border, state and semantic-action tokens.
+#
+# These exist because the tokens above describe only resting fills: they can say what a
+# button looks like, but not what it looks like under the pointer, held down, focused or
+# disabled. Native MSW controls did not need them (the OS drew those states, ignoring our
+# colours in the process); the owner-drawn controls in ui_kit.py have to draw every state
+# themselves, so each one needs a name here rather than an ad-hoc tweak at the call site.
+# ---------------------------------------------------------------------------
+
+# Elevation. BG_MAIN is the window, BG_CARD a grouped section, BG_SURFACE something raised
+# above a card (a popup, a header row, a hovered tab).
+BG_SURFACE = wx.Colour(39,  45,  58)     # #272d3a
+
+# Borders. SUBTLE separates regions that are already distinguished by fill; STRONG outlines
+# a control that has to read as interactive against a similar background.
+BORDER_SUBTLE = wx.Colour(44,  51,  64)  # #2c3340
+BORDER_STRONG = wx.Colour(61,  70,  87)  # #3d4657
+
+# Interaction states, applied to buttons, tabs, list rows and anything else clickable.
+BG_HOVER   = wx.Colour(44,  52,  68)     # #2c3444
+BG_PRESSED = wx.Colour(27,  32,  40)     # #1b2028
+
+# Disabled. wxMSW draws native controls' disabled text in a system grey that ignores the
+# palette, which is why disabled buttons are barely legible on the dark theme today; the
+# owner-drawn controls use these instead. FG_DISABLED still clears 3:1 against BG_CARD, so
+# a disabled label is dim but readable rather than invisible.
+FG_DISABLED = wx.Colour(110, 118, 129)   # #6e7681
+BG_DISABLED = wx.Colour(35,  40,  52)    # #232834
+
+# Primary action. A single accent, shared by focus rings, the active tab indicator, links
+# and primary buttons, so the eye has exactly one thing to follow per screen.
+ACCENT          = wx.Colour(88,  166, 255)  # #58a6ff
+ACCENT_HOVER    = wx.Colour(121, 192, 255)  # #79c0ff
+ACCENT_PRESSED  = wx.Colour(56,  139, 253)  # #388bfd
+FG_ON_ACCENT    = wx.Colour(13,  17,  23)   # #0d1117 - dark text on the light accent fill
+FOCUS_RING      = wx.Colour(88,  166, 255)  # #58a6ff
+
+# Destructive action (Kill, Delete). Distinct from ACCENT_RED, which is a text/plot colour.
+DANGER        = wx.Colour(218, 54,  51)   # #da3633
+DANGER_HOVER  = wx.Colour(248, 81,  73)   # #f85149
+FG_ON_DANGER  = wx.Colour(255, 255, 255)  # #ffffff
+
+# Confirmed / running (Launch). ACCENT_GREEN is a row tint and far too dark for a fill that
+# has to carry a label, so the button green is its own token.
+SUCCESS        = wx.Colour(35,  134, 54)   # #238636
+SUCCESS_HOVER  = wx.Colour(46,  160, 67)   # #2ea043
+FG_ON_SUCCESS  = wx.Colour(255, 255, 255)  # #ffffff
+
+# ---------------------------------------------------------------------------
+# Spacing and radius scale, in DIPs. Pass through dip() before use.
+#
+# Every border= and AddSpacer() in the UI was a bare literal (5, 8, 10, 12, 24 all appear
+# within one panel), which is most of why the layout reads as arbitrary. These are the only
+# gaps the UI is allowed to use.
+# ---------------------------------------------------------------------------
+SP_XS  = 4
+SP_SM  = 8
+SP_MD  = 12
+SP_LG  = 16
+SP_XL  = 24
+SP_2XL = 32
+
+RADIUS_SM = 4    # inputs, small buttons
+RADIUS_MD = 6    # buttons, pickers
+RADIUS_LG = 10   # cards, popups
+
+# Stroke width for focus rings and control outlines, in DIPs.
+BORDER_WIDTH = 1
+FOCUS_WIDTH = 2
+
+
+# ---------------------------------------------------------------------------
 # Font tokens — Must be ThemeFont instances to delay C++ initialization
+#
+# A type scale, not a single size: with everything at FONT_UI the only way to signal "this
+# is a section, that is a field" was to draw a box around it, which is what makes the
+# current UI read as a wall of controls. Sizes are points, resolved against the display DPI
+# by wx, so these do not need dip().
 # ---------------------------------------------------------------------------
 FONT_UI   = ThemeFont(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL, faceName="Segoe UI")
 FONT_BOLD = ThemeFont(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD,   faceName="Segoe UI")
 FONT_CODE = ThemeFont(10, wx.FONTFAMILY_MODERN,  wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL, faceName="Consolas")
+
+# Card and dialog titles.
+FONT_H1 = ThemeFont(13, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD, faceName="Segoe UI")
+# Section headers inside a card, and tab labels.
+FONT_H2 = ThemeFont(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD, faceName="Segoe UI")
+# Hints, units, status text - anything secondary to the control it annotates.
+FONT_SMALL = ThemeFont(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL, faceName="Segoe UI")
+# Dense monospace: hex views, address columns, log tails.
+FONT_CODE_SMALL = ThemeFont(9, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL, faceName="Consolas")
+
+_FONTS = (FONT_UI, FONT_BOLD, FONT_CODE, FONT_H1, FONT_H2, FONT_SMALL, FONT_CODE_SMALL)
+
+# Face preferences, most wanted first. Segoe UI and Consolas do not exist off Windows, and
+# wx's fallback there is a serif face that looks nothing like the target platform, so the
+# harness screenshots would be misleading. Resolved once, in _init().
+_UI_FACES = ("Segoe UI", "Inter", "Noto Sans", "DejaVu Sans", "Cantarell", "Arial")
+_CODE_FACES = ("Consolas", "Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", "Liberation Mono", "Monospace")
 
 # ---------------------------------------------------------------------------
 # Dark-mode alternating row color for grids
@@ -152,6 +246,25 @@ _PALETTES = {
         "ACCENT_JUMP":  (0,   255, 0),
         "TIMER_WARN":   (210, 153, 34),
         "GRID_ROW_ALT": (25,  30,  40),
+        # Surfaces, borders and interaction states (see the token block above).
+        "BG_SURFACE":    (39,  45,  58),
+        "BORDER_SUBTLE": (44,  51,  64),
+        "BORDER_STRONG": (61,  70,  87),
+        "BG_HOVER":      (44,  52,  68),
+        "BG_PRESSED":    (27,  32,  40),
+        "FG_DISABLED":   (110, 118, 129),
+        "BG_DISABLED":   (35,  40,  52),
+        "ACCENT":         (88,  166, 255),
+        "ACCENT_HOVER":   (121, 192, 255),
+        "ACCENT_PRESSED": (56,  139, 253),
+        "FG_ON_ACCENT":   (13,  17,  23),
+        "FOCUS_RING":     (88,  166, 255),
+        "DANGER":         (218, 54,  51),
+        "DANGER_HOVER":   (248, 81,  73),
+        "FG_ON_DANGER":   (255, 255, 255),
+        "SUCCESS":        (35,  134, 54),
+        "SUCCESS_HOVER":  (46,  160, 67),
+        "FG_ON_SUCCESS":  (255, 255, 255),
     },
     LIGHT: {
         "BG_MAIN":      (236, 239, 244),  # #eceff4 - light grey base
@@ -180,6 +293,30 @@ _PALETTES = {
         # is worse still. #8a6100 measures 5.20:1.
         "TIMER_WARN":   (138, 97,  0),    # #8a6100
         "GRID_ROW_ALT": (246, 248, 250),  # #f6f8fa - alternating row on white cells
+        # Surfaces, borders and interaction states. Light needs the opposite relationship
+        # to dark: a raised surface gets *lighter* than the card, and hover gets darker,
+        # because there is no room to brighten past white.
+        "BG_SURFACE":    (255, 255, 255),  # #ffffff
+        "BORDER_SUBTLE": (216, 222, 228),  # #d8dee4
+        "BORDER_STRONG": (175, 184, 193),  # #afb8c1
+        "BG_HOVER":      (234, 238, 242),  # #eaeef2
+        "BG_PRESSED":    (215, 222, 229),  # #d7dee5
+        # #8c959f measures 3.12:1 against the light card: dim, still legible.
+        "FG_DISABLED":   (140, 149, 159),  # #8c959f
+        "BG_DISABLED":   (238, 241, 244),  # #eef1f4
+        # The accent has to carry white text here, so it is the deeper blue rather than the
+        # dark palette's bright one: #0969da measures 4.61:1 against white.
+        "ACCENT":         (9,   105, 218),  # #0969da
+        "ACCENT_HOVER":   (7,   87,  186),  # #0757ba
+        "ACCENT_PRESSED": (5,   69,  148),  # #054594
+        "FG_ON_ACCENT":   (255, 255, 255),  # #ffffff
+        "FOCUS_RING":     (9,   105, 218),  # #0969da
+        "DANGER":         (207, 34,  46),   # #cf222e - 4.83:1 against white
+        "DANGER_HOVER":   (167, 26,  36),   # #a71a24
+        "FG_ON_DANGER":   (255, 255, 255),  # #ffffff
+        "SUCCESS":        (26,  127, 55),   # #1a7f37 - 4.54:1 against white
+        "SUCCESS_HOVER":  (20,  103, 44),   # #14672c
+        "FG_ON_SUCCESS":  (255, 255, 255),  # #ffffff
     },
 }
 
@@ -283,6 +420,25 @@ def ToggleTheme() -> str:
     return mode
 
 
+def _resolve_face(candidates, fallbackFamily):
+    """First installed face from *candidates*, or the system default for the family.
+
+    wx silently substitutes a missing face, and what it substitutes off Windows is a serif
+    that misrepresents how the UI will actually look - which would make every screenshot
+    taken on the dev box misleading.
+    """
+    try:
+        installed = {name.lower() for name in wx.FontEnumerator.GetFacenames()}
+    except Exception:
+        return candidates[0]
+
+    for face in candidates:
+        if face.lower() in installed:
+            return face
+
+    return wx.SystemSettings.GetFont(wx.SYS_DEFAULT_GUI_FONT).GetFaceName()
+
+
 def _init():
     """Select the palette and build all wx.Font objects. Called once after wx.App exists."""
     global _initialized
@@ -291,11 +447,39 @@ def _init():
 
     set_theme(_read_theme_name())
 
-    FONT_UI._init_real()
-    FONT_BOLD._init_real()
-    FONT_CODE._init_real()
+    uiFace = _resolve_face(_UI_FACES, wx.FONTFAMILY_DEFAULT)
+    codeFace = _resolve_face(_CODE_FACES, wx.FONTFAMILY_MODERN)
+    for font in _FONTS:
+        # _args is (pointSize, family, style, weight); the face is a keyword.
+        family = font._args[1]
+        font._kwargs["faceName"] = codeFace if family == wx.FONTFAMILY_MODERN else uiFace
+        font._init_real()
 
     _initialized = True
+
+
+def dip(window, value):
+    """Scale a DIP spacing/radius token to physical pixels for *window*'s display.
+
+    The tokens are declared at 96 DPI. FromDIP is per-window because a multi-monitor setup
+    can mix scale factors, and it needs a realised window, so this is called at layout time
+    rather than at import time.
+    """
+    if window is None:
+        return value
+    try:
+        return window.FromDIP(value)
+    except Exception:
+        # wx < 4.1 and some GTK builds; the unscaled value is the 96 DPI answer.
+        return value
+
+
+def dip_size(window, width, height):
+    """wx.Size from DIP dimensions. -1 (meaning 'best size') is passed through unscaled."""
+    return wx.Size(
+        width if width < 0 else dip(window, width),
+        height if height < 0 else dip(window, height),
+    )
 
 
 # ---------------------------------------------------------------------------
