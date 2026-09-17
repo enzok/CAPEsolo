@@ -217,9 +217,14 @@ class Button(_Themed):
         size=wx.DefaultSize,
         name="button",
         tooltip=None,
+        colour=None,
     ):
         self.label = label
         self.variant = variant
+        # Overrides the variant's fill. Only for buttons whose colour carries meaning of its
+        # own - the API-category swatches in the behaviour panel, where the colour is the
+        # legend for the matching grid rows.
+        self.colour = colour
         super().__init__(parent, id, name=name)
         lock_font(self, FONT_UI)
         if tooltip:
@@ -248,6 +253,10 @@ class Button(_Themed):
         self.variant = variant
         self.Refresh()
 
+    def SetButtonColour(self, colour):
+        self.colour = colour
+        self.Refresh()
+
     # -- colours ------------------------------------------------------------
     def _colours(self):
         """(fill, text, border) for the current variant and state."""
@@ -255,6 +264,16 @@ class Button(_Themed):
             # Ghost buttons have no body when idle and should not grow one when disabled.
             fill = None if self.variant == GHOST else BG_DISABLED
             return fill, FG_DISABLED, BORDER_SUBTLE
+
+        if self.colour is not None:
+            # Shade towards white on hover and black on press so the state is still visible
+            # whatever the caller's colour is.
+            fill = self.colour
+            if self.pressed:
+                fill = _blend(fill, wx.BLACK, 0.2)
+            elif self.hovered:
+                fill = _blend(fill, wx.WHITE, 0.15)
+            return fill, _contrasting(self.colour), None
 
         if self.variant == PRIMARY:
             fill = ACCENT_PRESSED if self.pressed else (ACCENT_HOVER if self.hovered else ACCENT)
@@ -947,7 +966,16 @@ class Field(wx.Panel):
     The wx.TextCtrl is `field.ctrl`; call sites that held a TextCtrl keep holding one.
     """
 
-    def __init__(self, parent, value="", hint=None, style=0, multiline=False, name="field"):
+    def __init__(
+        self,
+        parent,
+        value="",
+        hint=None,
+        style=0,
+        multiline=False,
+        name="field",
+        size=wx.DefaultSize,
+    ):
         super().__init__(parent, style=wx.BORDER_NONE, name=name)
         self.SetDoubleBuffered(True)
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
@@ -977,6 +1005,10 @@ class Field(wx.Panel):
         sizer.Insert(0, 0, dip(self, SP_XS))
         sizer.Add(0, dip(self, SP_XS))
         self.SetSizer(sizer)
+        if size != wx.DefaultSize:
+            # On the wrapper, not on the TextCtrl: the caller is sizing the visible box, and
+            # the box is what this panel draws.
+            self.SetInitialSize(size)
 
     def _OnFocus(self, event):
         self.Refresh()
