@@ -5,6 +5,7 @@ import wx.grid as gridlib
 
 from CAPEsolo.capelib.objects import File
 
+from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .pe_window import PeWindow
 from .theme import GRID_ROW_ALT, apply_theme
@@ -143,7 +144,7 @@ class TargetInfoPanel(wx.Panel):
         startTab = getattr(self.GetMainFrame(), "startTab", None)
         selected = startTab.targetPath.GetValue().strip() if startTab else ""
         if not selected:
-            wx.MessageBox(
+            ui.message(
                 "No target file selected. Choose one on the Start tab first.",
                 "No Target",
                 wx.OK | wx.ICON_INFORMATION,
@@ -152,7 +153,7 @@ class TargetInfoPanel(wx.Panel):
 
         path = Path(selected)
         if not path.is_file():
-            wx.MessageBox(
+            ui.message(
                 f"Not a readable file:\n{path}", "Error", wx.OK | wx.ICON_ERROR
             )
             return
@@ -162,7 +163,7 @@ class TargetInfoPanel(wx.Panel):
             with wx.BusyCursor():
                 self.PopulateGrid(path)
         except Exception as e:
-            wx.MessageBox(
+            ui.message(
                 f"Failed to read file info: {e}", "Error", wx.OK | wx.ICON_ERROR
             )
 
@@ -187,7 +188,7 @@ class TargetInfoPanel(wx.Panel):
             )
             viewer_window.Show()
         except Exception as e:
-            wx.MessageBox(
+            ui.message(
                 f"Failed to execute the command: {e}", "Error", wx.OK | wx.ICON_ERROR
             )
 
@@ -206,7 +207,7 @@ class TargetInfoPanel(wx.Panel):
             return
         if result.get("error"):
             self.vtButton.Enable()  # allow a retry
-            wx.MessageBox(result.get("msg", "VirusTotal lookup failed"), "VirusTotal", wx.OK | wx.ICON_ERROR)
+            ui.message(result.get("msg", "VirusTotal lookup failed"), "VirusTotal", wx.OK | wx.ICON_ERROR)
             return
         self._ShowVtResult(result)
         self.Layout()
@@ -245,7 +246,7 @@ class TargetInfoPanel(wx.Panel):
             if current:
                 self.uploadButton.Enable()
             self._SetStatus("VirusTotal upload failed")
-            wx.MessageBox(result.get("msg", "Upload failed"), "VirusTotal", wx.OK | wx.ICON_ERROR)
+            ui.message(result.get("msg", "Upload failed"), "VirusTotal", wx.OK | wx.ICON_ERROR)
             return
         self._SetStatus("Uploaded to VirusTotal - analysis queued")
         if current:
@@ -257,7 +258,7 @@ class TargetInfoPanel(wx.Panel):
             self.grid.AutoSizeRows()
             self.ApplyAlternateRowShading()
             self.Layout()
-        wx.MessageBox(
+        ui.message(
             "File submitted to VirusTotal. Analysis is queued.",
             "VirusTotal",
             wx.OK | wx.ICON_INFORMATION,

@@ -6,6 +6,7 @@ from threading import Thread
 
 import wx
 
+from . import ui_kit as ui
 from .process_tools import (
     dump_process_memory,
     resume_process,
@@ -299,7 +300,7 @@ class ProcessTreeWindow(wx.Frame):
                 self.suspended.add(pid)
                 self._SetStatus(f"Suspended pid {pid}")
         except OSError as e:
-            wx.MessageBox(str(e), "Process Tree", wx.OK | wx.ICON_ERROR)
+            ui.message(str(e), "Process Tree", wx.OK | wx.ICON_ERROR)
         self._Render()
 
     def _subtree(self, pid):
@@ -338,7 +339,7 @@ class ProcessTreeWindow(wx.Frame):
                 f"Terminate {name} ({pid})?\n\nCapemon is asked to shut it down cleanly first; if it "
                 "does not exit it is force-killed. Monitoring of this process ends."
             )
-        if wx.MessageBox(msg, "Terminate Process", wx.YES_NO | wx.ICON_WARNING, self) != wx.YES:
+        if ui.message(msg, "Terminate Process", wx.YES_NO | wx.ICON_WARNING, self) != wx.YES:
             return
         self._SetStatus(
             f"Terminating {name} ({pid})" + (f" +{childCount} child(ren)..." if childCount else "...")
@@ -360,7 +361,7 @@ class ProcessTreeWindow(wx.Frame):
             self.suspended.discard(p)
         if errors:
             self._SetStatus("Terminate: some processes failed")
-            wx.MessageBox(
+            ui.message(
                 "Some processes could not be terminated:\n" + "\n".join(errors),
                 "Process Tree",
                 wx.OK | wx.ICON_ERROR,
@@ -385,7 +386,7 @@ class ProcessTreeWindow(wx.Frame):
     def _AfterDump(self, path, err):
         if err:
             self._SetStatus("Memory dump failed")
-            wx.MessageBox(err, "Process Tree", wx.OK | wx.ICON_ERROR)
+            ui.message(err, "Process Tree", wx.OK | wx.ICON_ERROR)
         else:
             self._SetStatus(f"Memory dumped to {path}")
 

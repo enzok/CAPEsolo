@@ -34,6 +34,7 @@ from CAPEsolo.utils.download_sample import (
 )
 from CAPEsolo.utils.update_yara import UpdateYara
 
+from . import ui_kit as ui
 from .analysis_conf import AnalysisConfPanel
 from .debug_console import DebugConsole
 from .html_report import ReportHTML
@@ -41,7 +42,6 @@ from .json_report import GetResults
 from .key_event import EVT_ANALYZER_COMPLETE, EVT_ANALYZER_COMPLETE_ID
 from .logger_window import LoggerWindow
 from .process_tree_window import ProcessTreeWindow
-from . import ui_kit as ui
 from .theme import (
     BG_MAIN,
     FONT_CODE,
@@ -1230,7 +1230,7 @@ class StartPanel(wx.Panel):
             self.launchAnalyzerBtn.Enable()
         else:
             self.launchAnalyzerBtn.Disable()
-            wx.MessageBox(
+            ui.message(
                 f"The file {self.target} does not exist.",
                 "Error",
                 wx.OK | wx.ICON_ERROR,
@@ -1421,7 +1421,7 @@ class StartPanel(wx.Panel):
             self.downloadBroker.stdin.flush()
         except Exception as e:
             self.downloadBroker = None
-            wx.MessageBox(f"Could not start the download helper:\n{e}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Could not start the download helper:\n{e}", "Error", wx.OK | wx.ICON_ERROR)
             return
         finally:
             password = None
@@ -1451,7 +1451,7 @@ class StartPanel(wx.Panel):
             self._CancelDownload()
             return
         if not self.downloadBroker or self.downloadBroker.poll() is not None:
-            wx.MessageBox(
+            ui.message(
                 "Downloads are not available. Restart CAPEsolo and enter the password.",
                 "Error",
                 wx.OK | wx.ICON_ERROR,
@@ -1459,7 +1459,7 @@ class StartPanel(wx.Panel):
             return
         sampleHash = self.hashInput.GetValue().strip()
         if not sampleHash:
-            wx.MessageBox("Enter a sample hash to download.", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message("Enter a sample hash to download.", "Error", wx.OK | wx.ICON_ERROR)
             return
         # Read the destination on the GUI thread; fall back to the configured/default dir.
         dest = self.downloadPathInput.GetValue().strip() or download_dir()
@@ -1522,7 +1522,7 @@ class StartPanel(wx.Panel):
                 statusBar.SetMessage("Download cancelled")
             else:
                 statusBar.SetMessage("Download failed")
-                wx.MessageBox(f"Sample download failed:\n{error}", "Error", wx.OK | wx.ICON_ERROR)
+                ui.message(f"Sample download failed:\n{error}", "Error", wx.OK | wx.ICON_ERROR)
             return
         statusBar.SetMessage(f"Downloaded {path.name}")
         # Reuse the Browse flow: set the target path and run the same validation.
@@ -1672,7 +1672,7 @@ class StartPanel(wx.Panel):
             self.terminateAnalyzerBtn.Disable()
             self.GetMainFrame().extendTimeoutBtn.Disable()
         except Exception as e:
-            wx.MessageBox(f"Could not terminate analyzer: {e}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Could not terminate analyzer: {e}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnExtendTimeout(self, event):
         analyzer = getattr(self, "analyzer", None)
@@ -1703,7 +1703,7 @@ class StartPanel(wx.Panel):
                 try:
                     originalPath.replace(self.target)
                 except OSError as e:
-                    wx.MessageBox(
+                    ui.message(
                         f"Could not prepare the target file:\n{e}", "Error", wx.OK | wx.ICON_ERROR
                     )
                     return
@@ -1712,7 +1712,7 @@ class StartPanel(wx.Panel):
             self.target = originalPath
 
         if not self.target.exists():
-            wx.MessageBox(
+            ui.message(
                 f"Target file not found:\n{self.target}", "Error", wx.OK | wx.ICON_ERROR
             )
             return
@@ -1721,7 +1721,7 @@ class StartPanel(wx.Panel):
         self.parent.targetFile = self.targetFile
 
         if self.staticAnalysis.GetValue():
-            wx.MessageBox("Static analysis: Check info, yara, and config tabs.", "Status", wx.OK | wx.ICON_INFORMATION)
+            ui.message("Static analysis: Check info, yara, and config tabs.", "Status", wx.OK | wx.ICON_INFORMATION)
             return
 
         try:
@@ -1731,7 +1731,7 @@ class StartPanel(wx.Panel):
                 if package:
                     self.package = package
                 else:
-                    wx.MessageBox(
+                    ui.message(
                         "Package identification error, select package manually.",
                         "Error",
                         wx.OK | wx.ICON_ERROR,
@@ -1755,7 +1755,7 @@ class StartPanel(wx.Panel):
             self.StartAnalysis()
 
         except Exception as e:
-            wx.MessageBox(f"Failed to execute the command: {e}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Failed to execute the command: {e}", "Error", wx.OK | wx.ICON_ERROR)
 
     def SaveAnalysisFile(self, event, ack=True, runtime=None):
         # Generated from the form every time, so the file never accumulates keys across runs.
@@ -1775,13 +1775,13 @@ class StartPanel(wx.Panel):
                 Path(self.analysisDir, "analysis.conf").write_text(content)
 
             if ack:
-                wx.MessageBox(
+                ui.message(
                     "analysis.conf saved successfully.",
                     "Success",
                     wx.OK | wx.ICON_INFORMATION,
                 )
         except OSError as e:
-            wx.MessageBox(
+            ui.message(
                 f"Failed to save analysis.conf: {e!s}",
                 "Error",
                 wx.OK | wx.ICON_ERROR,
@@ -1846,10 +1846,10 @@ class StartPanel(wx.Panel):
         self.zipResultsBtn.Enable()
         if error is not None:
             statusBar.SetMessage("Zip failed")
-            wx.MessageBox(f"Failed to zip results:\n{error}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Failed to zip results:\n{error}", "Error", wx.OK | wx.ICON_ERROR)
             return
         statusBar.SetMessage(f"Zipped results to {path.name}")
-        wx.MessageBox(
+        ui.message(
             f"Analysis results zipped to:\n{path}\n\nTo restore in a clean VM, copy this file to "
             "C:\\Users\\Public\\CAPEsolo\\restore.zip and start CAPEsolo.",
             "Zip Results",
@@ -1889,7 +1889,7 @@ class StartPanel(wx.Panel):
         self.idbg = self.idbgCheckbox.GetValue()
 
     def OnUpdateYara(self, event):
-        confirm = wx.MessageBox(
+        confirm = ui.message(
             "Download and overwrite any existing YARA rules. "
             "This could take a few minutes.\n\n"
             "Do you want to continue?",
@@ -1907,13 +1907,13 @@ class StartPanel(wx.Panel):
             del busy
             if updated:
                 details = "\n".join(f"{path}: {count} rules updated" for path, count in updated.items())
-                wx.MessageBox(f"YARA rules updated successfully:\n\n{details}", "Update Complete", wx.OK | wx.ICON_INFORMATION)
+                ui.message(f"YARA rules updated successfully:\n\n{details}", "Update Complete", wx.OK | wx.ICON_INFORMATION)
             else:
-                wx.MessageBox("No YARA rules were updated.", "Update Complete", wx.OK | wx.ICON_INFORMATION)
+                ui.message("No YARA rules were updated.", "Update Complete", wx.OK | wx.ICON_INFORMATION)
 
         except Exception as e:
             del busy  # noqa: F821
-            wx.MessageBox(f"Failed to update YARA rules:\n{e!s}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Failed to update YARA rules:\n{e!s}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnYaraSave(self, event):
         yaraText = self.yaraRule.GetValue()
@@ -1922,14 +1922,14 @@ class StartPanel(wx.Panel):
         try:
             savePath.write_text(yaraText)
         except OSError as e:
-            wx.MessageBox(
+            ui.message(
                 f"Failed to save Yara rule:\n{e}",
                 "Save Failed",
                 wx.OK | wx.ICON_ERROR,
             )
             return
 
-        wx.MessageBox(
+        ui.message(
             f"Yara rule saved to: {savePath!s}",
             "Save Successful",
             wx.OK | wx.ICON_INFORMATION,
@@ -1941,21 +1941,21 @@ class StartPanel(wx.Panel):
         try:
             yaraPath.unlink()
         except FileNotFoundError:
-            wx.MessageBox(
+            ui.message(
                 f"Yara rule file not found: {yaraPath!s}",
                 "Delete Failed",
                 wx.OK | wx.ICON_ERROR,
             )
             return
         except OSError as e:
-            wx.MessageBox(
+            ui.message(
                 f"Failed to delete Yara rule:\n{e}",
                 "Delete Failed",
                 wx.OK | wx.ICON_ERROR,
             )
             return
 
-        wx.MessageBox(
+        ui.message(
             f"Yara rule deleted: {yaraPath!s}",
             "Delete Successful",
             wx.OK | wx.ICON_INFORMATION,
@@ -1971,7 +1971,7 @@ class StartPanel(wx.Panel):
         self.yaraRule.SetValue(yaraText)
 
     def JsonReport(self, event):
-        confirm = wx.MessageBox(
+        confirm = ui.message(
             "Generate JSON report.\n\nDo you want to continue?",
             "Confirm",
             wx.YES_NO | wx.ICON_QUESTION | wx.CENTER,
@@ -1989,16 +1989,16 @@ class StartPanel(wx.Panel):
             )
             del busy
             if completed:
-                wx.MessageBox("JSON report completed successfully.", "JSON Report", wx.OK | wx.ICON_INFORMATION)
+                ui.message("JSON report completed successfully.", "JSON Report", wx.OK | wx.ICON_INFORMATION)
             else:
-                wx.MessageBox(f"JSON report was unsuccessful: {msg}", "JSON Report", wx.OK | wx.ICON_INFORMATION)
+                ui.message(f"JSON report was unsuccessful: {msg}", "JSON Report", wx.OK | wx.ICON_INFORMATION)
 
         except Exception as e:
             del busy  # noqa: F821
-            wx.MessageBox(f"Failed to create JSON report:\n{e!s}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Failed to create JSON report:\n{e!s}", "Error", wx.OK | wx.ICON_ERROR)
 
     def HtmlReport(self, event):
-        confirm = wx.MessageBox(
+        confirm = ui.message(
             "Generate HTML report.\n\nDo you want to continue?",
             "Confirm",
             wx.YES_NO | wx.ICON_QUESTION | wx.CENTER,
@@ -2018,10 +2018,10 @@ class StartPanel(wx.Panel):
             completed, msg = report.run(self.analysisDir, self.capesoloRoot, results)
             del busy
             if completed:
-                wx.MessageBox("HTML report completed successfully.", "HTML Report", wx.OK | wx.ICON_INFORMATION)
+                ui.message("HTML report completed successfully.", "HTML Report", wx.OK | wx.ICON_INFORMATION)
             else:
-                wx.MessageBox(f"HTML report was unsuccessful: {msg}", "HTML Report", wx.OK | wx.ICON_INFORMATION)
+                ui.message(f"HTML report was unsuccessful: {msg}", "HTML Report", wx.OK | wx.ICON_INFORMATION)
 
         except Exception as e:
             del busy  # noqa: F821
-            wx.MessageBox(f"Failed to create HTML report:\n{e!s}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Failed to create HTML report:\n{e!s}", "Error", wx.OK | wx.ICON_ERROR)

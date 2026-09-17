@@ -7,6 +7,7 @@ import wx.grid as gridlib
 from CAPEsolo.capelib.behavior import BehaviorAnalysis
 from CAPEsolo.capelib.utils import convert_to_printable
 
+from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import BEHAVIOR_CATEGORY_COLORS, FONT_CODE, GRID_ROW_ALT, apply_theme
@@ -393,7 +394,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         # placeholder meant this guard never fired and the placeholder was looked up as if
         # it were a real category, silently displaying "No results".
         if not selectedCategory or selectedCategory == "<Select category>":
-            wx.MessageBox(
+            ui.message(
                 "Please select a category dropdown.",
                 "No Category Selected",
                 wx.OK | wx.ICON_WARNING,
@@ -769,13 +770,13 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
                 self.current_page = page_num
                 self.AddTableData()
             else:
-                wx.MessageBox(
+                ui.message(
                     f"Page number must be between 1 and {total_pages}.",
                     "Invalid Page Number",
                     wx.OK | wx.ICON_ERROR,
                 )
         except ValueError:
-            wx.MessageBox(
+            ui.message(
                 "Please enter a valid integer page number.",
                 "Invalid Input",
                 wx.OK | wx.ICON_ERROR

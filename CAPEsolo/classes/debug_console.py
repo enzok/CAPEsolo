@@ -34,6 +34,7 @@ from CAPEsolo.capelib.page_cache import (
 )
 from CAPEsolo.lib.core.pipe import PipeDispatcher, PipeServer, disconnect_pipes
 
+from . import ui_kit as ui
 from .debug_controls import (
     BreakpointDialog,
     BreakpointsListCtrl,
@@ -599,7 +600,7 @@ class ConsolePanel(wx.Panel):
             row = self.disassemblyConsole.GetCipRow(self.cip)
 
         if row == -1:
-            wx.MessageBox("No valid address to Run Until.", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message("No valid address to Run Until.", "Error", wx.OK | wx.ICON_ERROR)
             return
 
         self.disassemblyConsole.OnRunUntil(row)
@@ -619,7 +620,7 @@ class ConsolePanel(wx.Panel):
         try:
             addr = int(addrStr, 0)
         except ValueError:
-            wx.MessageBox("Invalid address format.", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message("Invalid address format.", "Error", wx.OK | wx.ICON_ERROR)
             return
 
         sizeStr = wx.GetTextFromUser("Enter dump size in bytes (hex or decimal):", "Dump to File")
@@ -629,7 +630,7 @@ class ConsolePanel(wx.Panel):
         try:
             size = int(sizeStr, 0)
         except ValueError:
-            wx.MessageBox("Invalid size format.", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message("Invalid size format.", "Error", wx.OK | wx.ICON_ERROR)
             return
 
         formats = ["Binary file (*.bin)", "Text file (*.txt)"]
@@ -664,9 +665,9 @@ class ConsolePanel(wx.Panel):
                 with open(self.dumpFilePath, "w", encoding="utf-8") as f:
                     f.write(data)
 
-            wx.MessageBox(f"Memory dumped successfully to:\n{self.dumpFilePath}", "Success", wx.OK | wx.ICON_INFORMATION)
+            ui.message(f"Memory dumped successfully to:\n{self.dumpFilePath}", "Success", wx.OK | wx.ICON_INFORMATION)
         except Exception as e:
-            wx.MessageBox(f"Failed to dump memory: {e}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Failed to dump memory: {e}", "Error", wx.OK | wx.ICON_ERROR)
 
 
     def AppendConsole(self, text: str):

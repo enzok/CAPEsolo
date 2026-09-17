@@ -17,6 +17,7 @@ import logging
 
 import wx
 
+from . import ui_kit as ui
 from .theme import FONT_CODE, apply_theme
 
 log = logging.getLogger(__name__)
@@ -208,7 +209,7 @@ class AnalysisConfPanel(wx.Panel):
             with open(path, "r") as hfile:
                 text = hfile.read()
         except OSError as e:
-            wx.MessageBox(
+            ui.message(
                 f"Failed to load {path}: {e}", "Error", wx.OK | wx.ICON_ERROR
             )
             return
@@ -333,7 +334,7 @@ class AnalysisConfPanel(wx.Panel):
         try:
             parser.read_string(text)
         except configparser.Error as e:
-            wx.MessageBox(
+            ui.message(
                 f"analysis.conf could not be parsed, so the form was left as it was:\n{e}",
                 "Invalid configuration",
                 wx.OK | wx.ICON_ERROR,

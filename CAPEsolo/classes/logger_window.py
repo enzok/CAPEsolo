@@ -2,6 +2,7 @@ import logging
 
 import wx
 
+from . import ui_kit as ui
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, apply_theme
 
@@ -76,7 +77,7 @@ class LoggerWindow(wx.Frame, KeyEventHandlerMixin):
             fileData.AddFile(self.analysisLogPath)
             wx.TheClipboard.SetData(fileData)
             wx.TheClipboard.Close()
-            wx.MessageBox(
+            ui.message(
                 f"Analysis log copied: {self.analysisLogPath}",
                 "Info",
                 wx.OK | wx.ICON_INFORMATION,

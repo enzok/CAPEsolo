@@ -55,6 +55,7 @@ os.chdir(CAPESOLO_ROOT)
 
 from classes.main_frame import MainFrame
 from classes.splash_screen import SplashScreen
+from classes.theme import is_dark
 from lib.common.defines import KERNEL32
 from utils.update_yara import UpdateYara
 
@@ -73,7 +74,45 @@ class CapesoloApp(wx.App):
         self.restored = restored
         super().__init__(*args, **kwargs)
 
+    def _EnableNativeDarkMode(self):
+        """Opt wxMSW into dark mode for the widgets we cannot owner-draw.
+
+        Scrollbars, native menus, tooltips, the grid cell editor and the common dialogs are
+        drawn by the system and ignore our colours. wxWidgets 3.3 / wxPython 4.3.0 added an
+        opt-in that makes them follow the dark appearance on Windows 10 1809+. Must run before
+        any window exists, and is a no-op elsewhere: the method is absent on older wxPython and
+        on the GTK/macOS ports.
+
+        Only the dark palette opts in. The call cannot be reversed once windows exist, so a
+        light -> dark theme toggle does not reach the native widgets until the next launch.
+        """
+        enable = getattr(self, "MSWEnableDarkMode", None)
+        if enable is None or not is_dark():
+            return
+        # The "force dark regardless of the system setting" enum is spelled differently across
+        # 4.3 builds, so resolve it instead of hardcoding a name. Falling through to the
+        # no-argument call still enables the opt-in, just following the system setting.
+        mode = next(
+            (
+                getattr(obj, name)
+                for obj, name in (
+                    (wx, "MSW_DARK_MODE_ALWAYS"),
+                    (wx.App, "DarkMode_Always"),
+                )
+                if hasattr(obj, name)
+            ),
+            None,
+        )
+        try:
+            if mode is not None:
+                enable(mode)
+            else:
+                enable()
+        except Exception:
+            log.debug("MSWEnableDarkMode failed", exc_info=True)
+
     def OnInit(self):
+        self._EnableNativeDarkMode()
         # The splash closes itself after 2s (SPLASH_TIMEOUT); do not sleep here. A blocking sleep
         # stalls the GUI thread so the message loop never runs, and Windows will not grant
         # foreground to a process that has not pumped messages - which left every window, including

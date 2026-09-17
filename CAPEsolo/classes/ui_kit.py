@@ -56,11 +56,13 @@ from .theme import (
     FONT_UI,
     RADIUS_MD,
     RADIUS_SM,
+    SP_LG,
     SP_MD,
     SP_SM,
     SP_XS,
     SUCCESS,
     SUCCESS_HOVER,
+    TIMER_WARN,
     dip,
     lock_font,
 )
@@ -82,6 +84,16 @@ def _blend(first, second, ratio):
         int(first.Green() + (second.Green() - first.Green()) * ratio),
         int(first.Blue() + (second.Blue() - first.Blue()) * ratio),
     )
+
+
+def _contrasting(colour):
+    """Black or white, whichever is readable on *colour*.
+
+    Rec. 709 luma, which tracks perceived brightness closely enough to pick a text colour
+    for an arbitrary fill. The 0.6 threshold errs towards white text.
+    """
+    luma = (0.2126 * colour.Red() + 0.7152 * colour.Green() + 0.0722 * colour.Blue()) / 255
+    return wx.Colour(20, 22, 26) if luma > 0.6 else wx.Colour(255, 255, 255)
 
 
 def _gc(dc):
@@ -1214,3 +1226,189 @@ class TabBar(_Themed):
                 context.SetBrush(wx.Brush(ACCENT))
                 context.SetPen(wx.TRANSPARENT_PEN)
                 context.DrawRectangle(left, height - indicator, tabWidth, indicator)
+
+
+class Dialog(wx.Dialog):
+    """wx.Dialog with the palette applied and Escape wired up.
+
+    wx.Dialog itself is themeable - it is the *contents* that are not - so this only sets the
+    background and gives subclasses a consistent way to close. Subclasses build their own
+    content and call EndModal() with a wx.ID_* value.
+    """
+
+    def __init__(self, parent, title, style=wx.DEFAULT_DIALOG_STYLE):
+        super().__init__(parent, title=title, style=style)
+        self.escapeId = wx.ID_CANCEL
+        self.SetBackgroundColour(BG_MAIN)
+        self.SetForegroundColour(FG_PRIMARY)
+        lock_font(self, FONT_UI)
+        self.Bind(wx.EVT_CHAR_HOOK, self._OnCharHook)
+
+    def SetEscapeId(self, id):
+        self.escapeId = id
+
+    def _OnCharHook(self, event):
+        # The buttons are ui_kit controls, not wx.Button, so wxWidgets cannot find an
+        # ID_CANCEL button to map Escape onto. Do it here.
+        if event.GetKeyCode() == wx.WXK_ESCAPE and self.IsModal():
+            self.EndModal(self.escapeId)
+            return
+        event.Skip()
+
+
+# Severity badge glyphs, drawn rather than pulled from wx.ArtProvider: the system icons are
+# fixed-palette and read as light-theme artwork against BG_MAIN.
+_BADGE_ERROR = "error"
+_BADGE_WARNING = "warning"
+_BADGE_INFO = "info"
+_BADGE_QUESTION = "question"
+
+
+class _Badge(_Themed):
+    """Filled circle with a glyph, sized to the heading step."""
+
+    SIZE = 32
+
+    def __init__(self, parent, kind):
+        self.kind = kind
+        super().__init__(parent, name="badge")
+
+    def DoGetBestSize(self):
+        size = dip(self, self.SIZE)
+        return wx.Size(size, size)
+
+    def _colour(self):
+        if self.kind == _BADGE_ERROR:
+            return DANGER
+        if self.kind == _BADGE_WARNING:
+            return TIMER_WARN
+        return ACCENT
+
+    def Draw(self, context, width, height):
+        size = min(width, height)
+        colour = self._colour()
+        context.SetBrush(wx.Brush(colour))
+        context.SetPen(wx.TRANSPARENT_PEN)
+        context.DrawEllipse(0, 0, size, size)
+
+        glyph = {
+            _BADGE_ERROR: "!",
+            _BADGE_WARNING: "!",
+            _BADGE_QUESTION: "?",
+        }.get(self.kind, "i")
+        # The three badge colours span red to amber, so neither FG_ON_ACCENT nor FG_PRIMARY
+        # works for all of them. Pick by luminance instead.
+        context.SetFont(FONT_H2, _contrasting(colour))
+        textWidth, textHeight = context.GetTextExtent(glyph)[:2]
+        context.DrawText(glyph, (size - textWidth) / 2, (size - textHeight) / 2)
+
+
+class _MessageDialog(Dialog):
+    """The themed wx.MessageBox. Built by message(); not meant to be used directly."""
+
+    # Message text wraps at this width before the dialog is allowed to grow.
+    WRAP = 420
+
+    def __init__(self, parent, message, caption, style):
+        super().__init__(parent, caption, style=wx.DEFAULT_DIALOG_STYLE & ~wx.RESIZE_BORDER)
+        outer = wx.BoxSizer(wx.VERTICAL)
+
+        body = wx.BoxSizer(wx.HORIZONTAL)
+        kind = self._Kind(style)
+        if kind is not None:
+            body.Add(_Badge(self, kind), 0, wx.ALIGN_TOP | wx.RIGHT, dip(self, SP_MD))
+
+        text = wx.StaticText(self, label=message)
+        text.SetForegroundColour(FG_PRIMARY)
+        lock_font(text, FONT_UI)
+        text.Wrap(dip(self, self.WRAP))
+        body.Add(text, 1, wx.ALIGN_TOP)
+        outer.Add(body, 1, wx.EXPAND | wx.ALL, dip(self, SP_LG))
+
+        actions = wx.BoxSizer(wx.HORIZONTAL)
+        actions.AddStretchSpacer()
+        for id, label, variant, isDefault in self._Actions(style):
+            button = Button(self, id=id, label=label, variant=variant)
+            button.Bind(wx.EVT_BUTTON, self._OnAction)
+            actions.Add(button, 0, wx.LEFT, dip(self, SP_SM))
+            if isDefault:
+                button.SetFocus()
+        outer.Add(
+            actions, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, dip(self, SP_LG)
+        )
+
+        self.SetSizerAndFit(outer)
+        if parent:
+            self.CentreOnParent()
+        else:
+            self.CentreOnScreen()
+
+    @staticmethod
+    def _Kind(style):
+        for flag, kind in (
+            (wx.ICON_ERROR, _BADGE_ERROR),
+            (wx.ICON_WARNING, _BADGE_WARNING),
+            (wx.ICON_QUESTION, _BADGE_QUESTION),
+            (wx.ICON_INFORMATION, _BADGE_INFO),
+        ):
+            if style & flag == flag:
+                return kind
+        return None
+
+    @staticmethod
+    def _Actions(style):
+        """[(id, label, variant, isDefault)] in left-to-right order.
+
+        Mirrors wx.MessageBox: YES_NO replaces the OK button, CANCEL is additive, and
+        NO_DEFAULT / CANCEL_DEFAULT move the initial focus off the affirmative action.
+        """
+        actions = []
+        if style & wx.YES_NO == wx.YES_NO:
+            wantsNoDefault = bool(style & wx.NO_DEFAULT)
+            actions.append((wx.ID_YES, "Yes", PRIMARY, not wantsNoDefault))
+            actions.append((wx.ID_NO, "No", SECONDARY, wantsNoDefault))
+        else:
+            actions.append((wx.ID_OK, "OK", PRIMARY, True))
+        if style & wx.CANCEL:
+            wantsCancelDefault = bool(style & wx.CANCEL_DEFAULT)
+            if wantsCancelDefault:
+                actions = [(id, label, variant, False) for id, label, variant, _ in actions]
+            actions.append((wx.ID_CANCEL, "Cancel", SECONDARY, wantsCancelDefault))
+        return actions
+
+    def _OnAction(self, event):
+        self.EndModal(event.GetId())
+
+
+# wx.MessageBox reports the button by flag, not by window id.
+_MESSAGE_RESULTS = {
+    wx.ID_OK: wx.OK,
+    wx.ID_YES: wx.YES,
+    wx.ID_NO: wx.NO,
+    wx.ID_CANCEL: wx.CANCEL,
+}
+
+
+def message(message, caption="Message", style=wx.OK | wx.CENTRE, parent=None):
+    """Themed stand-in for wx.MessageBox, with the same arguments and return values.
+
+    wx.MessageBox is a native task dialog: it ignores the palette completely and shows up as a
+    light popup over the dark UI. This renders the same thing from the theme.
+
+    Returns wx.OK, wx.YES, wx.NO or wx.CANCEL. The x/y arguments of wx.MessageBox are not
+    supported - nothing in the codebase passes them, and the dialog centres on its parent.
+    """
+    dialog = _MessageDialog(parent, message, caption, style)
+    # Escape means "no" when there is one, "cancel" when there is one, and is the same as OK
+    # for a single-button dialog - matching the native behaviour.
+    if style & wx.CANCEL:
+        dialog.SetEscapeId(wx.ID_CANCEL)
+    elif style & wx.YES_NO == wx.YES_NO:
+        dialog.SetEscapeId(wx.ID_NO)
+    else:
+        dialog.SetEscapeId(wx.ID_OK)
+    try:
+        return _MESSAGE_RESULTS.get(dialog.ShowModal(), wx.CANCEL)
+    finally:
+        dialog.Destroy()
+

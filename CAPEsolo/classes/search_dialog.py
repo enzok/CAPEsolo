@@ -2,6 +2,7 @@ import re
 
 import wx
 
+from . import ui_kit as ui
 from .theme import BG_INPUT, BG_SELECT, FG_PRIMARY, FG_RED_ALERT, apply_theme
 
 
@@ -149,7 +150,7 @@ class SearchDialog(wx.Dialog):
             textCtrl.SetInsertionPoint(start)
             textCtrl.SetFocus()
         else:
-            wx.MessageBox("Text not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
+            ui.message("Text not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
 
     def ResetHighlight(self, textCtrl, start, length):
         # start is already a control position, converted by HighlightText.
@@ -181,7 +182,7 @@ class SearchDialog(wx.Dialog):
         )
         if offset < 0:
             self.lastFileOffset = -1
-            wx.MessageBox(
+            ui.message(
                 "Text not found.", "Search Result", wx.OK | wx.ICON_INFORMATION
             )
             return
@@ -232,7 +233,7 @@ class SearchDialog(wx.Dialog):
                             self.currentGridPos = (gridIndex + 1, 0, 0)
                         return
 
-        wx.MessageBox(
+        ui.message(
             f"'{self.findWindow.GetValue()}' not found.",
             "Search Result",
             wx.OK | wx.ICON_INFORMATION,
@@ -268,7 +269,7 @@ class SearchDialog(wx.Dialog):
                     return
 
         if not match:
-            wx.MessageBox(f"'{searchText}' not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
+            ui.message(f"'{searchText}' not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
 
         self.currentSearchPos = (0, 0)
 
@@ -309,7 +310,7 @@ class SearchDialog(wx.Dialog):
                     return
 
         if not match:
-            wx.MessageBox(f"'{searchText}' not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
+            ui.message(f"'{searchText}' not found.", "Search Result", wx.OK | wx.ICON_INFORMATION)
 
         self.currentSearchRow = 0
 

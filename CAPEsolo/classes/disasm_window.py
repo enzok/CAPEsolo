@@ -5,6 +5,7 @@ import wx.lib.scrolledpanel as scrolled
 # whole instead of being cut mid-encoding.
 from CAPEsolo.capelib.debug_session import MAX_INSTRUCTION_LEN, Disassemble
 
+from . import ui_kit as ui
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, apply_theme
 
@@ -240,7 +241,7 @@ class DisasmWindow(wx.Frame, KeyEventHandlerMixin):
         try:
             pageNum = int(self.pageInput.GetValue())
         except ValueError:
-            wx.MessageBox(
+            ui.message(
                 "Please enter a valid integer page number.",
                 "Invalid Input",
                 wx.OK | wx.ICON_ERROR,
@@ -252,7 +253,7 @@ class DisasmWindow(wx.Frame, KeyEventHandlerMixin):
             self.currentPage = pageNum
             self.LoadPage()
         else:
-            wx.MessageBox(
+            ui.message(
                 f"Page number must be between 1 and {totalPages}.",
                 "Invalid Page Number",
                 wx.OK | wx.ICON_ERROR,

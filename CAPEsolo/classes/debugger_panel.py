@@ -4,6 +4,7 @@ from pathlib import Path
 import pefile
 import wx
 
+from . import ui_kit as ui
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, apply_theme
 
@@ -279,13 +280,13 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
                 self.coverageFileBtn.Enable()
 
             if coverageSaved:
-                wx.MessageBox(
+                ui.message(
                     f"Coverage saved to {filepath}.",
                     "Success",
                     wx.OK | wx.ICON_INFORMATION,
                 )
             else:
-                wx.MessageBox(
+                ui.message(
                     "Coverage not saved.", "Failed", wx.OK | wx.ICON_INFORMATION
                 )
 
@@ -302,7 +303,7 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
             file_data.AddFile(self.coverageFilePath)
             wx.TheClipboard.SetData(file_data)
             wx.TheClipboard.Close()
-            wx.MessageBox(
+            ui.message(
                 f"Analysis log copied: {self.coverageFilePath}",
                 "Info",
                 wx.OK | wx.ICON_INFORMATION,

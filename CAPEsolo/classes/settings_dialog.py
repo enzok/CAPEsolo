@@ -14,6 +14,7 @@ import wx.lib.scrolledpanel as scrolled
 
 from CAPEsolo.capelib.config_paths import config_paths, user_config_path
 
+from . import ui_kit as ui
 from .theme import FONT_CODE, apply_theme, is_dark
 
 # Each row: (section, key, label, kind, choices, default).
@@ -228,7 +229,7 @@ class SettingsDialog(wx.Dialog):
             with open(path, "w") as fh:
                 config.write(fh)
         except OSError as e:
-            wx.MessageBox(f"Could not save settings to {path}:\n{e}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Could not save settings to {path}:\n{e}", "Error", wx.OK | wx.ICON_ERROR)
             return
 
         # Theme applies live; RefreshTheme toggles, so only call it when the value flipped.
@@ -237,7 +238,7 @@ class SettingsDialog(wx.Dialog):
         if newTheme != currentMode and hasattr(self.parent, "RefreshTheme"):
             self.parent.RefreshTheme()
 
-        wx.MessageBox(
+        ui.message(
             f"Settings saved to:\n{path}\n\nThe theme applies now. Analysis directory, result "
             "server and download enable take effect after restarting CAPEsolo.\n\nMCP settings "
             "apply to the separate CAPEsolo-mcp process, which CAPEsolo does not start - "
@@ -248,7 +249,7 @@ class SettingsDialog(wx.Dialog):
         self.EndModal(wx.ID_OK)
 
     def _invalid(self, label, what):
-        wx.MessageBox(f"{label} must be {what}.", "Invalid setting", wx.OK | wx.ICON_ERROR)
+        ui.message(f"{label} must be {what}.", "Invalid setting", wx.OK | wx.ICON_ERROR)
 
     @staticmethod
     def _is_int(value):

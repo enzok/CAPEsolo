@@ -1,5 +1,7 @@
 """Shared VirusTotal helpers for the Info and Payloads tabs.
 
+from . import ui_kit as ui
+
 vt_lookup/vt_upload do blocking network calls, so they run on a daemon thread and the result is
 marshalled back to the UI thread with wx.CallAfter - the same pattern start_panel uses for downloads.
 These are the GUI's own (post-launch) VT calls: they use the configured community key from cfg.ini
@@ -104,7 +106,7 @@ def confirm_vt_upload(window, path):
         "community. This cannot be undone."
     )
     return (
-        wx.MessageBox(msg, "Upload to VirusTotal", wx.YES_NO | wx.ICON_WARNING, window) == wx.YES
+        ui.message(msg, "Upload to VirusTotal", wx.YES_NO | wx.ICON_WARNING, window) == wx.YES
     )
 
 

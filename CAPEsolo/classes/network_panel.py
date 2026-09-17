@@ -7,6 +7,7 @@ from CAPEsolo.capelib.network import FormatTime, NetworkData
 from CAPEsolo.capelib.network_decrypt import DecryptStreams, StreamRows
 from CAPEsolo.capelib.path_utils import path_exists
 
+from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
@@ -165,7 +166,7 @@ class NetworkPanel(wx.Panel, KeyEventHandlerMixin):
     def ProcessCapture(self, event):
         pcap = self.GetPcapPath()
         if not pcap or not path_exists(pcap):
-            wx.MessageBox(
+            ui.message(
                 "Choose a capture file first.", "Network", wx.OK | wx.ICON_INFORMATION
             )
             return
@@ -182,7 +183,7 @@ class NetworkPanel(wx.Panel, KeyEventHandlerMixin):
                 except Exception as e:
                     self.decrypted = {"error": str(e)}
         except Exception as e:
-            wx.MessageBox(
+            ui.message(
                 f"Failed to process the capture:\n{e}", "Error", wx.OK | wx.ICON_ERROR
             )
             return

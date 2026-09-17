@@ -13,6 +13,7 @@ from CAPEsolo.capelib.objects import File
 from CAPEsolo.capelib.parse_pe import IsPEImage
 from CAPEsolo.capelib.utils import JsonPathExists, LoadFilesJson
 
+from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .hexview_window import HexViewWindow
 from .pe_window import PeWindow
@@ -301,7 +302,7 @@ class PayloadsPanel(wx.Panel):
                 viewer_window.Show()
 
         except Exception as e:
-            wx.MessageBox(
+            ui.message(
                 f"Failed to execute the command: {e}", "Error", wx.OK | wx.ICON_ERROR
             )
 
@@ -317,7 +318,7 @@ class PayloadsPanel(wx.Panel):
                 viewer_window.Show()
 
         except Exception as e:
-            wx.MessageBox(
+            ui.message(
                 f"Failed to execute the command: {e}", "Error", wx.OK | wx.ICON_ERROR
             )
 
@@ -328,7 +329,7 @@ class PayloadsPanel(wx.Panel):
                 return
             path = Path(path)
             if not path.exists():
-                wx.MessageBox(
+                ui.message(
                     f"File not found:\n{path}", "Show in Explorer", wx.OK | wx.ICON_WARNING
                 )
                 return
@@ -336,7 +337,7 @@ class PayloadsPanel(wx.Panel):
             # /select, highlights the file in its folder. List form avoids shell quoting issues.
             subprocess.Popen(["explorer", "/select,", str(path)])
         except Exception as e:
-            wx.MessageBox(
+            ui.message(
                 f"Failed to open Explorer: {e}", "Error", wx.OK | wx.ICON_ERROR
             )
 
@@ -354,7 +355,7 @@ class PayloadsPanel(wx.Panel):
     def _OnVtDone(self, grid, button, uploadBtn, result):
         if result.get("error"):
             button.Enable()
-            wx.MessageBox(
+            ui.message(
                 result.get("msg", "VirusTotal lookup failed"), "VirusTotal", wx.OK | wx.ICON_ERROR
             )
             return
@@ -389,7 +390,7 @@ class PayloadsPanel(wx.Panel):
         if result.get("error"):
             button.Enable()
             self._SetStatus("VirusTotal upload failed")
-            wx.MessageBox(result.get("msg", "Upload failed"), "VirusTotal", wx.OK | wx.ICON_ERROR)
+            ui.message(result.get("msg", "Upload failed"), "VirusTotal", wx.OK | wx.ICON_ERROR)
             return
         self._SetStatus("Uploaded to VirusTotal - analysis queued")
         # Submitted: retire the button and note the pending analysis on the payload's grid.

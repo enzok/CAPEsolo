@@ -20,6 +20,7 @@ from CAPEsolo.capelib.page_cache import (
     RegionChange,
 )
 
+from . import ui_kit as ui
 from .patch_dialog import ConfirmPatchDialog, PatchDialog, PatchHistoryDialog
 from .patch_models import PatchEntry
 from .search_dialog import SearchDialog
@@ -480,7 +481,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
                 try:
                     int(target, 16)
                 except ValueError:
-                    wx.MessageBox(f"Invalid hex address: {entry}", "Error", wx.OK | wx.ICON_ERROR)
+                    ui.message(f"Invalid hex address: {entry}", "Error", wx.OK | wx.ICON_ERROR)
                     dialog.Destroy()
                     return
 
@@ -489,7 +490,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
                 # to push the target, so Escape went to the address just navigated to.
                 self.NavigateTo(int(target, 16))
             except Exception:
-                wx.MessageBox(f"Invalid register or hex address: {entry}", "Error", wx.OK | wx.ICON_ERROR)
+                ui.message(f"Invalid register or hex address: {entry}", "Error", wx.OK | wx.ICON_ERROR)
 
         dialog.Destroy()
 
@@ -508,7 +509,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
             payload = f"{cip}|{addr:#X}"
             self.parent.SendCommand(CMD_SET_REGISTER, payload)
         except ValueError:
-            wx.MessageBox(f"Invalid address for Set EIP/RIP: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Invalid address for Set EIP/RIP: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnStepInto(self, event):
         self.parent.SendCommand(CMD_STEP_INTO)
@@ -526,7 +527,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
             payload = f"{addr:#X}"
             self.parent.SendCommand(CMD_RUN_UNTIL, payload)
         except ValueError:
-            wx.MessageBox(f"Invalid address for Run Until: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Invalid address for Run Until: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnSetBreakpoint(self, row, slot):
         addrStr = self.GetItemText(row, 0).strip()
@@ -535,7 +536,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
             payload = f"{slot.lower()}|{addr:#X}"
             self.parent.SendCommand(CMD_SET_BREAKPOINT, payload)
         except ValueError:
-            wx.MessageBox(f"Invalid address for Set Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Invalid address for Set Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnDataBreakpoint(self, row):
         """Prefill with the address the instruction references, else its own address."""
@@ -740,7 +741,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         # itself was flushed (module unload, fault, page map change). Re-fetching here would
         # mean calling JumpTo, which sets self.cip and would highlight this address as the
         # current instruction when it is not.
-        wx.MessageBox(f"Address {addr:#x} is no longer mapped.", "Info", wx.OK | wx.ICON_INFORMATION)
+        ui.message(f"Address {addr:#x} is no longer mapped.", "Info", wx.OK | wx.ICON_INFORMATION)
 
     def OperandAddressAt(self, row: int) -> int | None:
         """The address the instruction on `row` references, or None if it references none.
@@ -868,7 +869,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
                         self.UpdatePatchHistory(newEntries, row)
                         self.parent.SendCommand(CMD_PATCH_BYTES, data)
                 else:
-                    wx.MessageBox(f"Instructions were not assembled: {codeHex}", "Info", wx.OK | wx.ICON_INFORMATION)
+                    ui.message(f"Instructions were not assembled: {codeHex}", "Info", wx.OK | wx.ICON_INFORMATION)
             else:
                 dlg.Destroy()
 
@@ -1031,7 +1032,7 @@ class RegsTextCtrl(wx.TextCtrl):
         try:
             val = int(valueStr, 0)
         except ValueError:
-            wx.MessageBox(f"'{valueStr}' is not a valid number.", "Error", wx.ICON_ERROR)
+            ui.message(f"'{valueStr}' is not a valid number.", "Error", wx.ICON_ERROR)
             return
 
         payload = f"{reg}|{val:#X}"
@@ -1477,10 +1478,10 @@ class MemDumpListCtrl(wx.ListCtrl):
                     f.write(":00000001FF\n")
 
                 else:
-                    wx.MessageBox("Unknown format selected.", "Error", wx.ICON_ERROR)
+                    ui.message("Unknown format selected.", "Error", wx.ICON_ERROR)
 
         except Exception as e:
-            wx.MessageBox(f"Failed to save file:\n{e}", "Error", wx.ICON_ERROR)
+            ui.message(f"Failed to save file:\n{e}", "Error", wx.ICON_ERROR)
 
 
 class ThreadListCtrl(wx.ListCtrl):
@@ -1659,7 +1660,7 @@ class ModulesListCtrl(wx.ListCtrl):
                 matches.append((sym, addr))
 
         if not matches:
-            wx.MessageBox(f"No exports for module {modName}", "Info", wx.OK | wx.ICON_INFORMATION)
+            ui.message(f"No exports for module {modName}", "Info", wx.OK | wx.ICON_INFORMATION)
             return
 
         self.dlg = ExportsDialog(self, modName, matches)
@@ -1937,7 +1938,7 @@ class BreakpointDialog(wx.Dialog):
         """Return (slot, type, size, address) or None, reporting why if it is invalid."""
         text = self.addressCtrl.GetValue().strip()
         if not IsValidHexAddress(text):
-            wx.MessageBox(f"'{text}' is not a valid address.", "Set Breakpoint", wx.OK | wx.ICON_ERROR)
+            ui.message(f"'{text}' is not a valid address.", "Set Breakpoint", wx.OK | wx.ICON_ERROR)
             return None
 
         address = int(text, 16)
@@ -1946,7 +1947,7 @@ class BreakpointDialog(wx.Dialog):
         # x86 requires a data breakpoint's address to be aligned to its length; a misaligned
         # one silently watches the wrong bytes rather than failing.
         if bpType != BP_EXEC and address % size:
-            wx.MessageBox(
+            ui.message(
                 f"A {size}-byte watch needs a {size}-byte aligned address.\n"
                 f"{address:#x} is not aligned; try {address - (address % size):#x}.",
                 "Set Breakpoint",

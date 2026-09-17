@@ -8,6 +8,7 @@ import wx.lib.scrolledpanel as scrolled
 
 from CAPEsolo.capelib.parse_pe import PortableExecutable
 
+from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import ACCENT_CYAN, FONT_BOLD, GRID_ROW_ALT, apply_theme
@@ -255,7 +256,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
 
     def SaveOffset(self, event):
         if not hasattr(self, "offsets") or not self.offsets:
-            wx.MessageBox(
+            ui.message(
                 "No available offsets to save.", "Error", wx.OK | wx.ICON_ERROR
             )
             return
@@ -307,11 +308,11 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
                                 resourceSaved = True
 
             if resourceSaved:
-                wx.MessageBox(
+                ui.message(
                     "Resources saved.", "Information", wx.OK | wx.ICON_INFORMATION
                 )
             else:
-                wx.MessageBox(
+                ui.message(
                     "No resources saved.", "Information", wx.OK | wx.ICON_INFORMATION
                 )
 

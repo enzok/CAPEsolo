@@ -8,6 +8,7 @@ import wx
 from CAPEsolo.capelib.config_paths import config_paths
 from CAPEsolo.capelib.path_utils import path_mkdir
 
+from . import ui_kit as ui
 from .behavior_panel import BehaviorPanel
 from .configs_panel import ConfigsPanel
 from .debugger_panel import DebuggerPanel
@@ -20,7 +21,6 @@ from .start_panel import StartPanel
 from .status_bar import AnalysisStatusBar
 from .strings_panel import StringsPanel
 from .target_info import TargetInfoPanel
-from . import ui_kit as ui
 from .theme import SP_XS, BG_MAIN, ToggleTheme, apply_theme, dip, is_dark
 from .theme import _init as _init_theme
 from .yara_panel import YaraPanel

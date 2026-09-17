@@ -8,6 +8,7 @@ from CAPEsolo.capelib.js_streams import AssembleConversations, AssembleDns, Drop
 
 from CAPEsolo.capelib.path_utils import path_exists
 
+from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
@@ -431,13 +432,13 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
                 self.current_page = page_num
                 self.AddTableData()
             else:
-                wx.MessageBox(
+                ui.message(
                     f"Page number must be between 1 and {total_pages}.",
                     "Invalid Page Number",
                     wx.OK | wx.ICON_ERROR,
                 )
         except ValueError:
-            wx.MessageBox(
+            ui.message(
                 "Please enter a valid integer page number.",
                 "Invalid Input",
                 wx.OK | wx.ICON_ERROR,
