@@ -17,6 +17,15 @@ from CAPEsolo.capelib.api_protos import AppendUserPrototype, LoadPrototypes, Par
 from CAPEsolo.capelib.call_args import PROTECT_VALUES, CallArguments, ParseRegisters
 from CAPEsolo.capelib.cmdconsts import *
 from CAPEsolo.capelib.console_commands import HelpText, ParseCommand
+from CAPEsolo.capelib.symbol_names import (
+    Absolute,
+    IsValidName,
+    LoadNames,
+    ModuleOffset,
+    ReadNamesFile,
+    SaveNames,
+    WriteNamesFile,
+)
 from CAPEsolo.capelib.page_cache import (
     BoundInstructions,
     ContiguousSpan,
@@ -76,6 +85,11 @@ MISC_ROW_FRACTION = 0.28
 MAX_HISTORY = 100
 # Placeholder shown in the empty command box.
 COMMAND_HINT = "command, or 'help' for the list"
+# How many clashing entries an import lists by name before summarising the rest.
+SKIPPED_SHOWN = 5
+# Heading over the disassembly pane when the view is on CIP; UpdateViewLabel extends it with
+# the address, and its name, whenever the view has been navigated somewhere else.
+DISASM_LABEL = "Disassembly Console"
 # Share of the width the left pane of each row opens at, shared by both rows so Disassembly
 # and Memory Dump are one column and Registers and Stack are the other. This is the
 # Disassembly/Registers split as it already was; the sashes are the user's after that.
@@ -145,6 +159,9 @@ class DebugConsole:
         self.windowPosition = windowPosition
         self.windowSize = windowSize
         self.pipe = DEBUG_PIPE
+        # Captured here because ConsolePanel needs it for per-analysis address names, and the
+        # start panel is the only thing that knows it.
+        self.analysisDir = getattr(parent, "analysisDir", None)
         self.frame = None
 
         # These shared condition variables and buffers are used by the pipe handler.
@@ -187,6 +204,7 @@ class ConsoleFrame(wx.Frame):
         super().__init__(None, title=title, pos=window_position, size=window_size)
         self.parent = parent
         self.pipe = parent.pipe
+        self.analysisDir = parent.analysisDir
         self.consolePanel = ConsolePanel(self)
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
@@ -266,6 +284,11 @@ class ConsolePanel(wx.Panel):
         self.sashesPlaced = False
         self.inspectedTid = None
         self.cip = None
+        # Where the view is looking, which is CIP on a break but the target after a Go To or
+        # a followed address. One field used to do both jobs, so navigating anywhere moved
+        # the CIP highlight with it and the green row no longer said where execution was.
+        # Every decode is anchored here; only an execution reply moves cip.
+        self.viewAnchor = None
         self.bits = None
         self.pageBuffers: dict[int, bytes] = {}
         # request tag -> page base, for the page loads still outstanding. Correlating by tag
@@ -290,6 +313,16 @@ class ConsolePanel(wx.Panel):
         self.exports: dict[int, str] = {}
         # Sorted export addresses for nearest-symbol lookup, rebuilt when exports grow.
         self.exportAddrs: list[int] = []
+        # User-assigned names. storedNames is the durable (module, offset) form that is
+        # written to disk; userNames is it resolved against the current module bases, and is
+        # rebuilt whenever those change. See capelib/symbol_names.py.
+        self.storedNames: dict[tuple[str, int], str] = {}
+        self.userNames: dict[int, str] = {}
+        # Set whenever either name source changes, because NearestSymbol caches a sorted key
+        # list and a rename does not necessarily alter how many names there are.
+        self.symbolsDirty = True
+        self.symbolAddrs: list[int] = []
+        self.namesLoaded = False
         self.exportModules = []
         # Module names already read, so a module list refresh re-queues only what is new.
         self.exportsLoaded: set[str] = set()
@@ -344,7 +377,9 @@ class ConsolePanel(wx.Panel):
         # Disassembly
         disasmPane = wx.Panel(self.topSplitter)
         consoleSizer = wx.BoxSizer(wx.VERTICAL)
-        consoleSizer.Add(wx.StaticText(disasmPane, label="Disassembly Console"), 0, wx.ALL, 5)
+        self.disasmPane = disasmPane
+        self.disasmLabel = wx.StaticText(disasmPane, label=DISASM_LABEL)
+        consoleSizer.Add(self.disasmLabel, 0, wx.ALL, 5)
         self.disassemblyConsole = DisassemblyListCtrl(disasmPane, console=self)
         self.disassemblyConsole.SetFont(fontCourier)
         consoleSizer.Add(self.disassemblyConsole, 1, wx.EXPAND | wx.ALL, 5)
@@ -683,7 +718,7 @@ class ConsolePanel(wx.Panel):
         regsText = self.regsDisplay.GetValue()
         m = re.search(r"\b([ER]IP):\s*([0-9A-Fa-f]+)", regsText)
         # Never drop a known-good CIP: this runs on every break, and nulling it here blanks
-        # the disassembly highlight and takes GetCipRow/DoHotDecode down with it.
+        # the disassembly highlight and takes GetCipRow down with it.
         if m:
             self.cip = int(m.group(2), 16)
         else:
@@ -1053,8 +1088,16 @@ class ConsolePanel(wx.Panel):
         self.SendCommand(CMD_PAGE_LOAD, hex(pageBase), tag=tag)
 
     def JumpTo(self, address: int):
-        """Use pageMap to find page."""
-        self.cip = address
+        """Anchor the view on `address` and fetch the pages needed to disassemble it.
+
+        Sets viewAnchor, not cip: this runs for a Go To and a followed address as well as for
+        a break, and only an execution reply knows where execution actually is.
+        """
+        self.viewAnchor = address
+        # Before the early returns below, both of which leave the anchor moved with nothing
+        # decoded. Updating only from HighlightCip would leave the heading on the last
+        # address that did decode, which is the one case where it most needs to be right.
+        self.UpdateViewLabel()
         if not self.AddressInModules(address):
             self.RefreshModuleList()
 
@@ -1063,7 +1106,7 @@ class ConsolePanel(wx.Panel):
             self.RefreshPageMap()
             return
 
-        pages = SelectWindowPages(self.disassemblyConsole.pageMap, self.cip, PAGE_SIZE, CHUNK_SIZE)
+        pages = SelectWindowPages(self.disassemblyConsole.pageMap, self.viewAnchor, PAGE_SIZE, CHUNK_SIZE)
         if not pages:
             log.error("[DEBUG CONSOLE] No valid pages found for address %#x", address)
             return
@@ -1071,18 +1114,18 @@ class ConsolePanel(wx.Panel):
         # Landing outside every buffered page means a jump to a different region, so nothing
         # held is worth keeping. Within a region the cache is retained: re-reading the whole
         # 36 KB window took ~9 pipe round-trips to advance one instruction.
-        regionChange = not CoversAddress(self.pageBuffers, self.cip, PAGE_SIZE)
-        hot = set(HotPages(self.cip, PAGE_SIZE)) & set(pages)
+        regionChange = not CoversAddress(self.pageBuffers, self.viewAnchor, PAGE_SIZE)
+        hot = set(HotPages(self.viewAnchor, PAGE_SIZE)) & set(pages)
         if regionChange:
             self.pageBuffers.clear()
 
-        for page in DistantPages(list(self.pageBuffers), self.cip, PAGE_SIZE, KEEP_PAGES):
+        for page in DistantPages(list(self.pageBuffers), self.viewAnchor, PAGE_SIZE, KEEP_PAGES):
             del self.pageBuffers[page]
             self.pageHashes.pop(page, None)
 
         # Bounded on the same window as the buffers: a page that far from CIP will not be
         # re-requested, so remembering that it failed has no use and only grows the set.
-        for page in DistantPages(list(self.unreadablePages), self.cip, PAGE_SIZE, KEEP_PAGES):
+        for page in DistantPages(list(self.unreadablePages), self.viewAnchor, PAGE_SIZE, KEEP_PAGES):
             self.unreadablePages.discard(page)
 
         # Same bound BoundInstructions uses, so a name is dropped exactly when the instruction
@@ -1091,7 +1134,7 @@ class ConsolePanel(wx.Panel):
         # grows for as long as the session does. A pinned instruction that outlives its entry
         # is simply asked about again on the next decode.
         span = KEEP_PAGES * PAGE_SIZE
-        for instAddr in [a for a in self.resolvedExports if not self.cip - span <= a <= self.cip + span]:
+        for instAddr in [a for a in self.resolvedExports if not self.viewAnchor - span <= a <= self.viewAnchor + span]:
             del self.resolvedExports[instAddr]
 
         # Drop the hot pages so a stale copy can never be decoded if the re-read fails.
@@ -1105,21 +1148,61 @@ class ConsolePanel(wx.Panel):
 
         self.RefreshViewState()
 
-    def DoHotDecode(self):
-        """Decode the contiguous buffered span from CIP forward and update the view."""
-        if self.cip is None:
-            log.warning("[DEBUG CONSOLE] Hot decode skipped: no current instruction pointer")
+    def FocusAnchor(self):
+        """Scroll to the anchor, unless it is CIP and the highlight has already gone there."""
+        if self.viewAnchor is None or self.viewAnchor == self.cip:
             return
 
-        spanData = ContiguousSpan(self.pageBuffers, self.cip, PAGE_SIZE, CHUNK_SIZE)
+        self.disassemblyConsole.GoToInstruction(f"{self.viewAnchor:#x}")
+
+    def UpdateViewLabel(self):
+        """Say in the pane heading where the view is, when it is not simply on a live CIP.
+
+        Two cases need saying. A navigated view is otherwise unlabelled: the green CIP row is
+        elsewhere or off screen, so nothing on screen says which address is being shown, or
+        after a rename what it was named. And an anchor on an unreadable page leaves the
+        previous decode listed, which looks exactly like a working view of the wrong code.
+        """
+        anchor = self.viewAnchor
+        if anchor is None:
+            note = ""
+        elif PageBase(anchor, PAGE_SIZE) in self.unreadablePages:
+            # Nothing could be decoded here, so whatever is listed below is the last decode
+            # that worked. Said plainly, because a disassembly that looks current and is not
+            # is worse than an empty one.
+            note = f" - {anchor:#x} is unreadable; the rows below are stale"
+        elif anchor != self.cip:
+            # NearestSymbol, not SymbolFor: it tries the exact name first and otherwise gives
+            # symbol+offset, so landing inside a renamed routine still says which one it is.
+            name = self.NearestSymbol(anchor)
+            note = f" - {anchor:#x}" + (f"  {name}" if name else "")
+        else:
+            note = ""
+
+        self.disasmLabel.SetLabel(DISASM_LABEL + note)
+
+        # A StaticText in a sizer keeps the width it was laid out at, so a longer address or
+        # name is clipped rather than growing the label.
+        self.disasmPane.Layout()
+
+    def DoHotDecode(self):
+        """Decode the contiguous buffered span from the view anchor forward and render it."""
+        if self.viewAnchor is None:
+            log.warning("[DEBUG CONSOLE] Hot decode skipped: the view is not anchored anywhere")
+            return
+
+        spanData = ContiguousSpan(self.pageBuffers, self.viewAnchor, PAGE_SIZE, CHUNK_SIZE)
         if not spanData:
             # Refreshing the map cannot make an unreadable page readable, and the refresh
             # re-requests it, so this is the second half of the same loop as HandlePageLoad's.
-            if PageBase(self.cip, PAGE_SIZE) in self.unreadablePages:
-                log.warning("[DEBUG CONSOLE] CIP page for %#x is unreadable; nothing to disassemble", self.cip)
+            if PageBase(self.viewAnchor, PAGE_SIZE) in self.unreadablePages:
+                log.warning("[DEBUG CONSOLE] Page for %#x is unreadable; nothing to disassemble", self.viewAnchor)
+                # The rows on screen are the previous decode and have nothing to do with
+                # where execution is now. Leaving them unlabelled reads as a working view.
+                self.UpdateViewLabel()
                 return
 
-            log.warning("[DEBUG CONSOLE] No contiguous page data at CIP %#x; refreshing page map", self.cip)
+            log.warning("[DEBUG CONSOLE] No contiguous page data at %#x; refreshing page map", self.viewAnchor)
             self.RefreshPageMap()
             return
 
@@ -1128,13 +1211,16 @@ class ConsolePanel(wx.Panel):
         # records the new ones after this returns), so this asks whether the code changed.
         rewritten = any(
             PageChanged(self.pageHashes, page, self.pageBuffers.get(page))
-            for page in PagesOfSpan(self.cip, len(spanData), PAGE_SIZE)
+            for page in PagesOfSpan(self.viewAnchor, len(spanData), PAGE_SIZE)
         )
         # A plain step usually decodes the same instructions with the split moved along by
-        # one, so when the bytes are untouched and CIP is already a known boundary there is
-        # nothing to decode and nothing to re-render - just move the highlight.
-        if not rewritten and self.disassemblyConsole.GetCipRow() != -1:
+        # one, so when the bytes are untouched and the anchor is already a known boundary
+        # there is nothing to decode and nothing to re-render - just move the highlight and
+        # scroll. Asks about the anchor, not CIP: after following an address CIP is often not
+        # in the stream at all, and testing it would re-decode a span that is already right.
+        if not rewritten and self.disassemblyConsole.GetInstructionRow(self.viewAnchor) != -1:
             self.disassemblyConsole.HighlightCip(self.disassemblyConsole.GetCipRow())
+            self.FocusAnchor()
             return
 
         # Keep anywhere the user can navigate back to, or has marked, regardless of distance.
@@ -1142,17 +1228,20 @@ class ConsolePanel(wx.Panel):
         pinned |= self.disassemblyConsole.bpAddrs
         pinned |= set(self.patchHistoryByAddr)
         prefix = BoundInstructions(
-            [ins for ins in cache if ins.address < self.cip], self.cip, KEEP_PAGES * PAGE_SIZE, pinned
+            [ins for ins in cache if ins.address < self.viewAnchor], self.viewAnchor, KEEP_PAGES * PAGE_SIZE, pinned
         )
         mode = Decode64Bits if self.bits == 64 else Decode32Bits
         insts: list[DecodedInstruction] = []
-        for address, size, text, hexBytes in Decode(self.cip, spanData, mode):
+        for address, size, text, hexBytes in Decode(self.viewAnchor, spanData, mode):
             patchText = self.PatchDisasmText(address, text)
             insts.append(DecodedInstruction(address, hexBytes, patchText))
 
         # SetInstructions owns decodeCache: assigning it here first would make the incremental
         # diff see the new stream as already rendered and skip every row.
         self.disassemblyConsole.SetInstructions(prefix + insts)
+        # SetInstructions centres on CIP, which is not where the user is looking after a
+        # navigation, so the anchor has the last word on the scroll position.
+        self.FocusAnchor()
         self.ResolveCallSlots()
 
     def RenderDisassembly(self):
@@ -1272,7 +1361,7 @@ class ConsolePanel(wx.Panel):
             except ValueError:
                 continue
 
-            export = self.exports.get(value)
+            export = self.SymbolFor(value)
             if export:
                 resolved[slot] = export
 
@@ -1293,6 +1382,7 @@ class ConsolePanel(wx.Panel):
         if m:
             cip = int(m.group(0), 16)
             self.cip = cip
+            self.viewAnchor = cip
 
     def ResolveRef(self, addr):
         addrStr = addr
@@ -1352,7 +1442,7 @@ class ConsolePanel(wx.Panel):
 
             return None
 
-        return self.exports.get(int(operand, 16))
+        return self.SymbolFor(int(operand, 16)) or None
 
     def PatchDisasmText(self, addr: int, disasmText: str) -> str:
         m = JMP_CALL_ADDR_RX.search(disasmText)
@@ -1587,12 +1677,18 @@ class ConsolePanel(wx.Panel):
             if self.BuildModuleRanges(modules):
                 self.pageBuffers.clear()
 
+            # Names are stored against module offsets, so the absolute map is only meaningful
+            # once the module list is in, and has to be redone if anything moved.
+            self.ResolveUserNames()
             self.GetAllExports(modules)
             self.UpdateModules(modules)
 
-        if self.AddressInModules(self.cip) or self.firstBreak:
+        # The anchor, not CIP: JumpTo asks for a module refresh whenever its target is outside
+        # every known module, so this is often the reply to the user navigating to shellcode.
+        # Re-jumping to CIP here would discard that navigation before it rendered.
+        if self.AddressInModules(self.viewAnchor) or self.firstBreak:
             self.firstBreak = False
-            self.JumpTo(self.cip)
+            self.JumpTo(self.viewAnchor)
 
     def HandleExports(self, payload):
         # Every exit from here has to advance the queue. Two of these used to return without
@@ -1620,6 +1716,7 @@ class ConsolePanel(wx.Panel):
                 try:
                     absAddr, symName = entry.split(",", 1)
                     self.exports[int(absAddr)] = f"{modName}!{symName}"
+                    self.symbolsDirty = True
                 except ValueError:
                     continue
 
@@ -1706,17 +1803,33 @@ class ConsolePanel(wx.Panel):
                 self.pageHashes.pop(page, None)
                 self.unreadablePages.discard(page)
 
-        cip = self.cip
-        if not self.IsAddressKnown(cip):
-            log.debug(f"[DEBUG] CIP 0x{cip:X} is not present in the new PageMap; waiting for next execution update.")
+        anchor = self.viewAnchor
+        if not self.IsAddressKnown(anchor):
+            # A navigation that has gone stale must not suppress the break's own refresh. The
+            # address the view was parked on can be unmapped - a region freed while it was
+            # being looked at - with CIP perfectly fine, and returning here would leave the
+            # window unread until the next execution update.
+            if anchor == self.cip or not self.IsAddressKnown(self.cip):
+                log.debug(f"[DEBUG] 0x{anchor:X} is not present in the new PageMap; waiting for next execution update.")
+                return
+
+            self.AppendConsole(f"{anchor:#x} is no longer mapped; showing the current instruction.")
+            self.JumpTo(self.cip)
             return
 
-        pagesToRequest = SelectWindowPages(newMap, cip, PAGE_SIZE, CHUNK_SIZE)
+        pagesToRequest = SelectWindowPages(newMap, anchor, PAGE_SIZE, CHUNK_SIZE)
         if not pagesToRequest:
-            self.JumpTo(cip)
+            self.JumpTo(anchor)
             return
 
-        missing = [page for page in sorted(pagesToRequest) if page not in self.pageBuffers]
+        # JumpTo runs before the page map on every break and has already asked for this
+        # window once, so a page the target answered UNREADABLE for is not worth a second
+        # round trip within the same break. It is retried on the next break's JumpTo, which
+        # is what picks the page up if the sample commits it later.
+        missing = [
+            page for page in sorted(pagesToRequest)
+            if page not in self.pageBuffers and page not in self.unreadablePages
+        ]
         if not missing:
             # Nothing to fetch means no page load response is coming, so there is nothing to
             # wait for and nothing to refresh. Returning here is also what stops a per-break
@@ -1807,11 +1920,24 @@ class ConsolePanel(wx.Panel):
         self.UpdateRegs(payload)
 
     def HandleSetRegister(self, payload):
+        """Take the new register values, and follow the view if the instruction pointer moved.
+
+        UpdateRegs parses the reply's RIP/EIP into cip but nothing moved the view with it, so
+        Set EIP/RIP changed the register and left the green row on the old instruction and
+        the disassembly on the old window - which reads as the command having done nothing.
+        The register is set on the context the exception filter is about to resume, so it had
+        in fact worked; only the display disagreed.
+        """
         if payload.startswith("Failed"):
             log.warning("[DEBUG CONSOLE] Set register: %s", payload)
+            # Silent before, so a rejected register name looked the same as a working one.
+            self.AppendConsole(payload)
             return
 
+        previous = self.cip
         self.UpdateRegs(payload)
+        if self.cip is not None and self.cip != previous:
+            self.JumpTo(self.cip)
 
     def GetExport(self, payload):
         try:
@@ -1824,7 +1950,7 @@ class ConsolePanel(wx.Panel):
                 return
 
             leaddr = struct.unpack(unpackFmt, buffer)[0]
-            return self.exports.get(leaddr, "")
+            return self.SymbolFor(leaddr)
         except ValueError:
             return None
 
@@ -2030,32 +2156,213 @@ class ConsolePanel(wx.Panel):
         self.callStackDisplay.UpdateData(self.ParseFrames(body.get("FRAMES", "")))
         self.ShowThreadBanner(tid)
 
-    def NearestExport(self, addr: int) -> str:
-        """Nearest export at or below `addr` as module!symbol+offset, or "".
+    def EnsureNamesLoaded(self):
+        """Read the names file once, before anything reads or writes storedNames.
 
-        Bisects a sorted address list rather than scanning the exports map: this runs for
-        every call stack frame on every break, and a fully loaded process has tens of
-        thousands of exports.
+        Separate from ResolveUserNames because the load replaces storedNames wholesale: doing
+        it lazily inside the resolve meant the first rename of a session added a name, then
+        had it overwritten by the load that followed, and the name was silently lost.
         """
-        if not self.exports:
-            return ""
+        if self.namesLoaded:
+            return
 
-        if len(self.exportAddrs) != len(self.exports):
-            self.exportAddrs = sorted(self.exports)
+        self.storedNames = LoadNames(self.AnalysisDir())
+        self.namesLoaded = True
+        if self.storedNames:
+            log.info("[DEBUG CONSOLE] Loaded %d address names", len(self.storedNames))
 
-        exact = self.exports.get(addr)
+    def ResolveUserNames(self):
+        """Rebuild the absolute name map from the stored (module, offset) form."""
+        self.EnsureNamesLoaded()
+        resolved = {}
+        for (modName, offset), name in self.storedNames.items():
+            addr = Absolute(modName, offset, self.moduleRanges)
+            if addr is not None:
+                resolved[addr] = name
+
+        if resolved != self.userNames:
+            self.userNames = resolved
+            self.symbolsDirty = True
+
+    def AnalysisDir(self):
+        """The analysis directory, or None when the console is running without one."""
+        return getattr(self.parent, "analysisDir", None)
+
+    def RenameAddress(self, addr: int, name: str) -> bool:
+        """Give `addr` a name, or clear it with an empty name. Persists and re-renders.
+
+        Refuses an address outside every loaded module: the name is stored as an offset into
+        one, so there would be nothing to resolve it against on the next run.
+        """
+        self.EnsureNamesLoaded()
+        name = (name or "").strip()
+        if name and not IsValidName(name):
+            self.AppendConsole(f"'{name}' is not a usable name: letters, digits, _ . @ $ and no spaces.")
+            return False
+
+        where = ModuleOffset(addr, self.moduleRanges)
+        if where is None:
+            self.AppendConsole(f"{addr:#x} is not inside a loaded module, so a name could not be stored for it.")
+            return False
+
+        if name:
+            self.storedNames[where] = name
+            self.AppendConsole(f"{addr:#x} named {name}")
+        elif where in self.storedNames:
+            del self.storedNames[where]
+            self.AppendConsole(f"{addr:#x} name cleared")
+        else:
+            return False
+
+        self.ResolveUserNames()
+        if not SaveNames(self.AnalysisDir(), self.storedNames):
+            self.AppendConsole("Note: the name is set for this session but could not be saved.")
+
+        self.RenderDisassembly()
+        # RenderDisassembly only rewrites operands, so naming the address the view is parked
+        # on would otherwise leave the heading showing the old name until the next move.
+        self.UpdateViewLabel()
+        return True
+
+    def ExportNames(self, path) -> None:
+        """Write every name for this analysis to `path`.
+
+        The same format the per-analysis file uses, so an exported file can equally be
+        dropped into another analysis's debugger directory by hand.
+        """
+        self.EnsureNamesLoaded()
+        if not self.storedNames:
+            self.AppendConsole("No address names to export.")
+            return
+
+        if WriteNamesFile(path, self.storedNames):
+            self.AppendConsole(f"Exported {len(self.storedNames)} names to {path}")
+        else:
+            self.AppendConsole(f"Could not write {path}")
+
+    def ImportNames(self, path) -> None:
+        """Merge names from `path`, leaving any address already named here alone.
+
+        Non-destructive on purpose: an import that overwrote would silently discard work
+        done since the file was exported, and there is no undo. What was skipped is listed
+        rather than counted, so a clash can be resolved by renaming and importing again.
+        """
+        self.EnsureNamesLoaded()
+        incoming = ReadNamesFile(path)
+        if incoming is None:
+            self.AppendConsole(f"Could not read {path}")
+            return
+
+        if not incoming:
+            self.AppendConsole(f"No names found in {path}")
+            return
+
+        added = {where: name for where, name in incoming.items() if where not in self.storedNames}
+        skipped = [where for where in incoming if where in self.storedNames]
+        if added:
+            self.storedNames.update(added)
+            self.ResolveUserNames()
+            if not SaveNames(self.AnalysisDir(), self.storedNames):
+                self.AppendConsole("Note: the names are set for this session but could not be saved.")
+
+        report = f"Imported {len(added)} names"
+        if skipped:
+            report += f", skipped {len(skipped)} already named"
+
+        self.AppendConsole(report)
+        if skipped:
+            # Capped: re-importing over a full set would otherwise print hundreds of lines.
+            shown = ", ".join(f"{mod}+{off:#x}" for mod, off in skipped[:SKIPPED_SHOWN])
+            more = len(skipped) - SKIPPED_SHOWN
+            self.AppendConsole(f"({shown}{f', and {more} more' if more > 0 else ''})")
+
+        if added:
+            self.RenderDisassembly()
+            self.UpdateViewLabel()
+
+    def AddressForName(self, name: str) -> int | None:
+        """The address a user-assigned name refers to, or None if nothing has that name.
+
+        Matched case-insensitively, because a name typed into Go To rarely matches the case it
+        was given in. Nothing stops the same name being used twice - they are keyed by module
+        and offset, not by name - so a duplicate is reported rather than silently resolved to
+        whichever happened to sort first.
+        """
+        wanted = (name or "").strip().lower()
+        if not wanted:
+            return None
+
+        matches = sorted(addr for addr, named in self.userNames.items() if named.lower() == wanted)
+        if not matches:
+            return None
+
+        if len(matches) > 1:
+            listed = ", ".join(f"{addr:#x}" for addr in matches)
+            self.AppendConsole(f"'{name}' names {len(matches)} addresses ({listed}); going to the first.")
+
+        return matches[0]
+
+    def AddressOfSymbol(self, name: str) -> int | None:
+        """The address `name` refers to: the reverse of SymbolFor.
+
+        PatchDisasmText replaces an operand with its symbol, which leaves the row with no
+        literal for ParseOperandAddress to read back - so Copy Address, Go To, Dump Address
+        and the two Resolve items all reported "no address operand" on exactly the calls that
+        having a name made worth clicking on.
+
+        User names are matched case-insensitively, as they are everywhere else; exports are
+        compared as written, because the only caller reads them straight back out of the row
+        they were written to. No reverse index is kept: this runs on a right-click, and
+        exports is the largest map the console holds.
+        """
+        addr = self.AddressForName(name)
+        if addr is not None:
+            return addr
+
+        return next((a for a, exportName in self.exports.items() if exportName == name), None)
+
+    def SymbolFor(self, addr: int) -> str:
+        """The name for `addr`: whatever the user called it, else the export there, else "".
+
+        The single place a name is resolved. Five things display names - direct call operands,
+        the batched indirect call resolve, the single dereference resolve, call stack frames
+        and call argument values - and they all come through here, so a rename shows up in
+        every one of them and a sixth consumer added later gets it for free.
+        """
+        return self.userNames.get(addr) or self.exports.get(addr) or ""
+
+    def RefreshSymbolIndex(self):
+        """Rebuild the sorted key list NearestSymbol bisects, if either source changed."""
+        if not self.symbolsDirty:
+            return
+
+        self.symbolAddrs = sorted(set(self.exports) | set(self.userNames))
+        self.symbolsDirty = False
+
+    def NearestSymbol(self, addr: int) -> str:
+        """Nearest name at or below `addr` as symbol+offset, or "".
+
+        Bisects a sorted address list rather than scanning: this runs for every call stack
+        frame on every break, and a fully loaded process has tens of thousands of exports.
+        """
+        exact = self.SymbolFor(addr)
         if exact:
             return exact
 
-        idx = bisect.bisect_right(self.exportAddrs, addr)
+        self.RefreshSymbolIndex()
+        idx = bisect.bisect_right(self.symbolAddrs, addr)
         if not idx:
             return ""
 
-        base = self.exportAddrs[idx - 1]
+        base = self.symbolAddrs[idx - 1]
         if addr - base >= 0x10000:
             return ""
 
-        return f"{self.exports[base]}+{addr - base:#x}"
+        return f"{self.SymbolFor(base)}+{addr - base:#x}"
+
+    # Kept so anything still calling the old name keeps working; NearestSymbol also covers
+    # user names, which is the only difference.
+    NearestExport = NearestSymbol
 
     def ModuleNameFor(self, addr: int) -> str:
         """The module containing `addr`, for frames with no matching export."""
@@ -2078,19 +2385,27 @@ class ConsolePanel(wx.Panel):
         # the previous break's argument values. The stack reply is the last of the pair.
         self.ShowCallArguments()
 
-    def AnnotateArgument(self, value: int) -> str:
+    def AnnotateArgument(self, value: int, param=None) -> str:
         """A call argument value, plus whatever can be said about it for free.
 
         Only lookups that cost nothing: the export table is already loaded, and a protection
         constant is arithmetic. Reading what a pointer points at would be a memory round trip
         per argument per break, so a value that is merely plausible as a pointer is left as a
         number - the Dump Address action is one click away.
+
+        `param` is the prototype's parameter for this position, or None where there is no
+        prototype or it has run out of parameters.
         """
-        export = self.exports.get(value)
+        export = self.SymbolFor(value)
         if export:
             return export
 
-        if value in PROTECT_VALUES:
+        # Only where the prototype says the argument is one. Read off the value alone this
+        # labelled any number that happened to be a valid combination of the flags -
+        # GetModuleFileNameA's nSize=0x410 came out as "--X" - and an out parameter holds a
+        # pointer to a protection value rather than a protection value.
+        isProtect = param is not None and param.direction != "out" and "protect" in param.name.lower()
+        if isProtect and value in PROTECT_VALUES:
             return f"{value:#x} {ProtectText(value)}"
 
         # Small values read better as decimal; a size or a count is the common case.
@@ -2111,7 +2426,10 @@ class ConsolePanel(wx.Panel):
         row = disasm.GetCipRow()
         if disasm.commentRow is not None:
             if disasm.commentRow < disasm.GetItemCount():
-                disasm.SetItem(disasm.commentRow, COMMENT_COL, "")
+                # Back to the row's own comment, not blank: the column also carries the name
+                # of the address a row sits at, and blanking it would erase that for good
+                # once the arguments moved on - the row diff would see nothing to rebuild.
+                disasm.SetItem(disasm.commentRow, COMMENT_COL, disasm.BaseComment(disasm.commentRow))
 
             disasm.commentRow = None
 
@@ -2145,11 +2463,12 @@ class ConsolePanel(wx.Panel):
         # Positional: the prototype's Nth parameter names the Nth argument. Where the count
         # runs out - no prototype, or a mismatch - the register or slot name is used, so a
         # label is never borrowed from the wrong position.
-        names = [p.name for p in proto.params] if proto else []
+        params = proto.params if proto else []
         parts = []
         for i, (slot, value) in enumerate(args):
-            label = names[i] if i < len(names) else slot
-            parts.append(f"{label}={self.AnnotateArgument(value)}")
+            param = params[i] if i < len(params) else None
+            label = param.name if param else slot
+            parts.append(f"{label}={self.AnnotateArgument(value, param)}")
 
         disasm.SetItem(row, COMMENT_COL, ", ".join(parts))
         disasm.commentRow = row
@@ -2211,6 +2530,11 @@ class ConsolePanel(wx.Panel):
         if m:
             cip = int(m.group(0), 16)
             self.cip = cip
+            # Execution moving is the one thing that pulls the view back: whatever the user
+            # had navigated to belongs to the break they were looking at, not this one. Set
+            # here rather than leaving it to JumpTo below, because the unknown-address path
+            # returns before reaching it and HandlePageMap would then window on a stale anchor.
+            self.viewAnchor = cip
             self.AppendConsole(payload)
             if not self.IsAddressKnown(cip):
                 self.RefreshPageMap()
@@ -2230,10 +2554,12 @@ class ConsolePanel(wx.Panel):
         if payload.startswith("Failed"):
             log.warning("[DEBUG CONSOLE] NopInstruction: %s", payload)
 
-        self.JumpTo(self.cip)
+        # Where the view is, not where execution is: patching a byte on a row the user
+        # navigated to must not yank the view back to CIP.
+        self.JumpTo(self.viewAnchor)
 
     def HandlePatchBytes(self, payload):
         if payload.startswith("Failed"):
             log.warning("[DEBUG CONSOLE] PatchBytes: %s", payload)
 
-        self.JumpTo(self.cip)
+        self.JumpTo(self.viewAnchor)

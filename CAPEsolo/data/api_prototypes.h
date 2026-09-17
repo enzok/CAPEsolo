@@ -40,6 +40,7 @@ FARPROC WINAPI GetProcAddress([in] HMODULE hModule, [in] LPCSTR lpProcName);
 HMODULE WINAPI GetModuleHandleA([in, optional] LPCSTR lpModuleName);
 HMODULE WINAPI GetModuleHandleW([in, optional] LPCWSTR lpModuleName);
 DWORD WINAPI GetModuleFileNameW([in, optional] HMODULE hModule, [out] LPWSTR lpFilename, [in] DWORD nSize);
+DWORD WINAPI GetModuleFileNameA([in, optional] HMODULE hModule, [out] LPSTR lpFilename, [in] DWORD nSize);
 NTSTATUS NTAPI LdrLoadDll([in, optional] PWSTR SearchPath, [in, optional] PULONG DllCharacteristics, [in] PUNICODE_STRING DllName, [out] PVOID *DllHandle);
 NTSTATUS NTAPI LdrGetProcedureAddress([in] PVOID DllHandle, [in, optional] PANSI_STRING ProcedureName, [in, optional] ULONG ProcedureNumber, [out] PVOID *ProcedureAddress);
 
@@ -64,22 +65,33 @@ HANDLE WINAPI CreateFileW([in] LPCWSTR lpFileName, [in] DWORD dwDesiredAccess, [
 BOOL WINAPI ReadFile([in] HANDLE hFile, [out] LPVOID lpBuffer, [in] DWORD nNumberOfBytesToRead, [out, optional] LPDWORD lpNumberOfBytesRead, [in, out, optional] LPOVERLAPPED lpOverlapped);
 BOOL WINAPI WriteFile([in] HANDLE hFile, [in] LPCVOID lpBuffer, [in] DWORD nNumberOfBytesToWrite, [out, optional] LPDWORD lpNumberOfBytesWritten, [in, out, optional] LPOVERLAPPED lpOverlapped);
 BOOL WINAPI DeleteFileW([in] LPCWSTR lpFileName);
+BOOL WINAPI DeleteFileA([in] LPCSTR lpFileName);
 BOOL WINAPI CopyFileW([in] LPCWSTR lpExistingFileName, [in] LPCWSTR lpNewFileName, [in] BOOL bFailIfExists);
+BOOL WINAPI CopyFileA([in] LPCSTR lpExistingFileName, [in] LPCSTR lpNewFileName, [in] BOOL bFailIfExists);
 BOOL WINAPI MoveFileExW([in] LPCWSTR lpExistingFileName, [in, optional] LPCWSTR lpNewFileName, [in] DWORD dwFlags);
+BOOL WINAPI MoveFileExA([in] LPCSTR lpExistingFileName, [in, optional] LPCSTR lpNewFileName, [in] DWORD dwFlags);
 HANDLE WINAPI CreateFileMappingW([in] HANDLE hFile, [in, optional] LPSECURITY_ATTRIBUTES lpFileMappingAttributes, [in] DWORD dwProtect, [in] DWORD dwMaximumSizeHigh, [in] DWORD dwMaximumSizeLow, [in, optional] LPCWSTR lpName);
+HANDLE WINAPI CreateFileMappingA([in] HANDLE hFile, [in, optional] LPSECURITY_ATTRIBUTES lpFileMappingAttributes, [in] DWORD dwProtect, [in] DWORD dwMaximumSizeHigh, [in] DWORD dwMaximumSizeLow, [in, optional] LPCSTR lpName);
 LPVOID WINAPI MapViewOfFile([in] HANDLE hFileMappingObject, [in] DWORD dwDesiredAccess, [in] DWORD dwFileOffsetHigh, [in] DWORD dwFileOffsetLow, [in] SIZE_T dwNumberOfBytesToMap);
 
 /* ---- registry ---- */
 LSTATUS WINAPI RegOpenKeyExW([in] HKEY hKey, [in, optional] LPCWSTR lpSubKey, [in] DWORD ulOptions, [in] REGSAM samDesired, [out] PHKEY phkResult);
+LSTATUS WINAPI RegOpenKeyExA([in] HKEY hKey, [in, optional] LPCSTR lpSubKey, [in] DWORD ulOptions, [in] REGSAM samDesired, [out] PHKEY phkResult);
 LSTATUS WINAPI RegSetValueExW([in] HKEY hKey, [in, optional] LPCWSTR lpValueName, [in] DWORD Reserved, [in] DWORD dwType, [in] const BYTE *lpData, [in] DWORD cbData);
+LSTATUS WINAPI RegSetValueExA([in] HKEY hKey, [in, optional] LPCSTR lpValueName, [in] DWORD Reserved, [in] DWORD dwType, [in] const BYTE *lpData, [in] DWORD cbData);
 LSTATUS WINAPI RegQueryValueExW([in] HKEY hKey, [in, optional] LPCWSTR lpValueName, [in, out, optional] LPDWORD lpReserved, [out, optional] LPDWORD lpType, [out, optional] LPBYTE lpData, [in, out, optional] LPDWORD lpcbData);
+LSTATUS WINAPI RegQueryValueExA([in] HKEY hKey, [in, optional] LPCSTR lpValueName, [in, out, optional] LPDWORD lpReserved, [out, optional] LPDWORD lpType, [out, optional] LPBYTE lpData, [in, out, optional] LPDWORD lpcbData);
 LSTATUS WINAPI RegCreateKeyExW([in] HKEY hKey, [in] LPCWSTR lpSubKey, [in] DWORD Reserved, [in, optional] LPWSTR lpClass, [in] DWORD dwOptions, [in] REGSAM samDesired, [in, optional] LPSECURITY_ATTRIBUTES lpSecurityAttributes, [out] PHKEY phkResult, [out, optional] LPDWORD lpdwDisposition);
+LSTATUS WINAPI RegCreateKeyExA([in] HKEY hKey, [in] LPCSTR lpSubKey, [in] DWORD Reserved, [in, optional] LPSTR lpClass, [in] DWORD dwOptions, [in] REGSAM samDesired, [in, optional] LPSECURITY_ATTRIBUTES lpSecurityAttributes, [out] PHKEY phkResult, [out, optional] LPDWORD lpdwDisposition);
 
 /* ---- network ---- */
 HINTERNET WINAPI InternetOpenW([in, optional] LPCWSTR lpszAgent, [in] DWORD dwAccessType, [in, optional] LPCWSTR lpszProxy, [in, optional] LPCWSTR lpszProxyBypass, [in] DWORD dwFlags);
+HINTERNET WINAPI InternetOpenA([in, optional] LPCSTR lpszAgent, [in] DWORD dwAccessType, [in, optional] LPCSTR lpszProxy, [in, optional] LPCSTR lpszProxyBypass, [in] DWORD dwFlags);
 HINTERNET WINAPI InternetOpenUrlW([in] HINTERNET hInternet, [in] LPCWSTR lpszUrl, [in, optional] LPCWSTR lpszHeaders, [in] DWORD dwHeadersLength, [in] DWORD dwFlags, [in] DWORD_PTR dwContext);
+HINTERNET WINAPI InternetOpenUrlA([in] HINTERNET hInternet, [in] LPCSTR lpszUrl, [in, optional] LPCSTR lpszHeaders, [in] DWORD dwHeadersLength, [in] DWORD dwFlags, [in] DWORD_PTR dwContext);
 BOOL WINAPI InternetReadFile([in] HINTERNET hFile, [out] LPVOID lpBuffer, [in] DWORD dwNumberOfBytesToRead, [out] LPDWORD lpdwNumberOfBytesRead);
 HINTERNET WINAPI HttpOpenRequestW([in] HINTERNET hConnect, [in, optional] LPCWSTR lpszVerb, [in, optional] LPCWSTR lpszObjectName, [in, optional] LPCWSTR lpszVersion, [in, optional] LPCWSTR lpszReferrer, [in, optional] LPCWSTR *lplpszAcceptTypes, [in] DWORD dwFlags, [in] DWORD_PTR dwContext);
+HINTERNET WINAPI HttpOpenRequestA([in] HINTERNET hConnect, [in, optional] LPCSTR lpszVerb, [in, optional] LPCSTR lpszObjectName, [in, optional] LPCSTR lpszVersion, [in, optional] LPCSTR lpszReferrer, [in, optional] LPCSTR *lplpszAcceptTypes, [in] DWORD dwFlags, [in] DWORD_PTR dwContext);
 int WSAAPI connect([in] SOCKET s, [in] const sockaddr *name, [in] int namelen);
 int WSAAPI send([in] SOCKET s, [in] const char *buf, [in] int len, [in] int flags);
 int WSAAPI recv([in] SOCKET s, [out] char *buf, [in] int len, [in] int flags);
@@ -88,6 +100,7 @@ int WSAAPI recv([in] SOCKET s, [out] char *buf, [in] int len, [in] int flags);
 BOOL WINAPI CryptDecrypt([in] HCRYPTKEY hKey, [in] HCRYPTHASH hHash, [in] BOOL Final, [in] DWORD dwFlags, [in, out] BYTE *pbData, [in, out] DWORD *pdwDataLen);
 BOOL WINAPI CryptEncrypt([in] HCRYPTKEY hKey, [in] HCRYPTHASH hHash, [in] BOOL Final, [in] DWORD dwFlags, [in, out, optional] BYTE *pbData, [in, out] DWORD *pdwDataLen, [in] DWORD dwBufLen);
 BOOL WINAPI CryptStringToBinaryW([in] LPCWSTR pszString, [in] DWORD cchString, [in] DWORD dwFlags, [out] BYTE *pbBinary, [in, out] DWORD *pcbBinary, [out, optional] DWORD *pdwSkip, [out, optional] DWORD *pdwFlags);
+BOOL WINAPI CryptStringToBinaryA([in] LPCSTR pszString, [in] DWORD cchString, [in] DWORD dwFlags, [out] BYTE *pbBinary, [in, out] DWORD *pcbBinary, [out, optional] DWORD *pdwSkip, [out, optional] DWORD *pdwFlags);
 
 /* ---- anti-analysis and misc ---- */
 BOOL WINAPI IsDebuggerPresent(void);

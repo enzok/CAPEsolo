@@ -19,6 +19,7 @@ from CAPEsolo.capelib.page_cache import (
     FindRegion,
     RegionChange,
 )
+from CAPEsolo.capelib.symbol_names import NAMES_FILENAME
 
 from .patch_dialog import ConfirmPatchDialog, PatchDialog, PatchHistoryDialog
 from .patch_models import PatchEntry
@@ -55,6 +56,15 @@ FLOW_COL = 3
 COMMENT_COL = 4
 # Indirect operands whose slot address the instruction alone determines, as distorm writes
 # them: "[0x405000]" and "[RIP+0x3af9]". See StaticSlotAddress.
+# An operand PatchDisasmText has already replaced with a symbol - `call testfunc`,
+# `mov rax, kernel32.dll!VirtualAlloc`. Those rows no longer carry a literal, so the address
+# has to come back out of the name. Only the mnemonics PatchDisasmText rewrites; a register
+# operand matches too, but no symbol is named after one so the lookup simply finds nothing.
+SYMBOL_OPERAND_RX = re.compile(
+    r"^(?:jmp|call|lea|mov)\s+(?:[A-Za-z0-9]+\s*,\s*)?(?P<symbol>[A-Za-z_][\w.@$]*(?:![\w.@$]+)?)$",
+    re.IGNORECASE,
+)
+NAMES_WILDCARD = "Address names (*.txt)|*.txt|All files (*.*)|*.*"
 ABS_SLOT_RX = re.compile(r"^\[(0x[0-9A-Fa-f]+)\]$")
 RIP_SLOT_RX = re.compile(r"^\[RIP\s*([+-])\s*(0x[0-9A-Fa-f]+)\]$", re.IGNORECASE)
 
@@ -157,6 +167,10 @@ class DisassemblyListCtrl(wx.ListCtrl):
         # of a row's neighbours rather than of the instruction, and is recomputed whenever the
         # decoded stream changes.
         self.gutters: list[str] = []
+        # The name of the address each row sits at, shown in the comment column. Held beside
+        # the rows rather than read back off them because ShowCallArguments borrows that
+        # column for the current call and has to put this back when it releases it.
+        self.comments: list[str] = []
         self.pageMap: list[tuple[int, int, int]] = []
         # The map as it was before the current one, for the memory view's diff.
         self.prevPageMap: list[tuple[int, int, int]] = []
@@ -216,27 +230,37 @@ class DisassemblyListCtrl(wx.ListCtrl):
         shared prefix is the whole list and no row is touched at all. The previous version
         called DeleteAllItems and re-inserted every row on every break.
 
-        The diff runs over instruction and gutter together. A gutter glyph depends on the
-        rows around it, so a branch coming into view changes rows whose instruction is
-        untouched; comparing instructions alone would leave those arrows stale.
+        The diff runs over instruction, gutter and comment together. Each can change while
+        the instruction does not: a branch coming into view changes the arrows beside rows it
+        passes, and naming an address changes the comment on a row whose bytes never moved -
+        which is a rename with no reference on screen, and used to redraw nothing at all.
         """
         gutters = BranchLanes(insts)
+        # userNames, not SymbolFor: the question here is "what did you call this address",
+        # not "what is the name of this address". SymbolFor would answer with the export at
+        # that address too, which would put a comment on every export entry point in the
+        # window - a screenful of them any time the view is inside a system DLL.
+        names = self.parent.userNames
+        comments = [names.get(inst.address, "") for inst in insts]
         self.Freeze()
         try:
             with self.cacheLock:
                 firstChanged = CommonPrefixLength(
-                    list(zip(self.decodeCache, self.gutters)), list(zip(insts, gutters))
+                    list(zip(self.decodeCache, self.gutters, self.comments)),
+                    list(zip(insts, gutters, comments)),
                 )
                 self.decodeCache = list(insts)
                 self.gutters = gutters
+                self.comments = comments
                 for row in range(self.GetItemCount() - 1, firstChanged - 1, -1):
                     self.DeleteItem(row)
 
                 if self.cipRow is not None and self.cipRow >= firstChanged:
                     self.cipRow = None
 
-                # Same reasoning as cipRow: a rebuilt row is inserted without its comment, so
-                # a commentRow at or past the rebuild no longer refers to an annotated row.
+                # Same reasoning as cipRow: a rebuilt row is inserted with its own name and
+                # not the call arguments, so a commentRow at or past the rebuild no longer
+                # refers to an annotated row.
                 if self.commentRow is not None and self.commentRow >= firstChanged:
                     self.commentRow = None
 
@@ -253,6 +277,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.SetItem(row, 1, inst.bytes.upper())
         self.SetItem(row, 2, inst.text)
         self.SetItem(row, FLOW_COL, self.gutters[row] if row < len(self.gutters) else "")
+        self.SetItem(row, COMMENT_COL, self.comments[row] if row < len(self.comments) else "")
         mnemonic = inst.text.split()[0].lower()
         if mnemonic == "call":
             self.SetItemTextColour(row, ACCENT_CALL)
@@ -264,6 +289,10 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         if inst.address in self.bpAddrs:
             self.SetItemBackgroundColour(row, COLOR_LIGHT_RED)
+
+    def BaseComment(self, row: int) -> str:
+        """The comment a row carries of its own accord: the name of the address it is at."""
+        return self.comments[row] if 0 <= row < len(self.comments) else ""
 
     def GetCipRow(self, cip=None):
         row = -1
@@ -315,9 +344,19 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.ClearHighlight()
         if row < 0:
             cip = self.parent.cip
-            log.warning("[DEBUG CONSOLE] Instruction %s not found in disassembly", f"{cip:#x}" if cip else "(unknown)")
+            # Only a problem when the view is meant to be on CIP. Having navigated away, CIP
+            # being outside the decoded window is the normal case, not a failure to find it.
+            if self.parent.viewAnchor == cip:
+                log.warning(
+                    "[DEBUG CONSOLE] Instruction %s not found in disassembly",
+                    # "is not None", not truthiness: a sample that calls through a null
+                    # pointer breaks at 0, which is a real address and reported as such.
+                    f"{cip:#x}" if cip is not None else "(unknown)",
+                )
+
             self.Refresh()
             self.parent.ShowCallArguments()
+            self.parent.UpdateViewLabel()
             return
 
         self.cipRow = row
@@ -325,6 +364,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.CenterRow(row)
         self.Refresh()
         self.parent.ShowCallArguments()
+        self.parent.UpdateViewLabel()
 
     def CenterRow(self, row):
         """Center the specified row in the view with a single scroll."""
@@ -390,6 +430,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
 
         menu = wx.Menu()
         miCopy = menu.Append(wx.ID_ANY, "Copy")
+        miCopyAddress = menu.Append(wx.ID_ANY, "Copy Address")
         miGoTo = menu.Append(wx.ID_ANY, "Go To")
         miGoToCIP = menu.Append(wx.ID_ANY, "Go To EIP/RIP")
         miSetCIP = menu.Append(wx.ID_ANY, "Set EIP/RIP")
@@ -399,6 +440,14 @@ class DisassemblyListCtrl(wx.ListCtrl):
         miPatchHistory = menu.Append(wx.ID_ANY, "Patch History")
         menu.AppendSeparator()
         miDumpAddress = menu.Append(wx.ID_ANY, "Dump Address")
+        miRename = menu.Append(wx.ID_ANY, "Rename Address...")
+        miRenameTarget = menu.Append(wx.ID_ANY, "Rename Operand Target...")
+        miExportNames = menu.Append(wx.ID_ANY, "Export Names...")
+        miImportNames = menu.Append(wx.ID_ANY, "Import Names...")
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnRename(r, False), miRename)
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnRename(r, True), miRenameTarget)
+        self.Bind(wx.EVT_MENU, self.OnExportNames, miExportNames)
+        self.Bind(wx.EVT_MENU, self.OnImportNames, miImportNames)
         miResolveSymbol = menu.Append(wx.ID_ANY, "Resolve Symbol")
         miResolveString = menu.Append(wx.ID_ANY, "Resolve String")
         miAddPrototype = menu.Append(wx.ID_ANY, "Add API Prototype...")
@@ -420,7 +469,8 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnDataBreakpoint(r), miDataBp)
 
         self.Bind(wx.EVT_MENU, self.OnCopy, miCopy)
-        self.Bind(wx.EVT_MENU, self.OnGoTo, miGoTo)
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnCopyAddress(r), miCopyAddress)
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnGoTo(r), miGoTo)
         self.Bind(wx.EVT_MENU, self.OnGoToCip, miGoToCIP)
         self.Bind(wx.EVT_MENU, lambda e: self.OnSetCip(row), miSetCIP)
         self.Bind(wx.EVT_MENU, lambda e: self.OnNopInstruction(row), miNopInstruction)
@@ -460,17 +510,128 @@ class DisassemblyListCtrl(wx.ListCtrl):
         text = "\n".join(lines)
         SetClipboard(text)
 
-    def OnGoTo(self, event):
-        addr = GetClipboardText().strip()
-        dialog = wx.TextEntryDialog(self, "Enter hex address (e.g., 0x12345678) or Register:", "Go To Address", addr)
+    def OnRename(self, row, target: bool):
+        """Name this instruction's address, or the address its operand refers to.
+
+        Both are wanted for different reasons: naming the row you are sitting on labels a
+        function you have just identified, and naming the operand labels the callee without
+        navigating to it first.
+        """
+        if target:
+            addr = self.OperandAddressAt(row)
+            if addr is None:
+                self.parent.AppendConsole("No address operand on this instruction.")
+                return
+        else:
+            try:
+                addr = int(self.GetItemText(row, 0), 16)
+            except ValueError:
+                return
+
+        current = self.parent.userNames.get(addr, "")
+        dlg = wx.TextEntryDialog(self, f"Name for {addr:#x} (blank to clear):", "Rename Address", current)
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+
+            name = dlg.GetValue()
+        finally:
+            dlg.Destroy()
+
+        self.parent.RenameAddress(addr, name)
+
+    def OnExportNames(self, event):
+        """Save every name for this analysis to a file the user picks."""
+        # The analysis directory, not its debugger subdirectory: the live per-analysis file
+        # is <analysisDir>/debugger/symbol_names.txt, and defaulting there would offer to
+        # overwrite it with itself. Defaulting nowhere put the file wherever wx was last,
+        # which is easily the repo root.
+        dlg = wx.FileDialog(
+            self,
+            "Export Address Names",
+            defaultDir=self.parent.AnalysisDir() or "",
+            defaultFile=NAMES_FILENAME,
+            wildcard=NAMES_WILDCARD,
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        )
+        try:
+            if dlg.ShowModal() == wx.ID_OK:
+                self.parent.ExportNames(dlg.GetPath())
+        finally:
+            dlg.Destroy()
+
+    def OnImportNames(self, event):
+        """Merge names from a file the user picks. Addresses already named are left alone."""
+        dlg = wx.FileDialog(
+            self,
+            "Import Address Names",
+            defaultDir=self.parent.AnalysisDir() or "",
+            wildcard=NAMES_WILDCARD,
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+        )
+        try:
+            if dlg.ShowModal() == wx.ID_OK:
+                self.parent.ImportNames(dlg.GetPath())
+        finally:
+            dlg.Destroy()
+
+    def OnCopyAddress(self, row):
+        """Copy just the address an instruction refers to, not the whole row.
+
+        Copy takes the address, bytes and disassembly of every selected row, which is what you
+        want for a listing and not what you want when the thing you are after is the operand
+        of a `JMP 0x...`. Written with the 0x, so it pastes into Go To, the command box and
+        the breakpoint dialog as-is.
+        """
+        addr = self.OperandAddressAt(row)
+        if addr is None:
+            self.parent.AppendConsole("No address operand on this instruction.")
+            return
+
+        SetClipboard(f"{addr:#x}")
+        self.parent.AppendConsole(f"Copied {addr:#x}")
+
+    def OnGoTo(self, row=None):
+        """Prompt for an address, offering the one on the clicked instruction.
+
+        The prefill used to come from the clipboard, which only worked because hovering a row
+        happened to put the operand there - the clipboard as a data channel between two
+        unrelated actions. Reading the operand from the row that was right-clicked is what
+        that was approximating, and it no longer breaks if you copy something in between.
+        """
+        addr = ""
+        # isinstance, not "is not None": bound directly to EVT_MENU this would receive the
+        # event object, and OperandAddressAt would compare it against an int.
+        if isinstance(row, int):
+            operand = self.OperandAddressAt(row)
+            if operand is not None:
+                addr = f"{operand:#x}"
+
+        if not addr:
+            addr = GetClipboardText().strip()
+
+        dialog = wx.TextEntryDialog(
+            self,
+            "Enter a hex address (0x12345678), a register, or a name you have assigned:",
+            "Go To Address",
+            addr,
+        )
         if dialog.ShowModal() == wx.ID_OK:
             entry = dialog.GetValue().strip()
             target = None
             regsText = self.parent.regsDisplay.GetValue()
-            reg = entry.upper()
-            m = re.search(rf"\b{reg}\b\s*:\s*([0-9A-Fa-f]+)", regsText)
+            # Escaped: this is whatever was typed, and an unescaped bracket or backslash would
+            # raise out of re.search rather than simply failing to match.
+            m = re.search(rf"\b{re.escape(entry.upper())}\b\s*:\s*([0-9A-Fa-f]+)", regsText)
             if m:
                 target = m.group(1)
+
+            if target is None:
+                # After registers, so a register name still wins, and before hex, so a name
+                # made only of hex digits - "dead", "beef", "ace" - is taken as the name.
+                named = self.parent.AddressForName(entry)
+                if named is not None:
+                    target = f"{named:#x}"
 
             if target is None:
                 target = entry.lower()
@@ -494,8 +655,14 @@ class DisassemblyListCtrl(wx.ListCtrl):
         dialog.Destroy()
 
     def OnGoToCip(self, event):
-        row = self.GetCipRow(self.parent.cip)
-        self.HighlightCip(row)
+        """Put the view back on CIP, fetching it if it is no longer decoded.
+
+        Through NavigateTo rather than highlighting the row here: the anchor has to come
+        back with the view, and after following an address far enough CIP is not in the
+        decoded window at all, which this had no way to recover from.
+        """
+        if self.parent.cip is not None:
+            self.NavigateTo(self.parent.cip)
 
     def OnSetCip(self, row):
         addrStr = self.GetItemText(row, 0).strip()
@@ -576,7 +743,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         self.Refresh()
         return row
 
-    def NavigateTo(self, addr: int) -> bool:
+    def NavigateTo(self, addr: int, pushHistory: bool = True) -> bool:
         """Show `addr` in the view, fetching its region if it is not decoded yet.
 
         GoToInstruction only searches the instructions already decoded, which is the ~36 KB
@@ -584,11 +751,21 @@ class DisassemblyListCtrl(wx.ListCtrl):
         address that happened to be on screen already - following a register into a region
         nobody had disassembled reported "address not found" rather than going there.
 
-        History is pushed either way, so Escape comes back from a followed address the same
-        way it comes back from a jump.
+        History is pushed unless the caller is itself walking the history: going back must
+        not record the address it is leaving, or Escape would push and pop the same pair for
+        ever instead of making progress.
         """
         if self.GetInstructionRow(addr) != wx.NOT_FOUND:
-            self.PushHistory(self.parent.cip)
+            if pushHistory:
+                self.PushHistory(self.parent.viewAnchor)
+
+            # Already decoded, so there is no JumpTo to move the anchor and no decode to
+            # re-render: this is the whole of the move. HighlightCip re-derives the call
+            # argument annotation and relabels the pane, which is what puts the arguments
+            # back when Escape returns to CIP; GoToInstruction runs after it so the anchor,
+            # not the CIP row it centred on, decides where the view ends up.
+            self.parent.viewAnchor = addr
+            self.HighlightCip(self.GetCipRow())
             self.GoToInstruction(f"{addr:#x}")
             return True
 
@@ -597,7 +774,9 @@ class DisassemblyListCtrl(wx.ListCtrl):
             return False
 
         # Not decoded but mapped: JumpTo fetches the pages and the decode lands on it.
-        self.PushHistory(self.parent.cip)
+        if pushHistory:
+            self.PushHistory(self.parent.viewAnchor)
+
         self.parent.JumpTo(addr)
         return True
 
@@ -719,6 +898,11 @@ class DisassemblyListCtrl(wx.ListCtrl):
         return event.Skip()
 
     def PushHistory(self, addr: int):
+        # Nothing to go back to before the first break, and backHistory feeds DoHotDecode's
+        # pinned set, which cannot take a None.
+        if addr is None:
+            return
+
         self.backHistory.append(addr)
 
     def OnBack(self, event):
@@ -731,16 +915,16 @@ class DisassemblyListCtrl(wx.ListCtrl):
         if addr is None:
             return
 
-        row = self.GetInstructionRow(addr)
-        if row != -1:
-            self.HighlightCip(row)
-            return
-
-        # History addresses are pinned against eviction, so this only happens when the region
-        # itself was flushed (module unload, fault, page map change). Re-fetching here would
-        # mean calling JumpTo, which sets self.cip and would highlight this address as the
-        # current instruction when it is not.
-        wx.MessageBox(f"Address {addr:#x} is no longer mapped.", "Info", wx.OK | wx.ICON_INFORMATION)
+        # Straight to NavigateTo whether or not the address is still decoded: it scrolls to
+        # one that is and fetches one that is not, and either way it moves the anchor, which
+        # highlighting the row here did not. This used to refuse to refetch, on the grounds
+        # that JumpTo sets the CIP - but BoundInstructions only pins history below the anchor
+        # and only from the cache it already has, so following an address forward or into
+        # another region drops the one you came from, and refusing meant Escape failed in
+        # exactly the case it exists for. pushHistory=False or this would re-push what it is
+        # leaving.
+        if not self.NavigateTo(addr, pushHistory=False):
+            wx.MessageBox(f"Address {addr:#x} is no longer mapped.", "Info", wx.OK | wx.ICON_INFORMATION)
 
     def OperandAddressAt(self, row: int) -> int | None:
         """The address the instruction on `row` references, or None if it references none.
@@ -759,7 +943,17 @@ class DisassemblyListCtrl(wx.ListCtrl):
         except ValueError:
             return None
 
-        return self.ParseOperandAddress(self.GetItemText(row, 2), ripBase)
+        text = self.GetItemText(row, 2)
+        addr = self.ParseOperandAddress(text, ripBase)
+        if addr is not None:
+            return addr
+
+        # No literal left because the operand has been named. For a direct call this is the
+        # exact inverse of the rewrite. For one resolved through a slot it gives the target
+        # rather than the slot holding it - which is the address the name refers to, and so
+        # the one meant by clicking on the name.
+        m = SYMBOL_OPERAND_RX.match(text.strip())
+        return self.parent.AddressOfSymbol(m.group("symbol")) if m else None
 
     def OnDumpAddress(self, row):
         addr = self.OperandAddressAt(row)
@@ -1883,7 +2077,7 @@ class BreakpointDialog(wx.Dialog):
     """
 
     def __init__(self, parent, address: str = ""):
-        super().__init__(parent, title="Set Breakpoint")
+        super().__init__(parent, title="Set Breakpoint", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.types = [BP_EXEC, BP_WRITE, BP_READWRITE]
 
         grid = wx.FlexGridSizer(rows=0, cols=2, hgap=8, vgap=8)
@@ -1913,11 +2107,23 @@ class BreakpointDialog(wx.Dialog):
         outer.Add(grid, 1, wx.EXPAND | wx.ALL, 10)
         buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         outer.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        self.SetSizerAndFit(outer)
-
+        self.SetSizer(outer)
         self.OnTypeChanged(None)
         self.Bind(wx.EVT_BUTTON, self.OnOk, id=wx.ID_OK)
         apply_theme(self)
+
+        # After apply_theme, for two reasons: FONT_CODE is built lazily and is not a real font
+        # until the palette is initialised, and apply_theme would replace it with the UI font
+        # anyway. The code font matches the other address fields in this window.
+        self.addressCtrl.SetFont(FONT_CODE)
+        # AddGrowableCol only shares out *extra* width and Fit leaves none, so this field's
+        # own minimum decides the dialog's width. It was 112px against the 123px a 16-digit
+        # address needs, which clipped the address the dialog exists to confirm.
+        self.addressCtrl.SetMinSize(wx.Size(self.addressCtrl.GetTextExtent("0x00007FFB12340000____")[0], -1))
+        self.Fit()
+        # Fit gives the smallest size everything still fits in; with a draggable border, keep
+        # that as the floor so it cannot be shrunk into an unusable state.
+        self.SetMinSize(self.GetSize())
 
     def OnTypeChanged(self, event):
         # An execute breakpoint must keep LEN at one byte, so size is not a choice there.
@@ -2007,11 +2213,35 @@ class CallStackListCtrl(wx.ListCtrl):
 
         menu = wx.Menu()
         miFollow = menu.Append(wx.ID_ANY, "Follow Return Address")
+        miRename = menu.Append(wx.ID_ANY, "Rename Address...")
         miCopy = menu.Append(wx.ID_ANY, "Copy")
         self.Bind(wx.EVT_MENU, lambda e, r=row: self.FollowFrame(r), miFollow)
+        self.Bind(wx.EVT_MENU, lambda e, r=row: self.OnRenameFrame(r), miRename)
         self.Bind(wx.EVT_MENU, lambda e, r=row: SetClipboard("\t".join(self.data[r])), miCopy)
         self.PopupMenu(menu, pos)
         menu.Destroy()
+
+    def OnRenameFrame(self, row: int):
+        """Name the function a frame returns into - usually where you spot one worth naming."""
+        if row < 0 or row >= len(self.data):
+            return
+
+        addrStr = self.data[row][1]
+        if not (addrStr and IsValidHexAddress(addrStr)):
+            return
+
+        addr = int(addrStr, 16)
+        current = self.parent.userNames.get(addr, "")
+        dlg = wx.TextEntryDialog(self, f"Name for {addr:#x} (blank to clear):", "Rename Address", current)
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+
+            name = dlg.GetValue()
+        finally:
+            dlg.Destroy()
+
+        self.parent.RenameAddress(addr, name)
 
     def FollowFrame(self, row: int):
         if row < 0 or row >= len(self.data):
