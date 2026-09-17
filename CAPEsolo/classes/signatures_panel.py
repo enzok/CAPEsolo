@@ -4,6 +4,7 @@ import wx.lib.scrolledpanel as scrolled
 
 from CAPEsolo.capelib.signatures import RunSignatures
 
+from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import GRID_ROW_ALT, apply_theme
@@ -23,7 +24,9 @@ class SignaturesPanel(wx.Panel, KeyEventHandlerMixin):
         vbox = wx.BoxSizer(wx.VERTICAL)
 
         vbox.AddSpacer(10)
-        self.signaturesButton = wx.Button(self, label="Generate Signatures Results")
+        self.signaturesButton = ui.Button(
+            self, label="Generate Signatures Results", variant=ui.PRIMARY
+        )
         self.signaturesButton.Bind(wx.EVT_BUTTON, self.GenerateSignatures)
         self.signaturesButton.Disable()
         vbox.Add(self.signaturesButton, proportion=0, flag=wx.ALL, border=5)

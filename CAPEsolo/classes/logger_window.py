@@ -39,7 +39,7 @@ class LoggerWindow(wx.Frame, KeyEventHandlerMixin):
         )
         self.resultsWindow.SetFont(FONT_CODE)
         vbox.Add(self.resultsWindow, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
-        copyPathBtn = wx.Button(panel, label="Copy Log")
+        copyPathBtn = ui.Button(panel, label="Copy Log")
         copyPathBtn.Bind(wx.EVT_BUTTON, self.OnCopyPath)
         vbox.Add(copyPathBtn, proportion=0, flag=wx.ALL | wx.CENTER, border=5)
         panel.SetSizer(vbox)

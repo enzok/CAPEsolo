@@ -5,6 +5,7 @@ import wx.grid as gridlib
 
 from CAPEsolo.capelib.cape_utils import get_cape_name_from_yara_hit
 
+from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
@@ -49,12 +50,14 @@ class YaraPanel(wx.Panel, KeyEventHandlerMixin):
         vbox = wx.BoxSizer(wx.VERTICAL)
 
         vbox.AddSpacer(10)
-        self.yaraButton = wx.Button(self, label="Process Yara Results")
+        self.yaraButton = ui.Button(
+            self, label="Process Yara Results", variant=ui.PRIMARY
+        )
         self.yaraButton.Bind(wx.EVT_BUTTON, self.ProcessYara)
         self.yaraButton.Disable()
         vbox.Add(self.yaraButton, proportion=0, flag=wx.ALL, border=5)
 
-        self.fileDropdown = wx.ComboBox(self, style=wx.CB_READONLY)
+        self.fileDropdown = ui.Picker(self)
         self.fileDropdown.Bind(wx.EVT_COMBOBOX, self.OnFileView)
         vbox.Add(
             wx.StaticText(self, label="Scanned files:"), flag=wx.LEFT | wx.TOP, border=5

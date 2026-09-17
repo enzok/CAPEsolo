@@ -144,7 +144,7 @@ class PayloadsPanel(wx.Panel):
         self.ApplyAlternateRowShading(grid)
 
         buttonBox = wx.BoxSizer(wx.HORIZONTAL)
-        hexBtn = wx.Button(self.panel, label="Hex View")
+        hexBtn = ui.Button(self.panel, label="Hex View")
         hexBtn.Bind(wx.EVT_BUTTON, self.OnShowHexview)
         self.button_to_path[hexBtn.GetId()] = path
         buttonBox.Add(hexBtn, 0, wx.ALIGN_LEFT | wx.ALL, 5)
@@ -156,21 +156,21 @@ class PayloadsPanel(wx.Panel):
         with path.open("rb") as hfile:
             head = hfile.read(1024)
         if IsPEImage(head):
-            peBtn = wx.Button(self.panel, label="PE")
+            peBtn = ui.Button(self.panel, label="PE")
             peBtn.Bind(wx.EVT_BUTTON, self.OnShowPe)
             self.button_to_path[peBtn.GetId()] = path
             buttonBox.Add(peBtn, 0, wx.ALIGN_LEFT | wx.ALL, 5)
 
-        showBtn = wx.Button(self.panel, label="Show in Explorer")
+        showBtn = ui.Button(self.panel, label="Show in Explorer")
         showBtn.Bind(wx.EVT_BUTTON, self.OnShowInExplorer)
         self.button_to_path[showBtn.GetId()] = path
         buttonBox.Add(showBtn, 0, wx.ALIGN_LEFT | wx.ALL, 5)
 
-        vtBtn = wx.Button(self.panel, label="VirusTotal")
+        vtBtn = ui.Button(self.panel, label="VirusTotal")
         vtBtn.Bind(wx.EVT_BUTTON, self.OnVirusTotalLookup)
         buttonBox.Add(vtBtn, 0, wx.ALIGN_LEFT | wx.ALL, 5)
 
-        uploadBtn = wx.Button(self.panel, label="Upload to VT")
+        uploadBtn = ui.Button(self.panel, label="Upload to VT")
         uploadBtn.Bind(wx.EVT_BUTTON, self.OnVtUpload)
         uploadBtn.Hide()  # revealed only when a lookup finds the payload is not already on VT
         buttonBox.Add(uploadBtn, 0, wx.ALIGN_LEFT | wx.ALL, 5)

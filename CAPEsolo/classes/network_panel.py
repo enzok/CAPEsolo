@@ -55,26 +55,29 @@ class NetworkPanel(wx.Panel, KeyEventHandlerMixin):
             flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL,
             border=5,
         )
-        self.pcapPath = wx.TextCtrl(self)
+        self.pcapField = ui.Field(self)
+        self.pcapPath = self.pcapField.ctrl
         self.pcapPath.SetValue("<pcapng captured outside the guest>")
         self.pcapPath.Bind(wx.EVT_TEXT, self.OnPathChanged)
-        browseBtn = wx.Button(self, label="Browse...")
+        browseBtn = ui.Button(self, label="Browse...")
         browseBtn.Bind(wx.EVT_BUTTON, self.OnBrowse)
-        hboxFile.Add(self.pcapPath, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5)
+        hboxFile.Add(self.pcapField, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5)
         hboxFile.Add(browseBtn, proportion=0)
         vbox.Add(hboxFile, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
 
         hboxTop = wx.BoxSizer(wx.HORIZONTAL)
-        self.processButton = wx.Button(self, label="Process Capture")
+        self.processButton = ui.Button(
+            self, label="Process Capture", variant=ui.PRIMARY
+        )
         self.processButton.Bind(wx.EVT_BUTTON, self.ProcessCapture)
         self.processButton.Disable()
         hboxTop.Add(self.processButton, proportion=0, flag=wx.RIGHT, border=15)
         hboxTop.Add(
             wx.StaticText(self, label="Show:"),
-            flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL,
+            flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
             border=5,
         )
-        self.kindDropdown = wx.ComboBox(self, style=wx.CB_READONLY)
+        self.kindDropdown = ui.Picker(self)
         self.kindDropdown.Bind(wx.EVT_COMBOBOX, self.OnKindView)
         hboxTop.Add(self.kindDropdown, proportion=1, flag=wx.EXPAND)
         vbox.Add(hboxTop, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)

@@ -60,22 +60,22 @@ class TargetInfoPanel(wx.Panel):
         vbox.Add(self.grid, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
 
         hboxButtons = wx.BoxSizer(wx.HORIZONTAL)
-        self.getInfoButton = wx.Button(self, label="Get Info")
+        self.getInfoButton = ui.Button(self, label="Get Info", variant=ui.PRIMARY)
         self.getInfoButton.SetToolTip(
             "Inspect the file currently selected on the Start tab. Display only - the "
             "file is not copied, analysed or recorded."
         )
         self.getInfoButton.Bind(wx.EVT_BUTTON, self.OnGetInfo)
         hboxButtons.Add(self.getInfoButton, proportion=0, flag=wx.RIGHT, border=5)
-        self.peButton = wx.Button(self, label="PE")
+        self.peButton = ui.Button(self, label="PE")
         self.peButton.Bind(wx.EVT_BUTTON, self.OnShowPe)
         self.peButton.Hide()
         hboxButtons.Add(self.peButton, proportion=0, flag=wx.RIGHT, border=5)
-        self.vtButton = wx.Button(self, label="VirusTotal")
+        self.vtButton = ui.Button(self, label="VirusTotal")
         self.vtButton.Bind(wx.EVT_BUTTON, self.OnVirusTotalLookup)
         self.vtButton.Hide()
         hboxButtons.Add(self.vtButton, proportion=0, flag=wx.RIGHT, border=5)
-        self.uploadButton = wx.Button(self, label="Upload to VT")
+        self.uploadButton = ui.Button(self, label="Upload to VT")
         self.uploadButton.Bind(wx.EVT_BUTTON, self.OnVtUpload)
         self.uploadButton.Hide()
         hboxButtons.Add(self.uploadButton, proportion=0)

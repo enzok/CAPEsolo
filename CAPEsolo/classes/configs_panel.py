@@ -12,6 +12,7 @@ import wx.grid as gridlib
 from CAPEsolo.capelib.cape_utils import PARSER_EXTRACTED
 from CAPEsolo.capelib.path_utils import path_exists, path_mkdir
 
+from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
@@ -267,7 +268,7 @@ class ConfigsPanel(wx.Panel, KeyEventHandlerMixin):
         vbox = wx.BoxSizer(wx.VERTICAL)
 
         vbox.AddSpacer(10)
-        self.configsButton = wx.Button(self, label="Extract Configs")
+        self.configsButton = ui.Button(self, label="Extract Configs", variant=ui.PRIMARY)
         self.configsButton.Bind(wx.EVT_BUTTON, self.ExtractConfigs)
         self.configsButton.Disable()
         vbox.Add(self.configsButton, proportion=0, flag=wx.ALL, border=5)

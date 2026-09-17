@@ -5,6 +5,7 @@ import wx
 
 from CAPEsolo.capelib.utils import LoadFilesJson, extract_strings
 
+from . import ui_kit as ui
 from .key_event import KeyEventHandlerMixin
 from .theme import FONT_CODE, apply_theme
 
@@ -21,8 +22,8 @@ class StringsPanel(wx.Panel, KeyEventHandlerMixin):
         vbox = wx.BoxSizer(wx.VERTICAL)
 
         hbox = wx.BoxSizer(wx.HORIZONTAL)
-        self.fileDropdown = wx.ComboBox(self, style=wx.CB_READONLY)
-        viewButton = wx.Button(self, label="View")
+        self.fileDropdown = ui.Picker(self)
+        viewButton = ui.Button(self, label="View", variant=ui.PRIMARY)
         viewButton.Bind(wx.EVT_BUTTON, self.OnViewButtonClick)
 
         hbox.Add(self.fileDropdown, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=10)
