@@ -482,6 +482,19 @@ def dip_size(window, width, height):
     )
 
 
+def band_rows(listCtrl):
+    """Shade every other row of a report-mode ListCtrl, as the grids are shaded.
+
+    wx can do this itself, but only for virtual controls: EnableAlternateRowColours asserts
+    otherwise. Ours are ordinary controls, so the colour goes on per item, which means this
+    has to be called after the items are inserted and again after they are replaced.
+    """
+    for row in range(listCtrl.GetItemCount()):
+        listCtrl.SetItemBackgroundColour(
+            row, GRID_ROW_ALT if row % 2 == 0 else BG_INPUT
+        )
+
+
 def lock_font(widget, font):
     """Set *font* on *widget* and stop apply_theme from overwriting it.
 
@@ -666,6 +679,9 @@ def _style_widget(w):
         w.SetBackgroundColour(BG_INPUT)
         w.SetForegroundColour(FG_PRIMARY)
         _set_font(w, FONT_CODE)
+        # Row banding is not done here: wx's EnableAlternateRowColours asserts unless the
+        # control is virtual, and none of ours are. Callers run band_rows() once they have
+        # inserted their items.
         return
 
     # --- TreeCtrl (process tree window) ---
@@ -747,10 +763,18 @@ def _style_widget(w):
         w.SetDefaultCellFont(FONT_UI)
         w.SetLabelBackgroundColour(BG_CARD)
         w.SetLabelTextColour(FG_SECONDARY)
+        w.SetLabelFont(FONT_BOLD)
         w.SetGridLineColour(BG_MAIN)
+        # The cursor cell is outlined in system black otherwise, which reads as a hole in
+        # a dark grid.
+        w.SetCellHighlightColour(ACCENT)
         # Override the system highlight, which is too saturated to read our text against.
         w.SetSelectionBackground(BG_SELECT)
         w.SetSelectionForeground(FG_SELECT)
+        # Header height follows the font, but only where there is a header: several panels
+        # hide theirs with SetColLabelSize(0) and must stay hidden.
+        if w.GetColLabelSize() > 0:
+            w.SetColLabelSize(dip(w, 26))
         return
 
     # --- Top-level windows (secondary frames and dialogs) ---

@@ -6,7 +6,7 @@ from CAPEsolo.capelib.cmdconsts import CMD_PATCH_BYTES
 
 from . import ui_kit as ui
 from .patch_models import PatchEntry
-from .theme import apply_theme
+from .theme import apply_theme, band_rows
 
 
 class PatchDialog(ui.Dialog):
@@ -64,6 +64,8 @@ class PatchHistoryDialog(ui.Dialog):
             self.historyCtrl.SetItem(idx, 3, entry.instruction)
             ts = entry.timeStamp.strftime("%Y-%m-%d %H:%M:%S")
             self.historyCtrl.SetItem(idx, 4, ts)
+
+        band_rows(self.historyCtrl)
 
         vbox.Add(self.historyCtrl, 1, wx.EXPAND | wx.ALL, 5)
         btn = ui.Button(self, wx.ID_CLOSE, label="Close", variant=ui.PRIMARY)

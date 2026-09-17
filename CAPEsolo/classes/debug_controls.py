@@ -34,6 +34,7 @@ from .theme import (
     FG_SECONDARY,
     FONT_CODE,
     apply_theme,
+    band_rows,
 )
 
 log = logging.getLogger(__name__)
@@ -1511,6 +1512,8 @@ class ThreadListCtrl(wx.ListCtrl):
                 boldFont = wx.Font(font.GetPointSize(), font.GetFamily(), font.GetStyle(), wx.FONTWEIGHT_BOLD)
                 self.SetItemFont(row, boldFont)
 
+        band_rows(self)
+
     def OnContextMenu(self, event):
         pos = event.GetPosition()
         pos = self.ScreenToClient(pos)
@@ -1637,6 +1640,8 @@ class ModulesListCtrl(wx.ListCtrl):
             self.SetItem(row, 1, size)
             self.SetItem(row, 2, name)
             self.SetItem(row, 3, path)
+
+        band_rows(self)
 
     def OnContextMenu(self, event):
         pos = event.GetPosition()
@@ -1779,6 +1784,8 @@ class ExportsDialog(ui.Dialog):
         for i, (symName, addr) in enumerate(self.exports):
             row = self.listCtrl.InsertItem(i, f"{int(addr):#x}")
             self.listCtrl.SetItem(row, 1, symName)
+
+        band_rows(self.listCtrl)
 
         self.listCtrl.Bind(wx.EVT_KEY_DOWN, self.OnKeyDown)
         self.listCtrl.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
