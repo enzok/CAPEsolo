@@ -44,13 +44,22 @@ GTK it silently does nothing.
 - [ ] Disabled states. Native MSW controls ignore `SetForegroundColour` when
       disabled, which is what made the old UI illegible. Any widget that is still
       native and gets `Disable()`d will show the same grey-on-grey.
-- [ ] DPI. Check at 100%, 150% and 200% scaling. `classes/status_bar.py` still
-      uses hardcoded pixels (`BAR_HEIGHT`, `COUNTDOWN_WIDTH`, `PADDING`); they
-      need `theme.dip()`.
+- [ ] DPI. Check at 100%, 150% and 200% scaling. The geometry was verified on
+      Linux by forcing `theme.dip()` to 2x (padding, radii, the tab indicator and
+      the status bar all scale, nothing clips), but `FromDIP` returns the real
+      scale only on a display that has one.
 - [ ] Fonts. `theme._resolve_face()` picks the first installed face from a
       preference list; confirm it lands on Segoe UI / Cascadia Mono and not a
       fallback.
 - [ ] `ui_kit.Picker` popup placement and dismissal on a multi-monitor setup.
+- [ ] `ListCtrl` column headers. Under GTK the header renders dark even on the
+      light palette - it is drawn by the toolkit, not by us. On wxMSW it is a
+      native header control; check whether it follows `MSWEnableDarkMode` or
+      stays light against the dark palette (Exports, Patch History, and every
+      debugger list).
+- [ ] Control borders. `BORDER_STRONG` was raised in both palettes to clear 3:1
+      against the card, which is what outlines fields and pickers. Confirm it
+      reads as an outline and not as a heavy box on MSW.
 
 ### Functional
 
@@ -64,9 +73,13 @@ GTK it silently does nothing.
 - [ ] Debugger tab: breakpoint rows are `ui.Picker` / `ui.Field` now.
 - [ ] `DownloadKeysDialog` - it is raised from `_InitDownloadBroker` via
       `CallAfter` at startup and is modal.
+- [ ] Dialog buttons. `ui.dialog_buttons()` relies on wxDialog's built-in
+      wxID_OK / wxID_CANCEL handling firing for owner-drawn buttons. Verified on
+      GTK, including a dialog-level handler refusing to close; confirm on MSW for
+      the patch, breakpoint, prototype and credentials dialogs.
 
 ## Deferred cleanup
 
-- [ ] `FlatNotebook` is no longer used by any panel; only the styling branch in
-      `classes/theme.py` still references it. Delete it.
-- [ ] `classes/status_bar.py`: hardcoded pixel constants -> `theme.dip()`.
+- [x] `FlatNotebook` styling branch deleted from `classes/theme.py`.
+- [x] `classes/status_bar.py`: pixel constants now go through `theme.dip()`.
+
