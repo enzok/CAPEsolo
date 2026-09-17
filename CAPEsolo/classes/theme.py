@@ -482,6 +482,25 @@ def dip_size(window, width, height):
     )
 
 
+def lock_font(widget, font):
+    """Set *font* on *widget* and stop apply_theme from overwriting it.
+
+    The theme walker assigns FONT_UI to every StaticText, Button and CheckBox it sees,
+    which is right for body text and wrong for anything deliberately set to another step of
+    the type scale: a card title styled FONT_H2 at construction came back out of the walker
+    as FONT_UI, so headings were indistinguishable from the rows beneath them.
+    """
+    widget.SetFont(font)
+    widget._lockedFont = font
+    return widget
+
+
+def _set_font(widget, font):
+    """Apply the theme's font unless the widget asked to keep its own."""
+    locked = getattr(widget, "_lockedFont", None)
+    widget.SetFont(locked if locked is not None else font)
+
+
 # ---------------------------------------------------------------------------
 # Immersive Dark Mode for Windows Frame Title Bars
 # ---------------------------------------------------------------------------
@@ -605,13 +624,13 @@ def _style_widget(w):
     if isinstance(w, wx.Panel):
         w.SetBackgroundColour(BG_CARD)
         w.SetForegroundColour(FG_PRIMARY)
-        w.SetFont(FONT_UI)
+        _set_font(w, FONT_UI)
         return
 
     # --- Static text labels ---
     if isinstance(w, wx.StaticText):
         w.SetForegroundColour(FG_PRIMARY)
-        w.SetFont(FONT_UI)
+        _set_font(w, FONT_UI)
         return
 
     # --- Static lines (separators) ---
@@ -625,35 +644,35 @@ def _style_widget(w):
         w.SetForegroundColour(FG_PRIMARY)
         # Preserve font if caller already set a code font (Consolas)
         if w.GetFont().GetFaceName().lower() not in ("consolas",):
-            w.SetFont(FONT_UI)
+            _set_font(w, FONT_UI)
         return
 
     # --- ComboBox / Choice ---
     if isinstance(w, (wx.ComboBox, wx.Choice)):
         w.SetBackgroundColour(BG_DROPDOWN)
         w.SetForegroundColour(FG_PRIMARY)
-        w.SetFont(FONT_UI)
+        _set_font(w, FONT_UI)
         return
 
     # --- ListBox ---
     if isinstance(w, wx.ListBox):
         w.SetBackgroundColour(BG_INPUT)
         w.SetForegroundColour(FG_PRIMARY)
-        w.SetFont(FONT_UI)
+        _set_font(w, FONT_UI)
         return
 
     # --- ListCtrl (used in debugger panels) ---
     if isinstance(w, wx.ListCtrl):
         w.SetBackgroundColour(BG_INPUT)
         w.SetForegroundColour(FG_PRIMARY)
-        w.SetFont(FONT_CODE)
+        _set_font(w, FONT_CODE)
         return
 
     # --- TreeCtrl (process tree window) ---
     if isinstance(w, wx.TreeCtrl):
         w.SetBackgroundColour(BG_INPUT)
         w.SetForegroundColour(FG_PRIMARY)
-        w.SetFont(FONT_UI)
+        _set_font(w, FONT_UI)
         return
 
     # --- Buttons (Support both wx.Button and generic GenButton) ---
@@ -674,7 +693,7 @@ def _style_widget(w):
         else:
             w.SetBackgroundColour(BG_BUTTON)
             w.SetForegroundColour(FG_PRIMARY)
-        w.SetFont(FONT_UI)
+        _set_font(w, FONT_UI)
         return
 
     # --- CheckBoxes and RadioButtons ---
@@ -682,14 +701,14 @@ def _style_widget(w):
     # through this walk entirely and renders in system colours.
     if isinstance(w, (wx.CheckBox, wx.RadioButton)):
         w.SetForegroundColour(FG_PRIMARY)
-        w.SetFont(FONT_UI)
+        _set_font(w, FONT_UI)
         return
 
     # --- StaticBox (group box containers) ---
     if isinstance(w, wx.StaticBox):
         w.SetBackgroundColour(BG_CARD)
         w.SetForegroundColour(ACCENT_CYAN)    # Highlight group box borders/labels with Cyan
-        w.SetFont(FONT_BOLD)
+        _set_font(w, FONT_BOLD)
         return
 
     # --- Notebook tabs ---
@@ -708,7 +727,7 @@ def _style_widget(w):
     if isinstance(w, wx.CollapsiblePane):
         w.SetBackgroundColour(BG_CARD)
         w.SetForegroundColour(FG_PRIMARY)
-        w.SetFont(FONT_UI)
+        _set_font(w, FONT_UI)
         # The label ("Debugger options", "analysis.conf") is drawn by an internal wx.Control
         # that is neither a StaticText nor a Button, so it matches none of the branches above
         # and keeps the default black text. Style it directly; skip the inner pane, which is a
@@ -717,7 +736,7 @@ def _style_widget(w):
             if not isinstance(child, wx.Panel):
                 child.SetBackgroundColour(BG_CARD)
                 child.SetForegroundColour(FG_PRIMARY)
-                child.SetFont(FONT_UI)
+                _set_font(child, FONT_UI)
                 child.Refresh()
         return
 
