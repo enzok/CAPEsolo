@@ -249,7 +249,10 @@ _PALETTES = {
         # Surfaces, borders and interaction states (see the token block above).
         "BG_SURFACE":    (39,  45,  58),
         "BORDER_SUBTLE": (44,  51,  64),
-        "BORDER_STRONG": (61,  70,  87),
+        # BG_SURFACE sits ~1.1:1 from BG_CARD, so the border is what actually marks the
+        # edge of an input or picker and has to clear 3:1 on its own. #677081 measures
+        # 3.04:1; the old #3d4657 was 1.60:1 and the controls lost their outline.
+        "BORDER_STRONG": (103, 112, 129),
         "BG_HOVER":      (44,  52,  68),
         "BG_PRESSED":    (27,  32,  40),
         "FG_DISABLED":   (110, 118, 129),
@@ -298,11 +301,15 @@ _PALETTES = {
         # because there is no room to brighten past white.
         "BG_SURFACE":    (255, 255, 255),  # #ffffff
         "BORDER_SUBTLE": (216, 222, 228),  # #d8dee4
-        "BORDER_STRONG": (175, 184, 193),  # #afb8c1
+        # As on dark: BG_SURFACE is white against a near-white card, so the border carries
+        # the edge by itself. #88919a measures 3.01:1; #afb8c1 was 1.89:1.
+        "BORDER_STRONG": (136, 145, 154),  # #88919a
         "BG_HOVER":      (234, 238, 242),  # #eaeef2
         "BG_PRESSED":    (215, 222, 229),  # #d7dee5
-        # #8c959f measures 3.12:1 against the light card: dim, still legible.
-        "FG_DISABLED":   (140, 149, 159),  # #8c959f
+        # #838c96 measures 3.01:1 against BG_DISABLED: dim, still legible. The previous
+        # #8c959f cleared the card but only managed 2.68:1 against the disabled fill it is
+        # actually drawn on.
+        "FG_DISABLED":   (131, 140, 150),  # #838c96
         "BG_DISABLED":   (238, 241, 244),  # #eef1f4
         # The accent has to carry white text here, so it is the deeper blue rather than the
         # dark palette's bright one: #0969da measures 4.61:1 against white.
@@ -728,15 +735,11 @@ def _style_widget(w):
         return
 
     # --- Notebook tabs ---
-    import wx.lib.agw.flatnotebook as fnb
-    if isinstance(w, (wx.Notebook, fnb.FlatNotebook)):
+    # wx.Notebook only: the main shell is a wx.Simplebook with a drawn ui.TabBar, and the
+    # debug console's inner notebook is the last plain one left.
+    if isinstance(w, wx.Notebook):
         w.SetBackgroundColour(BG_MAIN)
         w.SetForegroundColour(FG_PRIMARY)
-        if isinstance(w, fnb.FlatNotebook):
-            w.SetActiveTabColour(BG_CARD)
-            w.SetActiveTabTextColour(FG_PRIMARY)
-            w.SetNonActiveTabTextColour(FG_SECONDARY)
-            w.SetTabAreaColour(BG_MAIN)
         return
 
     # --- CollapsiblePane ---
