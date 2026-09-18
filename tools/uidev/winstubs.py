@@ -118,8 +118,19 @@ def _preload(name):
     return module
 
 
+HOME = "/tmp/capesolo-uidev-home"
+
+
 def install(analysisDir):
     """Register the stub finder and point the config machinery at a throwaway directory."""
+    # The Start tab shows a download directory derived from the home directory, which would
+    # otherwise put the developer's real path into every screenshot - and make the visual
+    # regression baseline differ on every machine. A fixed fake home keeps a render
+    # byte-identical anywhere and keeps GTK off the developer's own configuration.
+    home = Path(HOME)
+    (home / "Desktop").mkdir(parents=True, exist_ok=True)
+    os.environ["HOME"] = str(home)
+
     # The panels read cfg.ini through CAPEsolo.capelib.config_paths, which defaults to
     # %PUBLIC%. Point it at a temp copy so a screenshot run - which toggles the theme and
     # therefore writes the setting back - cannot touch the developer's real config.
@@ -138,13 +149,13 @@ def install(analysisDir):
         ("TMP", analysisDir),
         ("APPDATA", analysisDir),
         ("LOCALAPPDATA", analysisDir),
-        ("USERPROFILE", analysisDir),
+        ("USERPROFILE", str(home)),
         ("ProgramFiles", analysisDir),
         ("ProgramData", analysisDir),
         ("COMPUTERNAME", "HARNESS"),
         ("USERNAME", "analyst"),
     ):
-        os.environ.setdefault(name, value)
+        os.environ[name] = value
 
     # sflock.identify() is called on the selected target to auto-pick a package. Given a
     # real function rather than letting the stub finder answer, so the dropdown lands on
