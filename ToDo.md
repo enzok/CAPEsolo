@@ -41,11 +41,11 @@ there. Override per machine with `[gui] native_dark_mode = always | never | auto
 - [ ] **Windows 10, forced on** (`native_dark_mode = always`): confirm the escape
       hatch works and reproduce the menu problem, so the version cut-off can be
       revisited when wxWidgets or the OS changes.
-- [ ] Decide whether to theme popup menus ourselves on Windows 10. `wxMenuItem`
-      accepts `SetBackgroundColour` / `SetTextColour` / `SetFont` on MSW and turns
-      the item owner-drawn, which would give dark items - but the frame, gutter and
-      border around them stay system-drawn, so it may look worse than a plain light
-      menu. Needs a Windows box to judge; not written blind.
+- [x] Decided: popup menus are **not** owner-drawn by CAPEsolo on Windows 10. They stay
+      system-drawn and light there. `wxMenuItem` does accept `SetBackgroundColour` /
+      `SetTextColour` / `SetFont` on MSW, which would darken the items, but the frame,
+      gutter and border around them stay system-drawn, and a dark strip inside a light
+      shell is not worth the code. Not a wanted feature.
 - [ ] Confirm the enum resolution picked a real constant. The code probes
       `wx.MSW_DARK_MODE_ALWAYS` then `wx.App.DarkMode_Always`; if neither exists
       it falls back to the no-argument call, which follows the *system* theme
