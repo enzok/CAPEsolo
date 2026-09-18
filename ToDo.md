@@ -78,8 +78,50 @@ GTK it silently does nothing.
       GTK, including a dialog-level handler refusing to close; confirm on MSW for
       the patch, breakpoint, prototype and credentials dialogs.
 
+### Accessibility and keyboard
+
+`ui_kit` attaches a `wx.Accessible` to each control so screen readers get a role,
+a name and a state instead of "window". None of it can be exercised on the dev
+box: wxGTK is built without `wxUSE_ACCESSIBILITY`, so `wx.Accessible()` raises
+`NotImplementedError` and the code latches the whole layer off. **MSAA is
+therefore completely unverified.**
+
+- [ ] Run NVDA (or Narrator) over the Start tab. Every button, checkbox, radio
+      button, picker, tab and card should announce its role and its state.
+- [ ] Confirm `_PickerAccessible` declining its name is right on MSW - it is meant
+      to let the reader fall back to the neighbouring "Package" / "Path:" label.
+- [ ] Confirm the tab strip reports as a page tab list with the open tab selected.
+- [ ] Mnemonics. `&Launch` underlines the L and Alt+L activates it. On MSW the
+      underline is usually hidden until Alt is pressed; ours is always drawn.
+      Decide whether to follow the platform convention.
+- [ ] Tab order through the Start tab and the dialogs. Not verified anywhere -
+      Xvfb has no window manager to drive focus.
+- [ ] High-contrast mode. Windows overrides system colours; the app draws its own,
+      so it will ignore the setting entirely. Decide whether that is acceptable.
+
+### Rendering (continued)
+
+- [ ] Glyphs. They are stroked from a vector table at paint time with a 1.6 DIP
+      pen. Check they do not turn muddy at 100% scaling on a real display, and
+      that the filled ones (play, stop, settings) read correctly at 14 DIP.
+- [ ] `ui.Notice`. The empty states are laid out for a results pane; confirm the
+      wrapped detail line does not clip in a narrow window.
+
+## Tooling
+
+`tools/uidev/` builds the UI off screen under Xvfb and is wired into CI
+(`.github/workflows/ci.yml`). It is a Linux/GTK approximation by construction.
+
+- [ ] Re-shoot the visual regression baseline on Windows, or record that the
+      baseline is GTK-only. `vrt.py --update` re-records; the shots carry the font
+      stack of whichever machine took them.
+- [ ] Decide whether the `ui` CI job should gate on `vrt.py` once the baseline is
+      stable. It is `continue-on-error` today and only uploads the renders.
+
 ## Deferred cleanup
 
 - [x] `FlatNotebook` styling branch deleted from `classes/theme.py`.
 - [x] `classes/status_bar.py`: pixel constants now go through `theme.dip()`.
-
+- [x] `wx.Button = buttons.GenButton` monkeypatch removed from `cli.py`, along with
+      the label-sniffing colour heuristic in `theme.py` it fed.
+- [x] Raw pixel literals in the panels replaced with the `SP_*` spacing scale.
