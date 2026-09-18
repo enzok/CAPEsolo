@@ -378,16 +378,74 @@ def set_theme(mode: str) -> str:
     return mode
 
 
-def _read_theme_name() -> str:
-    """Read [gui] theme from cfg.ini, preferring the user file over the packaged one."""
+def _read_gui_setting(key: str, fallback: str) -> str:
+    """Read one [gui] key from cfg.ini, preferring the user file over the packaged one."""
     config = configparser.ConfigParser()
     try:
         config.read(config_paths())
     except configparser.Error as e:
-        log.warning("Could not parse cfg.ini for the theme setting: %s", e)
-        return DEFAULT_THEME
+        log.warning("Could not parse cfg.ini for the [gui] %s setting: %s", key, e)
+        return fallback
 
-    return config.get("gui", "theme", fallback=DEFAULT_THEME).strip().lower()
+    return config.get("gui", key, fallback=fallback).strip().lower()
+
+
+def _read_theme_name() -> str:
+    """Read [gui] theme from cfg.ini, preferring the user file over the packaged one."""
+    return _read_gui_setting("theme", DEFAULT_THEME)
+
+
+# Windows 11 21H2. Used as the cut-off for wxMSW's dark mode opt-in, see below.
+WINDOWS_11_BUILD = 22000
+
+
+def native_dark_mode_allowed() -> tuple:
+    """Whether to opt wxMSW into dark mode for the widgets we cannot draw, and why.
+
+    The opt-in is all or nothing, and on Windows 10 one part of it is worse than not
+    having it: popup menus. wxMSW draws menu items itself once dark mode is on, filling
+    the item background from the `DarkMode::Menu` and `DarkMode_ImmersiveStart::Menu`
+    visual-style classes. Those classes are a Windows 11 addition; on Windows 10 the
+    lookup fails, the background is left to the system - which paints it light - and the
+    text is drawn in the dark-mode colour, so the item reads white on white. A light menu
+    beside a dark window looks worse than one that follows the theme, but it is legible,
+    and legible wins. Reported from a Windows 10 guest VM.
+
+    The rest of the opt-in (tooltips, the grid cell editor, common dialogs) goes with it,
+    since wx offers no way to keep those and skip menus. Scrollbars and combo drop-downs
+    are unaffected - apply_native_theme() sets `DarkMode_Explorer` on each widget directly,
+    which Windows 10 1809+ does support.
+
+    Override with cfg.ini when a build behaves differently to the rule:
+
+        [gui]
+        native_dark_mode = always   ; always | never | auto (default)
+
+    Returns (allowed, reason); the reason is logged.
+    """
+    setting = _read_gui_setting("native_dark_mode", "auto")
+    if setting in ("always", "on", "true", "yes", "1"):
+        return True, "forced on by cfg.ini"
+    if setting in ("never", "off", "false", "no", "0"):
+        return False, "disabled in cfg.ini"
+
+    if not sys.platform.startswith("win"):
+        return False, "not Windows"
+
+    try:
+        build = sys.getwindowsversion().build
+    except (AttributeError, OSError):
+        # Nothing in the GUI may fail to start because a platform probe is unavailable.
+        return False, "cannot read the Windows build"
+
+    if build < WINDOWS_11_BUILD:
+        return (
+            False,
+            f"Windows build {build} has no dark popup menu theme "
+            f"(needs {WINDOWS_11_BUILD}+); menu text would be unreadable",
+        )
+
+    return True, f"Windows build {build}"
 
 
 def _write_theme_name(mode: str) -> None:

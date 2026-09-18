@@ -17,21 +17,43 @@ wxMSW. All of it needs a pass on a real Windows box.
 
 `CapesoloApp._EnableNativeDarkMode()` in `CAPEsolo/cli.py` calls
 `wx.App.MSWEnableDarkMode()` before the first window is created. It covers the
-widgets we cannot owner-draw: scrollbars, native menus, tooltips, the grid cell
-editor and the common dialogs. It is guarded with `getattr`, so on 4.2.x and on
-GTK it silently does nothing.
+widgets we cannot owner-draw: scrollbars, tooltips, the grid cell editor and the
+common dialogs. It is guarded with `getattr`, so on 4.2.x and on GTK it silently
+does nothing.
 
-- [ ] Confirm the method exists at runtime and is actually called (it is skipped
-      when the light palette is active).
+**It is now skipped on Windows 10** (`theme.native_dark_mode_allowed()`, build
+< 22000). Reported from a Windows 10 guest: with the opt-in taken, right-click
+menus render white text on a white background. wxMSW draws the items itself once
+dark mode is on and fills them from the `DarkMode::Menu` /
+`DarkMode_ImmersiveStart::Menu` visual-style classes, which Windows 11 added; on
+10 the lookup fails, the system paints the background light and the text is drawn
+light. A light menu is off-theme but legible, so the whole opt-in is declined
+there. Override per machine with `[gui] native_dark_mode = always | never | auto`.
+
+- [ ] **Windows 11**: confirm the opt-in is taken (the log says "Enabling native
+      dark mode: Windows build NNNNN") and that right-click menus are dark and
+      legible in every menu we raise - `custom_grid.py`, `process_tree_window.py`,
+      `patch_dialog.py`, `debug_controls.py`, `start_panel.py`.
+- [ ] **Windows 10**: confirm menus are light and readable, and that nothing else
+      regressed by losing the opt-in. Specifically scrollbars in the Start tab and
+      in every grid - those come from `apply_native_theme()`'s `DarkMode_Explorer`
+      call, not from the opt-in, so they should still be dark.
+- [ ] **Windows 10, forced on** (`native_dark_mode = always`): confirm the escape
+      hatch works and reproduce the menu problem, so the version cut-off can be
+      revisited when wxWidgets or the OS changes.
+- [ ] Decide whether to theme popup menus ourselves on Windows 10. `wxMenuItem`
+      accepts `SetBackgroundColour` / `SetTextColour` / `SetFont` on MSW and turns
+      the item owner-drawn, which would give dark items - but the frame, gutter and
+      border around them stay system-drawn, so it may look worse than a plain light
+      menu. Needs a Windows box to judge; not written blind.
 - [ ] Confirm the enum resolution picked a real constant. The code probes
       `wx.MSW_DARK_MODE_ALWAYS` then `wx.App.DarkMode_Always`; if neither exists
       it falls back to the no-argument call, which follows the *system* theme
       rather than forcing dark. Fix the name once the real one is known.
-- [ ] Check what it fixes and what it misses. Known upstream gap: some
-      TaskDialog-based dialogs still render light.
-- [ ] Scrollbars in the Start tab and in every grid.
-- [ ] Right-click menus (`custom_grid.py`, `process_tree_window.py`,
-      `patch_dialog.py`, `debug_controls.py`, `start_panel.py`).
+- [ ] Check what else it fixes and what it misses. Known upstream gaps: some
+      TaskDialog-based dialogs still render light, and wxTimePickerCtrl /
+      wxDatePickerCtrl / wxCalendarCtrl / the Windows 10 print dialog are
+      documented as unsupported.
 - [ ] Grid cell editor (double-click a cell in Configs / Payloads / Yara /
       Network / PE) - the in-place editor is a native `wx.TextCtrl`.
 - [ ] Decide whether a theme toggle should prompt for a restart. The opt-in

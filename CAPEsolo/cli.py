@@ -30,7 +30,7 @@ os.chdir(CAPESOLO_ROOT)
 
 from classes.main_frame import MainFrame
 from classes.splash_screen import SplashScreen
-from classes.theme import is_dark
+from classes.theme import is_dark, native_dark_mode_allowed
 from lib.common.defines import KERNEL32
 from utils.update_yara import UpdateYara
 
@@ -52,11 +52,13 @@ class CapesoloApp(wx.App):
     def _EnableNativeDarkMode(self):
         """Opt wxMSW into dark mode for the widgets we cannot owner-draw.
 
-        Scrollbars, native menus, tooltips, the grid cell editor and the common dialogs are
-        drawn by the system and ignore our colours. wxWidgets 3.3 / wxPython 4.3.0 added an
-        opt-in that makes them follow the dark appearance on Windows 10 1809+. Must run before
-        any window exists, and is a no-op elsewhere: the method is absent on older wxPython and
-        on the GTK/macOS ports.
+        Scrollbars, tooltips, the grid cell editor and the common dialogs are drawn by the
+        system and ignore our colours. wxWidgets 3.3 / wxPython 4.3.0 added an opt-in that
+        makes them follow the dark appearance. Must run before any window exists, and is a
+        no-op elsewhere: the method is absent on older wxPython and on the GTK/macOS ports.
+
+        Not taken on every Windows version - see theme.native_dark_mode_allowed(). Popup
+        menus come out unreadable on Windows 10, and the opt-in cannot be taken piecemeal.
 
         Only the dark palette opts in. The call cannot be reversed once windows exist, so a
         light -> dark theme toggle does not reach the native widgets until the next launch.
@@ -64,6 +66,13 @@ class CapesoloApp(wx.App):
         enable = getattr(self, "MSWEnableDarkMode", None)
         if enable is None or not is_dark():
             return
+
+        allowed, reason = native_dark_mode_allowed()
+        if not allowed:
+            log.info("Native dark mode not enabled: %s", reason)
+            return
+        log.debug("Enabling native dark mode: %s", reason)
+
         # The "force dark regardless of the system setting" enum is spelled differently across
         # 4.3 builds, so resolve it instead of hardcoding a name. Falling through to the
         # no-argument call still enables the opt-in, just following the system setting.
