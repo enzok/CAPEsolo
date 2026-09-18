@@ -157,6 +157,15 @@ def install(analysisDir):
     ):
         os.environ[name] = value
 
+    # Stubbed even where a module of that name is installed. "yara" is the example that
+    # forced this: the dev box has yara-python, the GitHub runner has a different package
+    # of the same name whose module has no compile(), and main_frame.py builds a
+    # YaraProcessor before the first panel exists - so the harness died on a machine
+    # difference that has nothing to do with the UI. None of these libraries can affect
+    # layout; a render must not depend on which one a host happens to have.
+    for name in ("yara",):
+        _preload(name)
+
     # sflock.identify() is called on the selected target to auto-pick a package. Given a
     # real function rather than letting the stub finder answer, so the dropdown lands on
     # "Auto-detect" - the state worth screenshotting - instead of on a stub's repr.
