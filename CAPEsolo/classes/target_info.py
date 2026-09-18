@@ -8,7 +8,7 @@ from CAPEsolo.capelib.objects import File
 from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .pe_window import PeWindow
-from .theme import GRID_ROW_ALT, apply_theme
+from .theme import GRID_ROW_ALT, SP_XS, apply_theme, dip
 from .vt_helper import (
     confirm_vt_upload,
     format_vt_rows,
@@ -57,7 +57,7 @@ class TargetInfoPanel(wx.Panel):
         leftAttr1.SetAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE)
         self.grid.SetColAttr(1, leftAttr1)
         self.grid.EnableEditing(False)
-        vbox.Add(self.grid, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
+        vbox.Add(self.grid, proportion=1, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_XS))
 
         hboxButtons = wx.BoxSizer(wx.HORIZONTAL)
         self.getInfoButton = ui.Button(self, label="Get Info", variant=ui.PRIMARY)
@@ -66,20 +66,20 @@ class TargetInfoPanel(wx.Panel):
             "file is not copied, analysed or recorded."
         )
         self.getInfoButton.Bind(wx.EVT_BUTTON, self.OnGetInfo)
-        hboxButtons.Add(self.getInfoButton, proportion=0, flag=wx.RIGHT, border=5)
+        hboxButtons.Add(self.getInfoButton, proportion=0, flag=wx.RIGHT, border=dip(self, SP_XS))
         self.peButton = ui.Button(self, label="PE")
         self.peButton.Bind(wx.EVT_BUTTON, self.OnShowPe)
         self.peButton.Hide()
-        hboxButtons.Add(self.peButton, proportion=0, flag=wx.RIGHT, border=5)
+        hboxButtons.Add(self.peButton, proportion=0, flag=wx.RIGHT, border=dip(self, SP_XS))
         self.vtButton = ui.Button(self, label="VirusTotal")
         self.vtButton.Bind(wx.EVT_BUTTON, self.OnVirusTotalLookup)
         self.vtButton.Hide()
-        hboxButtons.Add(self.vtButton, proportion=0, flag=wx.RIGHT, border=5)
+        hboxButtons.Add(self.vtButton, proportion=0, flag=wx.RIGHT, border=dip(self, SP_XS))
         self.uploadButton = ui.Button(self, label="Upload to VT")
         self.uploadButton.Bind(wx.EVT_BUTTON, self.OnVtUpload)
         self.uploadButton.Hide()
         hboxButtons.Add(self.uploadButton, proportion=0)
-        vbox.Add(hboxButtons, proportion=0, flag=wx.LEFT | wx.BOTTOM, border=5)
+        vbox.Add(hboxButtons, proportion=0, flag=wx.LEFT | wx.BOTTOM, border=dip(self, SP_XS))
 
         self.SetSizer(vbox)
         apply_theme(self)

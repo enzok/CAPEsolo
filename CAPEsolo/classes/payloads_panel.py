@@ -17,7 +17,7 @@ from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .hexview_window import HexViewWindow
 from .pe_window import PeWindow
-from .theme import GRID_ROW_ALT, apply_theme
+from .theme import GRID_ROW_ALT, SP_XS, apply_theme, dip
 from .vt_helper import (
     confirm_vt_upload,
     format_vt_rows,
@@ -135,7 +135,7 @@ class PayloadsPanel(wx.Panel):
         grid.AutoSizeColumns()
         grid.SetColSize(0, 120)
         grid.AutoSizeRows()
-        self.panelsizer.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=5)
+        self.panelsizer.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_XS))
         # These grids are built after the panel is constructed, so the usual
         # one-shot apply_theme never reached them: they kept black default text
         # while ApplyAlternateRowShading painted rows GRID_ROW_ALT, which is

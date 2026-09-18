@@ -11,7 +11,7 @@ from CAPEsolo.capelib.parse_pe import PortableExecutable
 from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
-from .theme import ACCENT_CYAN, FONT_BOLD, GRID_ROW_ALT, apply_theme
+from .theme import ACCENT_CYAN, FONT_BOLD, GRID_ROW_ALT, SP_SM, SP_XS, apply_theme, dip
 
 
 class PeWindow(wx.Frame, KeyEventHandlerMixin):
@@ -63,7 +63,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         self.CreateGrids(data)
         saveBtn = ui.Button(self.panel, label="Save PE Info", variant=ui.PRIMARY)
         saveBtn.Bind(wx.EVT_BUTTON, self.OnSavePeInfo)
-        self.vbox.Add(saveBtn, proportion=0, flag=wx.ALL | wx.LEFT, border=5)
+        self.vbox.Add(saveBtn, proportion=0, flag=wx.ALL | wx.LEFT, border=dip(self, SP_XS))
 
         self.panel.SetSizer(self.vbox)
         # Offset a copy: the caller reuses the wx.Point it passed in.
@@ -162,7 +162,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         grid.AutoSizeColumns()
         grid.AutoSizeRows()
 
-        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=10)
+        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_SM))
         self.ApplyAlternateRowShading(grid)
 
     def PopulateVersioninfo(self, versionInfo):
@@ -181,7 +181,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         grid.AutoSizeColumns()
         grid.AutoSizeRows()
 
-        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=10)
+        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_SM))
         self.ApplyAlternateRowShading(grid)
 
     def PopulateSections(self, sectionData):
@@ -225,7 +225,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         grid.AutoSizeColumns()
         grid.AutoSizeRows()
 
-        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=10)
+        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_SM))
         self.ApplyAlternateRowShading(grid)
 
     def PopulateImports(self, importData):
@@ -251,7 +251,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         grid.AutoSizeColumns()
         grid.AutoSizeRows()
 
-        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=10)
+        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_SM))
         self.ApplyAlternateRowShading(grid)
 
     def SaveOffset(self, event):
@@ -357,7 +357,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         grid.AutoSizeColumns()
         grid.AutoSizeRows()
 
-        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=10)
+        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_SM))
         self.ApplyAlternateRowShading(grid)
 
         if resourceData:
@@ -370,12 +370,12 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
 
             saveOffsetBtn = ui.Button(self.panel, label="Save Offset")
             saveOffsetBtn.Bind(wx.EVT_BUTTON, self.SaveOffset)
-            hbox.Add(saveOffsetBtn, proportion=0, flag=wx.ALL, border=5)
+            hbox.Add(saveOffsetBtn, proportion=0, flag=wx.ALL, border=dip(self, SP_XS))
             saveAllBtn = ui.Button(self.panel, label="Save All")
             saveAllBtn.Bind(wx.EVT_BUTTON, self.SaveAllResources)
-            hbox.Add(saveAllBtn, proportion=0, flag=wx.ALL, border=5)
+            hbox.Add(saveAllBtn, proportion=0, flag=wx.ALL, border=dip(self, SP_XS))
 
-            self.vbox.Add(hbox, proportion=0, flag=wx.ALIGN_LEFT | wx.ALL, border=5)
+            self.vbox.Add(hbox, proportion=0, flag=wx.ALIGN_LEFT | wx.ALL, border=dip(self, SP_XS))
 
     def PopulateExports(self, exportData):
         grid = CopyableGrid(self.panel, 0, 3)
@@ -398,7 +398,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         grid.AutoSizeColumns()
         grid.AutoSizeRows()
 
-        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=10)
+        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_SM))
         self.ApplyAlternateRowShading(grid)
 
     def PopulateDirents(self, direntsData):
@@ -422,7 +422,7 @@ class PeWindow(wx.Frame, KeyEventHandlerMixin):
         grid.AutoSizeColumns()
         grid.AutoSizeRows()
 
-        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=10)
+        self.vbox.Add(grid, proportion=0, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_SM))
         self.ApplyAlternateRowShading(grid)
 
     def ApplyAlternateRowShading(self, grid):

@@ -15,7 +15,7 @@ import wx.lib.scrolledpanel as scrolled
 from CAPEsolo.capelib.config_paths import config_paths, user_config_path
 
 from . import ui_kit as ui
-from .theme import BG_MAIN, FONT_CODE, apply_theme, is_dark
+from .theme import BG_MAIN, FONT_CODE, SP_SM, SP_XS, apply_theme, dip, is_dark
 
 # Each row: (section, key, label, kind, choices, default).
 # kind: bool | choice | dir | text | int | float. Encrypted key blobs are opaque text: the
@@ -87,19 +87,19 @@ class SettingsDialog(ui.Dialog):
             if groupLabel == "MCP server":
                 helpBtn = ui.Button(card, label="Command line...")
                 helpBtn.Bind(wx.EVT_BUTTON, self.OnMcpHelp)
-                card.body.Add(helpBtn, flag=wx.TOP, border=6)
-            vbox.Add(card, flag=wx.EXPAND | wx.ALL, border=8)
+                card.body.Add(helpBtn, flag=wx.TOP, border=dip(self, SP_XS))
+            vbox.Add(card, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_SM))
 
         panel.SetSizer(vbox)
         panel.SetupScrolling(scroll_x=False, scroll_y=True)
-        outer.Add(panel, proportion=1, flag=wx.EXPAND | wx.ALL, border=6)
+        outer.Add(panel, proportion=1, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_XS))
 
         btnRow = wx.BoxSizer(wx.HORIZONTAL)
         saveBtn = ui.Button(self, wx.ID_OK, "Save", variant=ui.PRIMARY)
         btnRow.AddStretchSpacer(1)
-        btnRow.Add(saveBtn, flag=wx.RIGHT, border=8)
+        btnRow.Add(saveBtn, flag=wx.RIGHT, border=dip(self, SP_SM))
         btnRow.Add(ui.Button(self, wx.ID_CANCEL, "Cancel"))
-        outer.Add(btnRow, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+        outer.Add(btnRow, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=dip(self, SP_SM))
 
         self.SetSizer(outer)
         apply_theme(self)
@@ -139,7 +139,7 @@ class SettingsDialog(ui.Dialog):
             tc = field.ctrl
             browse = ui.Button(parent, label="Browse...")
             browse.Bind(wx.EVT_BUTTON, lambda e, ctrl=tc: self._OnBrowseDir(ctrl))
-            cell.Add(field, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5)
+            cell.Add(field, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=dip(self, SP_XS))
             cell.Add(browse, proportion=0)
             grid.Add(cell, flag=wx.EXPAND)
             # The TextCtrl, not the wrapper: OnSave reads GetValue off whatever is stored.
@@ -205,10 +205,10 @@ class SettingsDialog(ui.Dialog):
         sizer = wx.BoxSizer(wx.VERTICAL)
         ctrl = wx.TextCtrl(dlg, value=text, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL)
         ctrl.SetFont(FONT_CODE)
-        sizer.Add(ctrl, proportion=1, flag=wx.EXPAND | wx.ALL, border=8)
+        sizer.Add(ctrl, proportion=1, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_SM))
         close = ui.Button(dlg, wx.ID_OK, "Close", variant=ui.PRIMARY)
         close.Bind(wx.EVT_BUTTON, lambda event: dlg.EndModal(wx.ID_OK))
-        sizer.Add(close, flag=wx.ALIGN_RIGHT | wx.RIGHT | wx.BOTTOM, border=10)
+        sizer.Add(close, flag=wx.ALIGN_RIGHT | wx.RIGHT | wx.BOTTOM, border=dip(self, SP_SM))
         dlg.SetSizer(sizer)
         apply_theme(dlg)
         dlg.SetSize(wx.Size(700, 520))

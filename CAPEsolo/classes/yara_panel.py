@@ -8,7 +8,7 @@ from CAPEsolo.capelib.cape_utils import get_cape_name_from_yara_hit
 from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
-from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
+from .theme import FONT_CODE, GRID_ROW_ALT, SP_XS, apply_theme, dip
 
 ALL_FILES = "<All files>"
 
@@ -55,18 +55,18 @@ class YaraPanel(wx.Panel, KeyEventHandlerMixin):
         )
         self.yaraButton.Bind(wx.EVT_BUTTON, self.ProcessYara)
         self.yaraButton.Disable()
-        vbox.Add(self.yaraButton, proportion=0, flag=wx.ALL, border=5)
+        vbox.Add(self.yaraButton, proportion=0, flag=wx.ALL, border=dip(self, SP_XS))
 
         self.fileDropdown = ui.Picker(self)
         self.fileDropdown.Bind(wx.EVT_COMBOBOX, self.OnFileView)
         vbox.Add(
-            wx.StaticText(self, label="Scanned files:"), flag=wx.LEFT | wx.TOP, border=5
+            wx.StaticText(self, label="Scanned files:"), flag=wx.LEFT | wx.TOP, border=dip(self, SP_XS)
         )
         vbox.Add(
             self.fileDropdown,
             proportion=0,
             flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
-            border=5,
+            border=dip(self, SP_XS),
         )
 
         self.grid = CopyableGrid(self, 0, 5)
@@ -89,7 +89,7 @@ class YaraPanel(wx.Panel, KeyEventHandlerMixin):
             self.grid,
             proportion=2,
             flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
-            border=5,
+            border=dip(self, SP_XS),
         )
 
         self.resultsWindow = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
@@ -99,7 +99,7 @@ class YaraPanel(wx.Panel, KeyEventHandlerMixin):
             self.resultsWindow,
             proportion=1,
             flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
-            border=5,
+            border=dip(self, SP_XS),
         )
 
         self.SetSizer(vbox)

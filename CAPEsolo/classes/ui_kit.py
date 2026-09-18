@@ -104,6 +104,110 @@ def _gc(dc):
     return context
 
 
+def _split_mnemonic(label):
+    """Split wx's label markup into (visible text, mnemonic letter, index in that text).
+
+    "&Save" -> ("Save", "s", 0), "Save &As" -> ("Save As", "a", 5), "R&&D" -> ("R&D", None,
+    -1). The toolkit parses this for native controls; a drawn label has to do it here or
+    the ampersand appears on screen. Only the first marker counts, as in wx.
+
+    The letter is lowercased for comparison against a keycode.
+    """
+    text = []
+    key = None
+    at = -1
+    index = 0
+    while index < len(label):
+        char = label[index]
+        if char != "&":
+            text.append(char)
+            index += 1
+            continue
+        following = label[index + 1] if index + 1 < len(label) else ""
+        if following == "&":
+            text.append("&")
+            index += 2
+            continue
+        if following and key is None:
+            key = following.lower()
+            at = len(text)
+        # A trailing lone "&" is dropped, matching the toolkit.
+        index += 1
+    return "".join(text), key, at
+
+
+class _Mnemonic:
+    """Alt+letter activation for controls that draw their own label.
+
+    The toolkit does this for a native button or checkbox; an owner-drawn one has to parse
+    the marker, underline the letter and listen for the key itself. Mix in before the
+    wx.Control base, call _ParseLabel() with the raw label and _HookMnemonic() once the
+    control exists, and implement _ActivateFromMnemonic().
+    """
+
+    mnemonic = None
+
+    def _ParseLabel(self, label):
+        """Populate text / mnemonic / mnemonicAt from a label that may carry markup."""
+        self.text, self.mnemonic, self.mnemonicAt = _split_mnemonic(label)
+
+    def _HookMnemonic(self):
+        """Listen for Alt+letter on the top-level window.
+
+        A char hook only reaches the focused window and its parents, and a mnemonic has to
+        fire while the caret is somewhere else entirely, so the hook goes on the frame or
+        dialog. Controls with no marker install nothing, which is all of them today.
+        """
+        if self.mnemonic is None:
+            return
+        top = wx.GetTopLevelParent(self)
+        if top is None:
+            return
+        top.Bind(wx.EVT_CHAR_HOOK, self._OnMnemonic)
+        self.Bind(wx.EVT_WINDOW_DESTROY, self._OnMnemonicOwnerDestroyed)
+
+    def _UnhookMnemonic(self):
+        if self.mnemonic is None:
+            return
+        top = wx.GetTopLevelParent(self)
+        if top is not None:
+            top.Unbind(wx.EVT_CHAR_HOOK, handler=self._OnMnemonic)
+
+    def _OnMnemonicOwnerDestroyed(self, event):
+        # Fires for descendants too, and the hook outlives this window otherwise: the frame
+        # would go on calling a handler bound to a deleted control.
+        if event.GetEventObject() is self:
+            self._UnhookMnemonic()
+        event.Skip()
+
+    def _OnMnemonic(self, event):
+        key = event.GetKeyCode()
+        if (
+            event.AltDown()
+            and 0 < key < 256
+            and chr(key).lower() == self.mnemonic
+            and self.IsEnabled()
+            and self.IsShownOnScreen()
+        ):
+            self.SetFocus()
+            self._ActivateFromMnemonic()
+            return
+        event.Skip()
+
+    def _ActivateFromMnemonic(self):
+        raise NotImplementedError
+
+    def _DrawMnemonic(self, context, left, top, textHeight, colour):
+        """Underline the mnemonic letter, as the native control does under Alt."""
+        if self.mnemonicAt < 0:
+            return
+        before = context.GetTextExtent(self.text[: self.mnemonicAt])[0]
+        letter = context.GetTextExtent(self.text[self.mnemonicAt])[0]
+        baseline = top + textHeight - dip(self, 1)
+        context.SetPen(_stroke(context, colour, dip(self, 1)))
+        context.StrokeLine(left + before, baseline, left + before + letter, baseline)
+
+
 def _stroke(context, colour, width):
     """A pen of fractional width.
 
@@ -196,7 +300,179 @@ class _Themed(wx.Control):
         return self.IsEnabled()
 
 
-class Button(_Themed):
+# --- accessibility ---------------------------------------------------------------------
+# Drawing a control ourselves also throws away everything the toolkit told the platform
+# about it. To MSAA/UIA an owner-drawn wx.Control is an anonymous pane, so a screen reader
+# announces "pane" where the native control announced "Launch, button, disabled". These
+# objects hand the role, name and state back.
+#
+# MSAA-backed, so this is a Windows path: wxGTK builds with wxUSE_ACCESSIBILITY off and
+# SetAccessible is a no-op there, which is why every hook below is written to be harmless
+# when the platform ignores it.
+
+
+class _Accessible(wx.Accessible):
+    """Re-declares an owner-drawn control as the native control it replaces."""
+
+    ROLE = wx.ROLE_SYSTEM_CLIENT
+    FOCUSABLE = True
+
+    def GetRole(self, childId):
+        return (wx.ACC_OK, self.ROLE)
+
+    def GetName(self, childId):
+        window = self.GetWindow()
+        if window is None:
+            return (wx.ACC_NOT_IMPLEMENTED, "")
+        # The drawn text is the accessible name, the same way a native control's label is.
+        # Strip the mnemonic marker so it is not read out as an ampersand.
+        label = window.GetLabel() or window.GetName()
+        return (wx.ACC_OK, label.replace("&&", "\0").replace("&", "").replace("\0", "&"))
+
+    def GetState(self, childId):
+        window = self.GetWindow()
+        if window is None:
+            return (wx.ACC_NOT_IMPLEMENTED, 0)
+        state = wx.ACC_STATE_SYSTEM_FOCUSABLE if self.FOCUSABLE else 0
+        if not window.IsEnabled():
+            state |= wx.ACC_STATE_SYSTEM_UNAVAILABLE
+        elif window.HasFocus():
+            state |= wx.ACC_STATE_SYSTEM_FOCUSED
+        return (wx.ACC_OK, state | self.ExtraState(window))
+
+    def ExtraState(self, window):
+        """Role-specific state bits: checked, pressed, expanded."""
+        return 0
+
+
+class _ButtonAccessible(_Accessible):
+    ROLE = wx.ROLE_SYSTEM_PUSHBUTTON
+
+    def ExtraState(self, window):
+        return wx.ACC_STATE_SYSTEM_PRESSED if window.pressed else 0
+
+
+class _CheckAccessible(_Accessible):
+    ROLE = wx.ROLE_SYSTEM_CHECKBUTTON
+
+    def ExtraState(self, window):
+        return wx.ACC_STATE_SYSTEM_CHECKED if window.GetValue() else 0
+
+
+class _RadioAccessible(_CheckAccessible):
+    ROLE = wx.ROLE_SYSTEM_RADIOBUTTON
+
+
+class _PickerAccessible(_Accessible):
+    ROLE = wx.ROLE_SYSTEM_COMBOBOX
+
+    def GetName(self, childId):
+        # A picker carries no label of its own. Declining the name lets the platform fall
+        # back to the static text in front of it, which is how the native combo is named.
+        return (wx.ACC_NOT_IMPLEMENTED, "")
+
+    def GetValue(self, childId):
+        window = self.GetWindow()
+        if window is None:
+            return (wx.ACC_NOT_IMPLEMENTED, "")
+        return (wx.ACC_OK, window.GetValue())
+
+    def ExtraState(self, window):
+        expanded = window._popup is not None and window._popup.IsShown()
+        return (
+            wx.ACC_STATE_SYSTEM_EXPANDED if expanded else wx.ACC_STATE_SYSTEM_COLLAPSED
+        )
+
+
+class _TabsAccessible(_Accessible):
+    """The tab strip as a whole.
+
+    Announced as a tab list whose value is the open tab. The individual tabs are drawn, not
+    windows, so exposing them one by one would mean implementing the child half of the
+    wx.Accessible protocol (GetChildCount / GetChild / navigation) against a list of
+    rectangles; the strip plus its current value is what a reader needs to follow along.
+    """
+
+    ROLE = wx.ROLE_SYSTEM_PAGETABLIST
+
+    def GetValue(self, childId):
+        window = self.GetWindow()
+        if window is None:
+            return (wx.ACC_NOT_IMPLEMENTED, "")
+        book = window.book
+        index = book.GetSelection()
+        open_tab = book.GetPageText(index) if index >= 0 else ""
+        return (wx.ACC_OK, open_tab)
+
+
+class _SectionAccessible(_Accessible):
+    """Static, unfocusable content: card titles and section headers."""
+
+    ROLE = wx.ROLE_SYSTEM_STATICTEXT
+    FOCUSABLE = False
+
+
+class _GroupAccessible(_Accessible):
+    """A card: a named grouping around its contents."""
+
+    ROLE = wx.ROLE_SYSTEM_GROUPING
+    FOCUSABLE = False
+
+
+class _DisclosureAccessible(_Accessible):
+    """A collapsible's header: a button that reports whether the pane is open.
+
+    The header draws the owning Collapsible's label and holds none of the state itself.
+    """
+
+    ROLE = wx.ROLE_SYSTEM_PUSHBUTTON
+
+    def GetName(self, childId):
+        window = self.GetWindow()
+        if window is None:
+            return (wx.ACC_NOT_IMPLEMENTED, "")
+        return (wx.ACC_OK, window.owner.label)
+
+    def ExtraState(self, window):
+        return (
+            wx.ACC_STATE_SYSTEM_EXPANDED
+            if window.owner.IsExpanded()
+            else wx.ACC_STATE_SYSTEM_COLLAPSED
+        )
+
+
+def _announce(window, accessibleClass):
+    """Attach an accessible object, where the platform supports it.
+
+    Takes the class, not an instance: on a port built without wxUSE_ACCESSIBILITY - wxGTK,
+    which is what this is developed on - wx.Accessible cannot even be constructed, so the
+    object has to be built inside the guard. The first failure latches, so the rest of the
+    window is not built one exception at a time.
+
+    The reference is kept on the window: wxWidgets takes ownership of the C++ side, but
+    nothing holds the Python object, and a collected proxy takes the callbacks with it.
+    """
+    global _ACCESSIBILITY
+    if not _ACCESSIBILITY:
+        return
+    setter = getattr(window, "SetAccessible", None)
+    if setter is None:
+        _ACCESSIBILITY = False
+        return
+    try:
+        accessible = accessibleClass()
+        setter(accessible)
+    except (NotImplementedError, TypeError, wx.wxAssertionError):
+        _ACCESSIBILITY = False
+        return
+    window._accessible = accessible
+
+
+# Latched off the first time the platform refuses an accessible object.
+_ACCESSIBILITY = True
+
+
+class Button(_Mnemonic, _Themed):
     """Flat, rounded, owner-drawn button. Drop-in for wx.Button.
 
     Emits wx.EVT_BUTTON exactly as the native control does, so call sites only change the
@@ -220,6 +496,8 @@ class Button(_Themed):
         colour=None,
     ):
         self.label = label
+        # Sets text / mnemonic / mnemonicAt from the label's "&" markup.
+        self._ParseLabel(label)
         self.variant = variant
         # Overrides the variant's fill. Only for buttons whose colour carries meaning of its
         # own - the API-category swatches in the behaviour panel, where the colour is the
@@ -239,15 +517,24 @@ class Button(_Themed):
         self.Bind(wx.EVT_SET_FOCUS, self._OnFocus)
         self.Bind(wx.EVT_KILL_FOCUS, self._OnFocus)
         self.Bind(wx.EVT_KEY_DOWN, self._OnKey)
+        _announce(self, _ButtonAccessible)
+        self._HookMnemonic()
 
     # -- API parity with wx.Button -----------------------------------------
     def SetLabel(self, label):
+        self._UnhookMnemonic()
         self.label = label
+        self._ParseLabel(label)
+        self._HookMnemonic()
         self.InvalidateBestSize()
         self.Refresh()
 
     def GetLabel(self):
         return self.label
+
+    def GetLabelText(self):
+        """The label without the mnemonic markers, matching wx.Control.GetLabelText."""
+        return self.text
 
     def SetVariant(self, variant):
         self.variant = variant
@@ -321,13 +608,16 @@ class Button(_Themed):
             )
 
         context.SetFont(self.GetFont(), text)
-        textWidth, textHeight = context.GetTextExtent(self.label)[:2]
-        context.DrawText(self.label, (width - textWidth) / 2, (height - textHeight) / 2)
+        textWidth, textHeight = context.GetTextExtent(self.text)[:2]
+        left = (width - textWidth) / 2
+        top = (height - textHeight) / 2
+        context.DrawText(self.text, left, top)
+        self._DrawMnemonic(context, left, top, textHeight, text)
 
     def DoGetBestSize(self):
         dc = wx.ClientDC(self)
         dc.SetFont(self.GetFont())
-        textWidth, textHeight = dc.GetTextExtent(self.label)
+        textWidth, textHeight = dc.GetTextExtent(self.text)
         return wx.Size(
             textWidth + dip(self, self.PAD_X) * 2,
             textHeight + dip(self, self.PAD_Y) * 2,
@@ -364,20 +654,27 @@ class Button(_Themed):
         self.Refresh()
         event.Skip()
 
+    def _ActivateFromMnemonic(self):
+        self._Fire()
+
     def _Fire(self):
         clicked = wx.CommandEvent(wx.EVT_BUTTON.typeId, self.GetId())
         clicked.SetEventObject(self)
         self.GetEventHandler().ProcessEvent(clicked)
 
 
-class _Toggle(_Themed):
+class _Toggle(_Mnemonic, _Themed):
     """Shared behaviour for Check and Radio: a drawn glyph plus a label."""
 
     GLYPH = 16   # glyph box, DIPs
     GAP = SP_SM  # glyph-to-label gap
+    # Which role this toggle reports to the platform; the subclasses differ only in that
+    # and in what _Activate does.
+    ACCESSIBLE = _Accessible
 
     def __init__(self, parent, id=wx.ID_ANY, label="", style=0, name="toggle"):
         self.label = label
+        self._ParseLabel(label)
         self._value = False
         super().__init__(parent, id, name=name)
         lock_font(self, FONT_UI)
@@ -385,6 +682,8 @@ class _Toggle(_Themed):
         self.Bind(wx.EVT_SET_FOCUS, lambda event: (self.Refresh(), event.Skip()))
         self.Bind(wx.EVT_KILL_FOCUS, lambda event: (self.Refresh(), event.Skip()))
         self.Bind(wx.EVT_KEY_DOWN, self._OnKey)
+        _announce(self, self.ACCESSIBLE)
+        self._HookMnemonic()
 
     # -- API parity with wx.CheckBox / wx.RadioButton -----------------------
     def GetValue(self):
@@ -395,17 +694,27 @@ class _Toggle(_Themed):
         self.Refresh()
 
     def SetLabel(self, label):
+        self._UnhookMnemonic()
         self.label = label
+        self._ParseLabel(label)
+        self._HookMnemonic()
         self.InvalidateBestSize()
         self.Refresh()
 
     def GetLabel(self):
         return self.label
 
+    def GetLabelText(self):
+        """The label without the mnemonic markers, matching wx.Control.GetLabelText."""
+        return self.text
+
+    def _ActivateFromMnemonic(self):
+        self._Activate()
+
     def DoGetBestSize(self):
         dc = wx.ClientDC(self)
         dc.SetFont(self.GetFont())
-        textWidth, textHeight = dc.GetTextExtent(self.label)
+        textWidth, textHeight = dc.GetTextExtent(self.text)
         glyph = dip(self, self.GLYPH)
         return wx.Size(
             glyph + dip(self, self.GAP) + textWidth,
@@ -437,10 +746,13 @@ class _Toggle(_Themed):
         return FG_PRIMARY if self.IsEnabled() else FG_DISABLED
 
     def _DrawLabel(self, context, width, height):
-        context.SetFont(self.GetFont(), self._label_colour())
-        textWidth, textHeight = context.GetTextExtent(self.label)[:2]
+        colour = self._label_colour()
+        context.SetFont(self.GetFont(), colour)
+        textWidth, textHeight = context.GetTextExtent(self.text)[:2]
         left = dip(self, self.GLYPH) + dip(self, self.GAP)
-        context.DrawText(self.label, left, (height - textHeight) / 2)
+        top = (height - textHeight) / 2
+        context.DrawText(self.text, left, top)
+        self._DrawMnemonic(context, left, top, textHeight, colour)
 
     def _DrawFocus(self, context, width, height):
         if not (self.HasFocus() and self.IsEnabled()):
@@ -452,6 +764,8 @@ class _Toggle(_Themed):
 
 class Check(_Toggle):
     """Owner-drawn checkbox. Emits wx.EVT_CHECKBOX."""
+
+    ACCESSIBLE = _CheckAccessible
 
     def _Activate(self):
         self._value = not self._value
@@ -500,6 +814,8 @@ class Radio(_Toggle):
     the OS because an owner-drawn control gets no help with mutual exclusion.
     """
 
+    ACCESSIBLE = _RadioAccessible
+
     def __init__(self, parent, id=wx.ID_ANY, label="", style=0, name="radio"):
         self.startsGroup = bool(style & wx.RB_GROUP)
         super().__init__(parent, id, label=label, name=name)
@@ -539,6 +855,42 @@ class Radio(_Toggle):
             return
         self.SetValue(True)
         self._Fire(wx.EVT_RADIOBUTTON)
+
+    # -- keyboard -----------------------------------------------------------
+    def AcceptsFocusFromKeyboard(self):
+        """A radio group is one tab stop, as it is natively.
+
+        Tab reaches the checked button and then leaves the group; the arrows move within
+        it. Without this every button in the group is its own stop, so tabbing through a
+        panel with six options takes six presses and lands the caret on options the user
+        has not chosen.
+        """
+        if not self.IsEnabled():
+            return False
+        group = [sibling for sibling in self._Group() if sibling.IsEnabled()]
+        checked = next((sibling for sibling in group if sibling._value), None)
+        # Nothing checked yet: the first enabled button takes the stop, so the group is
+        # still reachable.
+        return self is (checked or (group[0] if group else self))
+
+    def _OnKey(self, event):
+        key = event.GetKeyCode()
+        if key in (wx.WXK_UP, wx.WXK_LEFT):
+            self._Step(-1)
+            return
+        if key in (wx.WXK_DOWN, wx.WXK_RIGHT):
+            self._Step(1)
+            return
+        super()._OnKey(event)
+
+    def _Step(self, step):
+        """Move the selection to the next enabled button in the group, wrapping."""
+        group = [sibling for sibling in self._Group() if sibling.IsEnabled()]
+        if self not in group or len(group) < 2:
+            return
+        target = group[(group.index(self) + step) % len(group)]
+        target.SetFocus()
+        target._Activate()
 
     def Draw(self, context, width, height):
         glyph = dip(self, self.GLYPH)
@@ -601,6 +953,12 @@ class Card(wx.Panel):
         outer.Add(self.body, 1, wx.EXPAND | wx.ALL, pad)
         self.SetSizer(outer)
 
+        if title:
+            # The title is drawn by a StaticText, so nothing else tells the platform what
+            # this grouping is called. The window label has no visual effect on a panel.
+            self.SetLabel(title)
+        _announce(self, _GroupAccessible)
+
     def _OnPaint(self, event):
         dc = wx.AutoBufferedPaintDC(self)
         dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
@@ -641,6 +999,9 @@ class SectionHeader(wx.Panel):
         dc = wx.ClientDC(self)
         dc.SetFont(FONT_H2)
         self.SetMinSize(wx.Size(-1, dc.GetTextExtent(text)[1] + dip(self, SP_XS)))
+        # The heading is drawn, not a StaticText, so it needs declaring.
+        self.SetLabel(text)
+        _announce(self, _SectionAccessible)
 
     def _OnPaint(self, event):
         dc = wx.AutoBufferedPaintDC(self)
@@ -693,6 +1054,7 @@ class Picker(_Themed):
         self.Bind(wx.EVT_KILL_FOCUS, lambda event: (self.Refresh(), event.Skip()))
         self.Bind(wx.EVT_KEY_DOWN, self._OnKey)
         self.Bind(wx.EVT_MOUSEWHEEL, self._OnWheel)
+        _announce(self, _PickerAccessible)
 
     # -- API parity with wx.ComboBox ----------------------------------------
     def GetValue(self):
@@ -1126,6 +1488,7 @@ class _CollapsibleHeader(_Themed):
         self.Bind(wx.EVT_KEY_DOWN, self._OnKey)
         self.Bind(wx.EVT_SET_FOCUS, lambda event: (self.Refresh(), event.Skip()))
         self.Bind(wx.EVT_KILL_FOCUS, lambda event: (self.Refresh(), event.Skip()))
+        _announce(self, _DisclosureAccessible)
 
     def _OnKey(self, event):
         if event.GetKeyCode() in (wx.WXK_SPACE, wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
@@ -1188,6 +1551,10 @@ class TabBar(_Themed):
         self.Bind(wx.EVT_LEFT_DOWN, self._OnDown)
         self.Bind(wx.EVT_MOTION, self._OnMotion)
         self.Bind(wx.EVT_SIZE, lambda event: self.Refresh())
+        self.Bind(wx.EVT_KEY_DOWN, self._OnKey)
+        self.Bind(wx.EVT_SET_FOCUS, lambda event: (self.Refresh(), event.Skip()))
+        self.Bind(wx.EVT_KILL_FOCUS, lambda event: (self.Refresh(), event.Skip()))
+        _announce(self, _TabsAccessible)
 
     def _Labels(self):
         return [self.book.GetPageText(index) for index in range(self.book.GetPageCount())]
@@ -1214,10 +1581,41 @@ class TabBar(_Themed):
         return -1
 
     def _OnDown(self, event):
+        self.SetFocus()
         index = self._TabAt(event.GetX())
         if index >= 0 and index != self.book.GetSelection():
             self.book.SetSelection(index)
             self.Refresh()
+
+    def _OnKey(self, event):
+        """Arrow through the tabs, as a native notebook does.
+
+        The strip is one tab stop and the arrows move within it; without this the tabs are
+        reachable by mouse only, since the pages are switched from here rather than by the
+        Simplebook, which draws nothing and handles no keys.
+        """
+        count = self.book.GetPageCount()
+        if count < 2:
+            event.Skip()
+            return
+
+        key = event.GetKeyCode()
+        current = self.book.GetSelection()
+        if key in (wx.WXK_LEFT, wx.WXK_UP):
+            target = (current - 1) % count
+        elif key in (wx.WXK_RIGHT, wx.WXK_DOWN):
+            target = (current + 1) % count
+        elif key == wx.WXK_HOME:
+            target = 0
+        elif key == wx.WXK_END:
+            target = count - 1
+        else:
+            event.Skip()
+            return
+
+        if target != current:
+            self.book.SetSelection(target)
+        self.Refresh()
 
     def _OnMotion(self, event):
         index = self._TabAt(event.GetX())
@@ -1263,6 +1661,20 @@ class TabBar(_Themed):
                 context.SetBrush(wx.Brush(ACCENT))
                 context.SetPen(wx.TRANSPARENT_PEN)
                 context.DrawRectangle(left, height - indicator, tabWidth, indicator)
+
+                if self.HasFocus():
+                    # The strip is the focusable window, so the ring goes round the tab the
+                    # arrows would move away from - otherwise keyboard users get no caret.
+                    context.SetBrush(wx.TRANSPARENT_BRUSH)
+                    context.SetPen(_stroke(context, FOCUS_RING, dip(self, 1)))
+                    inset = dip(self, SP_XS) / 2
+                    context.DrawRoundedRectangle(
+                        left + inset,
+                        inset,
+                        tabWidth - inset * 2,
+                        height - indicator - inset * 2,
+                        dip(self, RADIUS_SM),
+                    )
 
 
 class Dialog(wx.Dialog):

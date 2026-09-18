@@ -18,7 +18,7 @@ import logging
 import wx
 
 from . import ui_kit as ui
-from .theme import FONT_CODE, apply_theme
+from .theme import FONT_CODE, SP_SM, SP_XS, apply_theme, dip
 
 log = logging.getLogger(__name__)
 
@@ -189,8 +189,8 @@ class AnalysisConfPanel(wx.Panel):
         self.formRadio.SetValue(True)
         for radio in (self.formRadio, self.rawRadio):
             radio.Bind(wx.EVT_RADIOBUTTON, self.OnModeChanged)
-            modeBox.Add(radio, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=10)
-        self.vbox.Add(modeBox, flag=wx.BOTTOM, border=5)
+            modeBox.Add(radio, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=dip(self, SP_SM))
+        self.vbox.Add(modeBox, flag=wx.BOTTOM, border=dip(self, SP_XS))
 
         # Built by Load once the keys are known.
         self.formSizer = wx.BoxSizer(wx.VERTICAL)
@@ -198,7 +198,7 @@ class AnalysisConfPanel(wx.Panel):
 
         self.rawEditor = wx.TextCtrl(self, style=wx.TE_MULTILINE)
         self.rawEditor.SetFont(FONT_CODE)
-        self.vbox.Add(self.rawEditor, proportion=1, flag=wx.EXPAND | wx.TOP, border=5)
+        self.vbox.Add(self.rawEditor, proportion=1, flag=wx.EXPAND | wx.TOP, border=dip(self, SP_XS))
         self.rawEditor.Hide()
 
         self.SetSizer(self.vbox)
@@ -243,8 +243,8 @@ class AnalysisConfPanel(wx.Panel):
             grid = wx.FlexGridSizer(cols=columns, hgap=12, vgap=6)
             for key in keys:
                 grid.Add(self.BuildControl(box.GetStaticBox(), key), flag=wx.ALIGN_CENTER_VERTICAL)
-            box.Add(grid, flag=wx.ALL, border=5)
-            self.formSizer.Add(box, flag=wx.EXPAND | wx.BOTTOM, border=6)
+            box.Add(grid, flag=wx.ALL, border=dip(self, SP_XS))
+            self.formSizer.Add(box, flag=wx.EXPAND | wx.BOTTOM, border=dip(self, SP_XS))
 
         self.Layout()
 
@@ -262,7 +262,7 @@ class AnalysisConfPanel(wx.Panel):
             # key.control is what the save path reads GetValue off, so it stays the
             # TextCtrl; the sizer gets the drawn wrapper.
             key.control = field.ctrl
-            row.Add(label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=4)
+            row.Add(label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=dip(self, SP_XS))
             row.Add(field, flag=wx.ALIGN_CENTER_VERTICAL)
             item = row
 
@@ -272,7 +272,7 @@ class AnalysisConfPanel(wx.Panel):
             wrapper = wx.BoxSizer(wx.HORIZONTAL)
             key.toggle = ui.Check(parent, label="")
             key.toggle.SetToolTip(f"Write {key.name} to analysis.conf")
-            wrapper.Add(key.toggle, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=2)
+            wrapper.Add(key.toggle, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=dip(self, 2))
             wrapper.Add(item, flag=wx.ALIGN_CENTER_VERTICAL)
             item = wrapper
 

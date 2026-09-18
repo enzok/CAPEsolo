@@ -3,7 +3,7 @@ import re
 import wx
 
 from . import ui_kit as ui
-from .theme import BG_INPUT, BG_SELECT, FG_PRIMARY, FG_RED_ALERT, apply_theme
+from .theme import BG_INPUT, BG_SELECT, FG_PRIMARY, FG_RED_ALERT, SP_SM, SP_XS, apply_theme, dip
 
 
 class SearchDialog(ui.Dialog):
@@ -67,7 +67,7 @@ class SearchDialog(ui.Dialog):
         findNextButton.Bind(wx.EVT_BUTTON, self.FinderNext)
 
         hbox1 = wx.BoxSizer(wx.HORIZONTAL)
-        hbox1.Add(findButton, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5)
+        hbox1.Add(findButton, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=dip(self, SP_XS))
         hbox1.Add(findNextButton, proportion=1, flag=wx.EXPAND)
 
 
@@ -80,12 +80,12 @@ class SearchDialog(ui.Dialog):
         self.chkFull.Bind(wx.EVT_CHECKBOX, self.OnFullWordToggle)
 
         hbox2 = wx.BoxSizer(wx.HORIZONTAL)
-        hbox2.Add(self.chkCase, flag=wx.RIGHT, border=10)
+        hbox2.Add(self.chkCase, flag=wx.RIGHT, border=dip(self, SP_SM))
         hbox2.Add(self.chkFull)
 
-        sizer.Add(findField, proportion=0, flag=wx.EXPAND | wx.ALL, border=5)
-        sizer.Add(hbox1, proportion=0, flag=wx.EXPAND | wx.ALL, border=5)
-        sizer.Add(hbox2, proportion=0, flag=wx.ALIGN_CENTER_HORIZONTAL | wx.ALL, border=5)
+        sizer.Add(findField, proportion=0, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_XS))
+        sizer.Add(hbox1, proportion=0, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_XS))
+        sizer.Add(hbox2, proportion=0, flag=wx.ALIGN_CENTER_HORIZONTAL | wx.ALL, border=dip(self, SP_XS))
 
         self.SetSizer(sizer)
         self.SetMinSize(wx.Size(400, -1))

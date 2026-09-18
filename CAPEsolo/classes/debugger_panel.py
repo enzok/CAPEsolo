@@ -6,7 +6,7 @@ import wx
 
 from . import ui_kit as ui
 from .key_event import KeyEventHandlerMixin
-from .theme import FONT_CODE, apply_theme
+from .theme import FONT_CODE, SP_SM, SP_XS, apply_theme, dip
 
 # "0x0042EEE3  55                       PUSH      EBP"
 # Two spaces then the instruction bytes: this excludes the stack-dump lines
@@ -53,28 +53,28 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
         viewButton.Bind(wx.EVT_BUTTON, self.OnViewButtonClick)
 
         hbox.Add(
-            self.logFileDropdown, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=10
+            self.logFileDropdown, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=dip(self, SP_SM)
         )
         hbox.Add(viewButton, flag=wx.EXPAND)
-        vbox.Add(hbox, flag=wx.EXPAND | wx.ALL, border=10)
+        vbox.Add(hbox, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_SM))
 
         self.resultsWindow = wx.TextCtrl(
             self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2
         )
         self.resultsWindow.SetFont(FONT_CODE)
-        vbox.Add(self.resultsWindow, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
+        vbox.Add(self.resultsWindow, proportion=1, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_SM))
 
         hboxCover = wx.BoxSizer(wx.HORIZONTAL)
         self.coverBtn = ui.Button(self, label="Create Coverage File")
         self.coverBtn.Bind(wx.EVT_BUTTON, self.OnCover)
         self.coverBtn.Disable()
-        hboxCover.Add(self.coverBtn, proportion=0, flag=wx.ALL | wx.CENTER, border=5)
+        hboxCover.Add(self.coverBtn, proportion=0, flag=wx.ALL | wx.CENTER, border=dip(self, SP_XS))
         self.coverageFileBtn = ui.Button(self, label="Copy Coverage File")
         self.coverageFileBtn.Bind(wx.EVT_BUTTON, self.OnCopyPath)
         self.coverageFileBtn.Disable()
-        hboxCover.Add(self.coverageFileBtn, proportion=1, flag=wx.ALL | wx.CENTER, border=5)
+        hboxCover.Add(self.coverageFileBtn, proportion=1, flag=wx.ALL | wx.CENTER, border=dip(self, SP_XS))
 
-        vbox.Add(hboxCover, proportion=0, flag=wx.ALL | wx.CENTER, border=5)
+        vbox.Add(hboxCover, proportion=0, flag=wx.ALL | wx.CENTER, border=dip(self, SP_XS))
 
         self.SetSizer(vbox)
         apply_theme(self)
@@ -229,22 +229,22 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
         currentLabel = wx.StaticText(panel, label="Current ImageBase   0x:")
         loaderField = ui.Field(panel, value=f"{loaderBase}")
         loaderCtrl = loaderField.ctrl
-        hbox1.Add(currentLabel, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
+        hbox1.Add(currentLabel, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=dip(self, SP_XS))
         hbox1.Add(loaderField, proportion=1)
         hbox2 = wx.BoxSizer(wx.HORIZONTAL)
         newLabel = wx.StaticText(panel, label="New ImageBase        0x:")
         imageField = ui.Field(panel, value=self.TargetImageBase())
         imageCtrl = imageField.ctrl
-        hbox2.Add(newLabel, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
+        hbox2.Add(newLabel, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=dip(self, SP_XS))
         hbox2.Add(imageField, proportion=1)
 
-        vbox.Add(hbox1, flag=wx.EXPAND | wx.ALL, border=5)
-        vbox.Add(hbox2, flag=wx.EXPAND | wx.ALL, border=5)
+        vbox.Add(hbox1, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_XS))
+        vbox.Add(hbox2, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_XS))
 
         vbox.Add(
             ui.dialog_buttons(panel, ok="Ok"),
             flag=wx.EXPAND | wx.TOP | wx.BOTTOM | wx.RIGHT,
-            border=10,
+            border=dip(self, SP_SM),
         )
 
         panel.SetSizer(vbox)

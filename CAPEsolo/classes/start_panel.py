@@ -49,6 +49,7 @@ from .theme import (
     SP_MD,
     SP_SM,
     SP_XL,
+    SP_XS,
     apply_theme,
     dip,
     dip_size,
@@ -197,7 +198,7 @@ class _DownloadCredentialsDialog(ui.Dialog):
                 ),
             ),
             flag=wx.ALL,
-            border=12,
+            border=dip(self, SP_MD),
         )
 
         # Password (for stored encrypted keys) and directly-entered keys sit in separate
@@ -208,7 +209,7 @@ class _DownloadCredentialsDialog(ui.Dialog):
             pwdField = ui.Field(pwdCard, style=wx.TE_PASSWORD)
             self.pwdCtrl = pwdField.ctrl
             pwdCard.body.Add(pwdField, flag=wx.EXPAND)
-            outer.Add(pwdCard, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
+            outer.Add(pwdCard, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=dip(self, SP_MD))
 
         keyCard = ui.Card(self, title="Enter API key(s) directly")
         keyParent = keyCard
@@ -223,7 +224,7 @@ class _DownloadCredentialsDialog(ui.Dialog):
         self.mbCtrl = mbField.ctrl
         grid.Add(mbField, flag=wx.EXPAND)
         keyCard.body.Add(grid, flag=wx.EXPAND)
-        outer.Add(keyCard, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=12)
+        outer.Add(keyCard, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=dip(self, SP_MD))
 
         # Drawn buttons rather than CreateButtonSizer: the stock MSW dialog buttons render
         # natively and ignore SetBackgroundColour, so the theme could not darken them. wx.Dialog
@@ -231,7 +232,7 @@ class _DownloadCredentialsDialog(ui.Dialog):
         outer.Add(
             ui.dialog_buttons(self),
             flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
-            border=12,
+            border=dip(self, SP_MD),
         )
 
         # Enter confirms OK from any field (SetDefault alone is unreliable while a text field
@@ -878,7 +879,7 @@ class StartPanel(wx.Panel):
         addrField = ui.Field(self.debuggerPane)
         addrField.SetMinSize(dip_size(self, 90, -1))
         addrTextCtrl = addrField.ctrl
-        hboxBp.Add(bpType, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=5)
+        hboxBp.Add(bpType, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=dip(self, SP_XS))
         hboxBp.Add(
             addrTypeDropdown,
             proportion=0,
@@ -900,10 +901,10 @@ class StartPanel(wx.Panel):
             actionLabel,
             proportion=0,
             flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
-            border=5,
+            border=dip(self, SP_XS),
         )
-        hboxAction.Add(actionDropdown, proportion=0, flag=wx.RIGHT, border=5)
-        hboxAction.Add(colon, proportion=0, flag=wx.RIGHT, border=2)
+        hboxAction.Add(actionDropdown, proportion=0, flag=wx.RIGHT, border=dip(self, SP_XS))
+        hboxAction.Add(colon, proportion=0, flag=wx.RIGHT, border=dip(self, 2))
         hboxAction.Add(valueField, proportion=0, flag=wx.ALIGN_CENTER_VERTICAL)
 
         hboxCount = wx.BoxSizer(wx.HORIZONTAL)

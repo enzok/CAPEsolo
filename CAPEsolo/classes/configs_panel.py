@@ -15,7 +15,7 @@ from CAPEsolo.capelib.path_utils import path_exists, path_mkdir
 from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
-from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
+from .theme import FONT_CODE, GRID_ROW_ALT, SP_XS, apply_theme, dip
 
 # A payload is named by its sha256 and a config value can be a long list, so autosizing
 # either column alone can take the whole width and push the rest of the row off screen.
@@ -271,7 +271,7 @@ class ConfigsPanel(wx.Panel, KeyEventHandlerMixin):
         self.configsButton = ui.Button(self, label="Extract Configs", variant=ui.PRIMARY)
         self.configsButton.Bind(wx.EVT_BUTTON, self.ExtractConfigs)
         self.configsButton.Disable()
-        vbox.Add(self.configsButton, proportion=0, flag=wx.ALL, border=5)
+        vbox.Add(self.configsButton, proportion=0, flag=wx.ALL, border=dip(self, SP_XS))
 
         self.grid = CopyableGrid(self, 0, 4)
         for col, label in enumerate(("File", "Family", "Field", "Value")):
@@ -289,7 +289,7 @@ class ConfigsPanel(wx.Panel, KeyEventHandlerMixin):
             self.grid,
             proportion=2,
             flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
-            border=5,
+            border=dip(self, SP_XS),
         )
 
         self.resultsWindow = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
@@ -299,7 +299,7 @@ class ConfigsPanel(wx.Panel, KeyEventHandlerMixin):
             self.resultsWindow,
             proportion=1,
             flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
-            border=5,
+            border=dip(self, SP_XS),
         )
 
         self.SetSizer(vbox)

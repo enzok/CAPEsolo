@@ -14,12 +14,15 @@ from .process_tools import (
     suspend_process,
     terminate_process,
 )
-from .theme import apply_theme
+from .theme import FG_SECONDARY, SP_XS, apply_theme, dip
 
 log = logging.getLogger(__name__)
 
 REFRESH_MS = 1500
-EXITED_COLOUR = wx.Colour(140, 140, 140)
+# Exited processes are de-emphasised, not disabled: the muted text token is contrast-checked
+# against every surface, unlike the flat grey this used to hardcode. theme.py mutates its
+# colours in place on a palette switch, so aliasing the token here still follows the theme.
+EXITED_COLOUR = FG_SECONDARY
 WINDOW_SIZE = wx.Size(520, 640)
 # Gap left between the window and the edges of the screen it is parked against.
 SCREEN_MARGIN = 12
@@ -80,7 +83,7 @@ class ProcessTreeWindow(wx.Frame):
         self.tree.Bind(wx.EVT_TREE_ITEM_RIGHT_CLICK, self.OnRightClick)
         self.tree.Bind(wx.EVT_TREE_ITEM_COLLAPSED, self.OnItemCollapsed)
         self.tree.Bind(wx.EVT_TREE_ITEM_EXPANDED, self.OnItemExpanded)
-        vbox.Add(self.tree, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
+        vbox.Add(self.tree, proportion=1, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_XS))
         panel.SetSizer(vbox)
         apply_theme(self)
         self.SetSize(WINDOW_SIZE)

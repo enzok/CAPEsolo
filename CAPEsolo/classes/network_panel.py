@@ -10,7 +10,7 @@ from CAPEsolo.capelib.path_utils import path_exists
 from . import ui_kit as ui
 from .custom_grid import CopyableGrid
 from .key_event import KeyEventHandlerMixin
-from .theme import FONT_CODE, GRID_ROW_ALT, apply_theme
+from .theme import FONT_CODE, GRID_ROW_ALT, SP_LG, SP_SM, SP_XS, apply_theme, dip
 
 ALL_KINDS = "<All traffic>"
 
@@ -53,7 +53,7 @@ class NetworkPanel(wx.Panel, KeyEventHandlerMixin):
         hboxFile.Add(
             wx.StaticText(self, label="Capture:"),
             flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL,
-            border=5,
+            border=dip(self, SP_XS),
         )
         self.pcapField = ui.Field(self)
         self.pcapPath = self.pcapField.ctrl
@@ -61,9 +61,9 @@ class NetworkPanel(wx.Panel, KeyEventHandlerMixin):
         self.pcapPath.Bind(wx.EVT_TEXT, self.OnPathChanged)
         browseBtn = ui.Button(self, label="Browse...")
         browseBtn.Bind(wx.EVT_BUTTON, self.OnBrowse)
-        hboxFile.Add(self.pcapField, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=5)
+        hboxFile.Add(self.pcapField, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=dip(self, SP_XS))
         hboxFile.Add(browseBtn, proportion=0)
-        vbox.Add(hboxFile, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+        vbox.Add(hboxFile, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=dip(self, SP_SM))
 
         hboxTop = wx.BoxSizer(wx.HORIZONTAL)
         self.processButton = ui.Button(
@@ -71,16 +71,16 @@ class NetworkPanel(wx.Panel, KeyEventHandlerMixin):
         )
         self.processButton.Bind(wx.EVT_BUTTON, self.ProcessCapture)
         self.processButton.Disable()
-        hboxTop.Add(self.processButton, proportion=0, flag=wx.RIGHT, border=15)
+        hboxTop.Add(self.processButton, proportion=0, flag=wx.RIGHT, border=dip(self, SP_LG))
         hboxTop.Add(
             wx.StaticText(self, label="Show:"),
             flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
-            border=5,
+            border=dip(self, SP_XS),
         )
         self.kindDropdown = ui.Picker(self)
         self.kindDropdown.Bind(wx.EVT_COMBOBOX, self.OnKindView)
         hboxTop.Add(self.kindDropdown, proportion=1, flag=wx.EXPAND)
-        vbox.Add(hboxTop, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+        vbox.Add(hboxTop, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=dip(self, SP_SM))
 
         # List and detail live in a splitter so a long capture list cannot squeeze the detail
         # pane out: a grid's best size is all-rows tall, which otherwise wins in a box sizer and
@@ -122,7 +122,7 @@ class NetworkPanel(wx.Panel, KeyEventHandlerMixin):
             self.splitter,
             proportion=1,
             flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
-            border=5,
+            border=dip(self, SP_XS),
         )
 
         self.SetSizer(vbox)
