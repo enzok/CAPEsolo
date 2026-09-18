@@ -51,7 +51,7 @@ class YaraPanel(wx.Panel, KeyEventHandlerMixin):
 
         vbox.AddSpacer(10)
         self.yaraButton = ui.Button(
-            self, label="Process Yara Results", variant=ui.PRIMARY
+            self, label="Process Yara Results", variant=ui.PRIMARY, glyph=ui.REFRESH
         )
         self.yaraButton.Bind(wx.EVT_BUTTON, self.ProcessYara)
         self.yaraButton.Disable()
@@ -94,16 +94,23 @@ class YaraPanel(wx.Panel, KeyEventHandlerMixin):
 
         self.resultsWindow = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
         self.resultsWindow.SetFont(FONT_CODE)
-        self.resultsWindow.SetValue("Process yara results to list rule hits.")
         vbox.Add(
             self.resultsWindow,
             proportion=1,
             flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
             border=dip(self, SP_XS),
         )
+        # Until a scan has run there is no output, so the area explains itself instead of
+        # holding a sentence in the results box's monospace.
+        self.notice = ui.notice_for(
+            self.resultsWindow,
+            title="No yara results yet",
+            detail="Process yara results to list rule hits.",
+        )
 
         self.SetSizer(vbox)
         apply_theme(self)
+        self.notice.Present()
 
     def AddHits(self, file, hits):
         """Flatten one file's yara results into hit records.
@@ -190,7 +197,16 @@ class YaraPanel(wx.Panel, KeyEventHandlerMixin):
                 self.grid.SetColSize(col, limit)
         self.grid.AutoSizeRows()
         self.ApplyAlternateRowShading()
-        self.resultsWindow.SetValue(self.Summarize())
+        if self.viewHits:
+            self.notice.Dismiss()
+            self.resultsWindow.SetValue(self.Summarize())
+        else:
+            # A scan that matched nothing is still a result, so it says which filter it
+            # applies to rather than reading as "not run yet".
+            self.notice.Present(
+                title="No yara hits",
+                detail=self.Summarize(),
+            )
         self.Layout()
 
     def ApplyAlternateRowShading(self):
@@ -256,6 +272,7 @@ class YaraPanel(wx.Panel, KeyEventHandlerMixin):
             # no error anywhere. _yara_encode_string should already prevent this; the guard
             # stays because losing the rest of the detail is silent when it does happen.
             detail = self.FormatHit(self.viewHits[row])
+            self.notice.Dismiss()
             self.resultsWindow.SetValue(detail.replace("\x00", ""))
         event.Skip()
 

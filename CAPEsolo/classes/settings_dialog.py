@@ -137,7 +137,7 @@ class SettingsDialog(ui.Dialog):
             cell = wx.BoxSizer(wx.HORIZONTAL)
             field = ui.Field(parent, value=str(current))
             tc = field.ctrl
-            browse = ui.Button(parent, label="Browse...")
+            browse = ui.Button(parent, label="Browse...", glyph=ui.FOLDER)
             browse.Bind(wx.EVT_BUTTON, lambda e, ctrl=tc: self._OnBrowseDir(ctrl))
             cell.Add(field, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=dip(self, SP_XS))
             cell.Add(browse, proportion=0)

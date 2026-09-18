@@ -483,6 +483,8 @@ class Button(_Mnemonic, _Themed):
     # Padding inside the body, in DIPs.
     PAD_X = SP_MD
     PAD_Y = SP_SM
+    GLYPH = 14       # icon box, DIPs
+    GLYPH_GAP = SP_SM
 
     def __init__(
         self,
@@ -494,11 +496,15 @@ class Button(_Mnemonic, _Themed):
         name="button",
         tooltip=None,
         colour=None,
+        glyph=None,
     ):
         self.label = label
         # Sets text / mnemonic / mnemonicAt from the label's "&" markup.
         self._ParseLabel(label)
         self.variant = variant
+        # One of the names in _GLYPHS, or None. Drawn in the label's colour, so it dims with
+        # the button rather than needing a second disabled asset.
+        self.glyph = glyph
         # Overrides the variant's fill. Only for buttons whose colour carries meaning of its
         # own - the API-category swatches in the behaviour panel, where the colour is the
         # legend for the matching grid rows.
@@ -609,18 +615,35 @@ class Button(_Mnemonic, _Themed):
 
         context.SetFont(self.GetFont(), text)
         textWidth, textHeight = context.GetTextExtent(self.text)[:2]
-        left = (width - textWidth) / 2
+        glyph = dip(self, self.GLYPH) if self.glyph else 0
+        gap = dip(self, self.GLYPH_GAP) if (self.glyph and self.text) else 0
+        # Centre the icon and the label as one group, so adding an icon does not shove the
+        # text off centre.
+        left = (width - (glyph + gap + textWidth)) / 2
         top = (height - textHeight) / 2
-        context.DrawText(self.text, left, top)
-        self._DrawMnemonic(context, left, top, textHeight, text)
+        if self.glyph:
+            _draw_glyph(
+                context,
+                self.glyph,
+                left,
+                (height - glyph) / 2,
+                glyph,
+                text,
+                dip(self, 1.3),
+            )
+        textLeft = left + glyph + gap
+        context.DrawText(self.text, textLeft, top)
+        self._DrawMnemonic(context, textLeft, top, textHeight, text)
 
     def DoGetBestSize(self):
         dc = wx.ClientDC(self)
         dc.SetFont(self.GetFont())
         textWidth, textHeight = dc.GetTextExtent(self.text)
+        glyph = dip(self, self.GLYPH) if self.glyph else 0
+        gap = dip(self, self.GLYPH_GAP) if (self.glyph and self.text) else 0
         return wx.Size(
-            textWidth + dip(self, self.PAD_X) * 2,
-            textHeight + dip(self, self.PAD_Y) * 2,
+            textWidth + glyph + gap + dip(self, self.PAD_X) * 2,
+            max(textHeight, glyph) + dip(self, self.PAD_Y) * 2,
         )
 
     # -- input --------------------------------------------------------------
@@ -1322,6 +1345,104 @@ def _draw_chevron(context, x, y, size, colour, width, pointing="down"):
     context.StrokePath(path)
 
 
+# --- glyphs ------------------------------------------------------------------------------
+# Stroked outlines on a unit square, scaled and coloured at draw time. Bitmaps would have to
+# be produced at each DPI and recoloured for each palette; wx.ArtProvider's stock icons are
+# fixed-palette light-theme artwork and read as foreign against BG_MAIN. These take the
+# label's colour, so they follow the variant and the disabled state without any assets.
+#
+# Each entry is a list of paths; a path is (closed, [(x, y), ...]) in 0..1 coordinates.
+FOLDER = "folder"
+PLAY = "play"
+STOP = "stop"
+REFRESH = "refresh"
+DOWNLOAD = "download"
+SEARCH = "search"
+SETTINGS = "settings"
+ARCHIVE = "archive"
+DOCUMENT = "document"
+
+_GLYPHS = {
+    FOLDER: [
+        (True, [(0.05, 0.25), (0.42, 0.25), (0.5, 0.37), (0.95, 0.37), (0.95, 0.85),
+                (0.05, 0.85)]),
+    ],
+    PLAY: [
+        (True, [(0.22, 0.12), (0.88, 0.5), (0.22, 0.88)]),
+    ],
+    STOP: [
+        (True, [(0.18, 0.18), (0.82, 0.18), (0.82, 0.82), (0.18, 0.82)]),
+    ],
+    REFRESH: [
+        # Three quarters of a circle plus an arrowhead; a full circle reads as a spinner.
+        (False, [(0.88, 0.5), (0.86, 0.68), (0.74, 0.83), (0.55, 0.9), (0.35, 0.86),
+                 (0.2, 0.73), (0.13, 0.54), (0.18, 0.33), (0.33, 0.18), (0.53, 0.12),
+                 (0.72, 0.18)]),
+        (False, [(0.5, 0.06), (0.75, 0.19), (0.52, 0.34)]),
+    ],
+    DOWNLOAD: [
+        (False, [(0.5, 0.1), (0.5, 0.66)]),
+        (False, [(0.28, 0.46), (0.5, 0.68), (0.72, 0.46)]),
+        (False, [(0.14, 0.88), (0.86, 0.88)]),
+    ],
+    SEARCH: [
+        (True, [(0.62, 0.16), (0.78, 0.32), (0.78, 0.56), (0.62, 0.72), (0.38, 0.72),
+                (0.22, 0.56), (0.22, 0.32), (0.38, 0.16)]),
+        (False, [(0.68, 0.68), (0.9, 0.9)]),
+    ],
+    # Sliders rather than a gear: a gear's teeth close up into a blob at 14 DIPs, and the
+    # outline version reads as a sparkle.
+    SETTINGS: [
+        (False, [(0.1, 0.26), (0.9, 0.26)]),
+        (True, [(0.56, 0.18), (0.7, 0.18), (0.7, 0.34), (0.56, 0.34)]),
+        (False, [(0.1, 0.5), (0.9, 0.5)]),
+        (True, [(0.26, 0.42), (0.4, 0.42), (0.4, 0.58), (0.26, 0.58)]),
+        (False, [(0.1, 0.74), (0.9, 0.74)]),
+        (True, [(0.6, 0.66), (0.74, 0.66), (0.74, 0.82), (0.6, 0.82)]),
+    ],
+    ARCHIVE: [
+        (True, [(0.08, 0.2), (0.92, 0.2), (0.92, 0.38), (0.08, 0.38)]),
+        (True, [(0.16, 0.38), (0.84, 0.38), (0.84, 0.86), (0.16, 0.86)]),
+        (False, [(0.42, 0.54), (0.58, 0.54)]),
+    ],
+    DOCUMENT: [
+        (True, [(0.22, 0.08), (0.62, 0.08), (0.8, 0.3), (0.8, 0.92), (0.22, 0.92)]),
+        (False, [(0.36, 0.5), (0.66, 0.5)]),
+        (False, [(0.36, 0.68), (0.66, 0.68)]),
+    ],
+}
+
+
+# Shapes small enough to read better solid than as an outline.
+_FILLED = {PLAY, STOP, SETTINGS}
+
+
+def _draw_glyph(context, name, x, y, size, colour, width):
+    """Stroke the named glyph into a size x size box at (x, y)."""
+    paths = _GLYPHS.get(name)
+    if not paths:
+        return
+    context.SetPen(_stroke(context, colour, width))
+    context.SetBrush(wx.Brush(colour))
+    for closed, points in paths:
+        path = context.CreatePath()
+        first = True
+        for px, py in points:
+            point = (x + px * size, y + py * size)
+            if first:
+                path.MoveToPoint(*point)
+                first = False
+            else:
+                path.AddLineToPoint(*point)
+        if closed:
+            path.CloseSubpath()
+        # Outlines with a hole in them (folder, archive) would swallow their own detail if
+        # filled, so only the small solid shapes are.
+        if closed and name in _FILLED:
+            context.FillPath(path)
+        context.StrokePath(path)
+
+
 class Field(wx.Panel):
     """A native wx.TextCtrl inside a drawn, rounded, focus-aware border.
 
@@ -1769,6 +1890,107 @@ class _Badge(_Themed):
         context.SetFont(FONT_H2, _contrasting(colour))
         textWidth, textHeight = context.GetTextExtent(glyph)[:2]
         context.DrawText(glyph, (size - textWidth) / 2, (size - textHeight) / 2)
+
+
+# Kinds accepted by Notice, and by the badge it draws.
+INFO = _BADGE_INFO
+WARNING = _BADGE_WARNING
+ERROR = _BADGE_ERROR
+
+
+class Notice(wx.Panel):
+    """The empty, waiting or failed state of a results area.
+
+    These states used to be a sentence typed into the read-only text box that normally
+    holds output - "Extract after Yara Processing." - which reads as content rather than
+    as an explanation of why there is none, and inherits the monospace body of whatever
+    view it is standing in for.
+
+    Present() swaps this in for the control it was installed over; Dismiss() puts that
+    control back. Both re-lay out the parent, so a panel can flip between the two without
+    knowing how it was laid out.
+    """
+
+    WRAP = 420
+
+    def __init__(self, parent, replaces=None, kind=INFO, title="", detail=""):
+        super().__init__(parent, style=wx.BORDER_NONE)
+        self.replaces = replaces
+        self.SetBackgroundColour(parent.GetBackgroundColour())
+
+        self.badge = _Badge(self, kind)
+        self.title = lock_font(wx.StaticText(self, label=title), FONT_H2)
+        self.title.SetForegroundColour(FG_PRIMARY)
+        self.detail = lock_font(wx.StaticText(self, label=detail), FONT_UI)
+        self.detail.SetForegroundColour(FG_SECONDARY)
+
+        column = wx.BoxSizer(wx.VERTICAL)
+        column.Add(self.badge, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.BOTTOM, dip(self, SP_MD))
+        column.Add(self.title, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.BOTTOM, dip(self, SP_XS))
+        column.Add(self.detail, 0, wx.ALIGN_CENTER_HORIZONTAL)
+
+        # Centred in both directions: the state belongs to the whole empty area, not to its
+        # top-left corner.
+        outer = wx.BoxSizer(wx.VERTICAL)
+        outer.AddStretchSpacer()
+        outer.Add(column, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.ALL, dip(self, SP_LG))
+        outer.AddStretchSpacer()
+        self.SetSizer(outer)
+        self.Set(kind, title, detail)
+
+    def Set(self, kind=None, title=None, detail=None):
+        if kind is not None:
+            self.badge.kind = kind
+            self.badge.Refresh()
+        if title is not None:
+            self.title.SetLabel(title)
+        if detail is not None:
+            self.detail.SetLabel(detail)
+            self.detail.Wrap(dip(self, self.WRAP))
+        self.Layout()
+
+    def Present(self, title=None, detail=None, kind=None):
+        self.Set(kind, title, detail)
+        if self.replaces is not None:
+            self.replaces.Hide()
+        self.Show()
+        self.GetParent().Layout()
+
+    def Dismiss(self):
+        if not self.IsShown():
+            return
+        self.Hide()
+        if self.replaces is not None:
+            self.replaces.Show()
+        self.GetParent().Layout()
+
+
+def notice_for(control, kind=INFO, title="", detail=""):
+    """Install a hidden Notice in *control*'s sizer slot, matching its layout flags.
+
+    Reading the flags off the existing item rather than taking them as arguments keeps the
+    state the same shape as the content it stands in for - a results box that expands has a
+    state that expands with it.
+    """
+    sizer = control.GetContainingSizer()
+    notice = Notice(control.GetParent(), control, kind, title, detail)
+    if sizer is None:
+        # Nothing to match against; the caller places it.
+        notice.Hide()
+        return notice
+
+    item = sizer.GetItem(control)
+    index = next(
+        (
+            position
+            for position in range(len(sizer.GetChildren()))
+            if sizer.GetItem(position).GetWindow() is control
+        ),
+        0,
+    )
+    sizer.Insert(index, notice, item.GetProportion(), item.GetFlag(), item.GetBorder())
+    notice.Hide()
+    return notice
 
 
 class _MessageDialog(Dialog):

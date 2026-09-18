@@ -59,7 +59,7 @@ class NetworkPanel(wx.Panel, KeyEventHandlerMixin):
         self.pcapPath = self.pcapField.ctrl
         self.pcapPath.SetValue("<pcapng captured outside the guest>")
         self.pcapPath.Bind(wx.EVT_TEXT, self.OnPathChanged)
-        browseBtn = ui.Button(self, label="Browse...")
+        browseBtn = ui.Button(self, label="Browse...", glyph=ui.FOLDER)
         browseBtn.Bind(wx.EVT_BUTTON, self.OnBrowse)
         hboxFile.Add(self.pcapField, proportion=1, flag=wx.EXPAND | wx.RIGHT, border=dip(self, SP_XS))
         hboxFile.Add(browseBtn, proportion=0)
@@ -67,7 +67,7 @@ class NetworkPanel(wx.Panel, KeyEventHandlerMixin):
 
         hboxTop = wx.BoxSizer(wx.HORIZONTAL)
         self.processButton = ui.Button(
-            self, label="Process Capture", variant=ui.PRIMARY
+            self, label="Process Capture", variant=ui.PRIMARY, glyph=ui.REFRESH
         )
         self.processButton.Bind(wx.EVT_BUTTON, self.ProcessCapture)
         self.processButton.Disable()
@@ -109,15 +109,22 @@ class NetworkPanel(wx.Panel, KeyEventHandlerMixin):
             self.splitter, style=wx.TE_MULTILINE | wx.TE_READONLY
         )
         self.resultsWindow.SetFont(FONT_CODE)
-        self.resultsWindow.SetValue(
-            "Select a pcapng captured outside the guest, then process it.\n\n"
-            "TLS secrets are taken from the analysis: tlsdump/tlsdump.log (capemon in\n"
-            "lsass, for Schannel) and aux_/sslkeylogfile/sslkeys.log. They are merged into\n"
-            "one Wireshark-readable key log, and each TLS session is matched against it."
+        # The detail box is empty until a capture is processed, so the splitter starts on
+        # the state instead and ProcessCapture swaps the box in. A splitter pane is not a
+        # sizer slot, hence the hand-built Notice rather than notice_for().
+        self.notice = ui.Notice(
+            self.splitter,
+            self.resultsWindow,
+            title="No capture processed",
+            detail=(
+                "Select a pcapng captured outside the guest, then process it. TLS secrets "
+                "are taken from the analysis: tlsdump/tlsdump.log (capemon in lsass, for "
+                "Schannel) and aux_/sslkeylogfile/sslkeys.log. They are merged into one "
+                "Wireshark-readable key log, and each TLS session is matched against it."
+            ),
         )
-        # Only the detail pane shows until a capture is processed; the grid is split in on top
-        # in ProcessCapture.
-        self.splitter.Initialize(self.resultsWindow)
+        self.resultsWindow.Hide()
+        self.splitter.Initialize(self.notice)
         vbox.Add(
             self.splitter,
             proportion=1,
@@ -200,6 +207,10 @@ class NetworkPanel(wx.Panel, KeyEventHandlerMixin):
         self.LoadKindFilter()
         if not self.splitter.IsSplit():
             self.grid.Show()
+            self.resultsWindow.Show()
+            # The state was holding the unsplit pane; splitting replaces it, so it only
+            # has to stop being a child of the splitter's layout.
+            self.notice.Hide()
             height = self.splitter.GetClientSize().height
             sash = int(height * 0.6) if height > 200 else 300
             self.splitter.SplitHorizontally(self.grid, self.resultsWindow, sash)

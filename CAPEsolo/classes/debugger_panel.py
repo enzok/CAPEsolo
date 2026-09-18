@@ -63,6 +63,11 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
         )
         self.resultsWindow.SetFont(FONT_CODE)
         vbox.Add(self.resultsWindow, proportion=1, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_SM))
+        self.notice = ui.notice_for(
+            self.resultsWindow,
+            title="No log opened",
+            detail="Pick a debugger log and select View.",
+        )
 
         hboxCover = wx.BoxSizer(wx.HORIZONTAL)
         self.coverBtn = ui.Button(self, label="Create Coverage File")
@@ -78,6 +83,7 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
 
         self.SetSizer(vbox)
         apply_theme(self)
+        self.notice.Present()
 
     def PopulateLogFileDropdown(self):
         path = Path(self.analysisDir, "debugger")
@@ -98,8 +104,13 @@ class DebuggerPanel(wx.Panel, KeyEventHandlerMixin):
     def LoadDebuggerResults(self, file_name):
         path = Path(self.analysisDir, "debugger") / file_name
         if not path.exists():
-            self.resultsWindow.SetValue("Selected log file does not exist.")
+            self.notice.Present(
+                title="Log not found",
+                detail=f"{file_name} is no longer in the analysis debugger directory.",
+                kind=ui.ERROR,
+            )
             return
+        self.notice.Dismiss()
         self.resultsWindow.SetValue(path.read_text())
 
     def ParseModules(self, analysisData, pid):

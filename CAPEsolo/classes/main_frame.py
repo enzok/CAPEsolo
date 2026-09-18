@@ -140,6 +140,7 @@ class MainFrame(wx.Frame):
             self.panel,
             label="Settings",
             variant=ui.GHOST,
+            glyph=ui.SETTINGS,
             tooltip="Edit CAPEsolo settings (cfg.ini)",
         )
         self.settingsButton.Bind(wx.EVT_BUTTON, self.OnSettings)

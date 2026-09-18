@@ -61,7 +61,7 @@ class SearchDialog(ui.Dialog):
         # findWindow pointing at the inner control and lay out the drawn wrapper.
         self.findWindow = findField.ctrl
 
-        findButton = ui.Button(self, label="Find", variant=ui.PRIMARY)
+        findButton = ui.Button(self, label="Find", variant=ui.PRIMARY, glyph=ui.SEARCH)
         findButton.Bind(wx.EVT_BUTTON, self.Finder)
         findNextButton = ui.Button(self, label="Find Next")
         findNextButton.Bind(wx.EVT_BUTTON, self.FinderNext)

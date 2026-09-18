@@ -337,7 +337,7 @@ class StartPanel(wx.Panel):
         pathRow = wx.BoxSizer(wx.HORIZONTAL)
         self.targetPathField = ui.Field(targetCard, value="<Target file>")
         self.targetPath = self.targetPathField.ctrl
-        browseBtn = ui.Button(targetCard, label="Browse...")
+        browseBtn = ui.Button(targetCard, label="Browse...", glyph=ui.FOLDER)
         browseBtn.Bind(wx.EVT_BUTTON, self.OnBrowse)
         pathRow.Add(self.targetPathField, 1, wx.EXPAND | wx.RIGHT, gapS)
         pathRow.Add(browseBtn, 0, wx.ALIGN_CENTER_VERTICAL)
@@ -356,7 +356,7 @@ class StartPanel(wx.Panel):
         self.hashInputField = ui.Field(targetCard, hint="<md5, sha1, sha256>")
         self.hashInput = self.hashInputField.ctrl
         self.hashInput.SetToolTip("MD5/SHA1/SHA256 hex hash. MalwareBazaar requires SHA256.")
-        self.downloadBtn = ui.Button(targetCard, label="Download")
+        self.downloadBtn = ui.Button(targetCard, label="Download", glyph=ui.DOWNLOAD)
         self.downloadBtn.Disable()
         self.downloadBtn.Bind(wx.EVT_BUTTON, self.OnDownloadSample)
         hashRow.Add(self.hashInputField, 1, wx.EXPAND | wx.RIGHT, gapS)
@@ -376,7 +376,7 @@ class StartPanel(wx.Panel):
         self.downloadPathInput = self.downloadPathField.ctrl
         self.downloadPathInput.SetToolTip("Directory where downloaded samples are saved.")
         self.downloadPathInput.Disable()
-        self.downloadDirBtn = ui.Button(targetCard, label="Browse...")
+        self.downloadDirBtn = ui.Button(targetCard, label="Browse...", glyph=ui.FOLDER)
         self.downloadDirBtn.Disable()
         self.downloadDirBtn.Bind(wx.EVT_BUTTON, self.OnBrowseDownloadDir)
         downloadPathRow.Add(self.downloadPathField, 1, wx.EXPAND | wx.RIGHT, gapS)
@@ -723,7 +723,7 @@ class StartPanel(wx.Panel):
 
         # -- action bar, pinned outside the scroll area -----------------------
         self.launchAnalyzerBtn = ui.Button(
-            self, label="Launch", variant=ui.SUCCESSFUL
+            self, label="Launch", variant=ui.SUCCESSFUL, glyph=ui.PLAY
         )
         self.launchAnalyzerBtn.Disable()
         self.launchAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnLaunchAnalyzer)
@@ -737,27 +737,29 @@ class StartPanel(wx.Panel):
         )
         self.autoProcess.SetValue(True)
 
-        self.jsonReportBtn = ui.Button(self, label="JSON Report")
+        self.jsonReportBtn = ui.Button(self, label="JSON Report", glyph=ui.DOCUMENT)
         self.jsonReportBtn.Disable()
         self.jsonReportBtn.Bind(wx.EVT_BUTTON, self.JsonReport)
 
-        self.htmlReportBtn = ui.Button(self, label="HTML Report")
+        self.htmlReportBtn = ui.Button(self, label="HTML Report", glyph=ui.DOCUMENT)
         self.htmlReportBtn.Disable()
         self.htmlReportBtn.Bind(wx.EVT_BUTTON, self.HtmlReport)
 
-        updateYaraBtn = ui.Button(self, label="Update Yara")
+        updateYaraBtn = ui.Button(self, label="Update Yara", glyph=ui.REFRESH)
         updateYaraBtn.Bind(wx.EVT_BUTTON, self.OnUpdateYara)
 
-        self.zipResultsBtn = ui.Button(self, label="Zip Results")
+        self.zipResultsBtn = ui.Button(self, label="Zip Results", glyph=ui.ARCHIVE)
         self.zipResultsBtn.SetToolTip(
             "Zip the analysis directory to the Desktop, to restore in a clean VM."
         )
         self.zipResultsBtn.Bind(wx.EVT_BUTTON, self.OnZipResults)
 
-        openDirBtn = ui.Button(self, label="View Analysis Directory")
+        openDirBtn = ui.Button(self, label="View Analysis Directory", glyph=ui.FOLDER)
         openDirBtn.Bind(wx.EVT_BUTTON, self.OnOpenDirectory)
 
-        self.terminateAnalyzerBtn = ui.Button(self, label="Kill", variant=ui.DANGEROUS)
+        self.terminateAnalyzerBtn = ui.Button(
+            self, label="Kill", variant=ui.DANGEROUS, glyph=ui.STOP
+        )
         self.terminateAnalyzerBtn.Disable()
         self.terminateAnalyzerBtn.Bind(wx.EVT_BUTTON, self.OnTerminateAnalyzer)
 

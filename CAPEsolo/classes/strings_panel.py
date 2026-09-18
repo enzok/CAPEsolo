@@ -33,9 +33,15 @@ class StringsPanel(wx.Panel, KeyEventHandlerMixin):
         self.resultsWindow = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2)
         self.resultsWindow.SetFont(FONT_CODE)
         vbox.Add(self.resultsWindow, proportion=1, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_SM))
+        self.notice = ui.notice_for(
+            self.resultsWindow,
+            title="No file viewed",
+            detail="Pick a file and select View to extract its strings.",
+        )
 
         self.SetSizer(vbox)
         apply_theme(self)
+        self.notice.Present()
 
     def PopulateFileDropdown(self):
         self.targetFile = self.parent.targetFile
@@ -60,13 +66,22 @@ class StringsPanel(wx.Panel, KeyEventHandlerMixin):
     def LoadStringsResults(self, filename):
         path = Path(self.analysisDir, filename)
         if not path.exists():
-            self.resultsWindow.SetValue("Selected file does not exist.")
+            self.notice.Present(
+                title="File not found",
+                detail=f"{filename} is listed in the analysis but is not on disk.",
+                kind=ui.ERROR,
+            )
             return
 
         stringsData = self.GetStrings(path)
         if not stringsData:
-            stringsData = "No strings."
+            self.notice.Present(
+                title="No strings",
+                detail=f"{filename} contains no strings of 4 characters or more.",
+            )
+            return
 
+        self.notice.Dismiss()
         self.resultsWindow.SetValue(stringsData)
 
     def GetStrings(self, filePath, minLength=4):
