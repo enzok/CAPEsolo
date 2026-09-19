@@ -71,14 +71,6 @@ class ProcessTreeWindow(wx.Frame):
             style=wx.TR_DEFAULT_STYLE | wx.TR_HIDE_ROOT | wx.TR_HAS_BUTTONS | wx.TR_LINES_AT_ROOT,
         )
         self.root = self.tree.AddRoot("Processes")
-        # The native Explorer-themed tree draws its expander arrows only on hover and they wash out
-        # against the dark theme. Dropping the visual style gives classic, always-visible +/- buttons.
-        try:
-            import ctypes
-
-            ctypes.windll.uxtheme.SetWindowTheme(ctypes.c_void_p(self.tree.GetHandle()), "", "")
-        except Exception:
-            pass
         self.tree.Bind(wx.EVT_TREE_ITEM_GETTOOLTIP, self.OnItemTooltip)
         self.tree.Bind(wx.EVT_TREE_ITEM_RIGHT_CLICK, self.OnRightClick)
         self.tree.Bind(wx.EVT_TREE_ITEM_COLLAPSED, self.OnItemCollapsed)
@@ -86,6 +78,16 @@ class ProcessTreeWindow(wx.Frame):
         vbox.Add(self.tree, proportion=1, flag=wx.EXPAND | wx.ALL, border=dip(self, SP_XS))
         panel.SetSizer(vbox)
         apply_theme(self)
+        # The native Explorer-themed tree draws its expander arrows only on hover and they wash out
+        # against the dark theme. Dropping the visual style gives classic, always-visible +/- buttons.
+        # Must run after apply_theme(): _style_widget() applies DarkMode_Explorer to every native
+        # control it walks, including this tree, which would silently overwrite this override.
+        try:
+            import ctypes
+
+            ctypes.windll.uxtheme.SetWindowTheme(ctypes.c_void_p(self.tree.GetHandle()), "", "")
+        except Exception:
+            pass
         self.SetSize(WINDOW_SIZE)
         self.SetPosition(self.StartPosition(position))
 

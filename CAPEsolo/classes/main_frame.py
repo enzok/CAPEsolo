@@ -159,6 +159,14 @@ class MainFrame(wx.Frame):
         sizer.Add(bottom, 0, wx.EXPAND)
 
         self.panel.SetSizer(sizer)
+        # SetSizer() does not apply the layout itself. Without this, self.panel keeps
+        # whatever size it had before the sizer was attached - typically the tiny
+        # placeholder size children get before their first paint - and every child
+        # (tabBar, notebook, statusBar) stays collapsed to its unlaid-out minimum until
+        # something later resizes the frame to a genuinely different size. cli.py's
+        # startup width correction reads startTab.GetClientSize() right after Show(),
+        # which depends on this having already run.
+        self.panel.Layout()
         self.SetBackgroundColour(BG_MAIN)
         self.panel.SetBackgroundColour(BG_MAIN)
         apply_theme(self)
@@ -183,8 +191,11 @@ class MainFrame(wx.Frame):
         """Switch palette and restyle everything already on screen."""
         ToggleTheme()
         apply_theme(self)
-        # apply_theme walks wx.Panels as cards; this one is the page background.
+        # apply_theme walks wx.Panels as cards; this one is the page background. It runs
+        # after the walk already refreshed self.panel with the (wrong, card) colour, so it
+        # needs its own repaint to actually show BG_MAIN.
         self.panel.SetBackgroundColour(BG_MAIN)
+        self.panel.Refresh()
 
         # apply_theme re-sets widget colours and the grids' defaults, but not a GridCellAttr
         # already attached to a row: SetBackgroundColour copied the colour in when the attr
@@ -201,9 +212,8 @@ class MainFrame(wx.Frame):
                 shade()
 
         self.themeButton.SetLabel(self.ThemeLabel())
-        # Both read their colours at paint time, so a repaint is all they need.
-        self.tabBar.Refresh()
-        self.statusBar.Refresh()
+        # apply_theme() now refreshes every widget it visits (tabBar and statusBar
+        # included) on its way down, so no per-widget repaint is needed here.
         self.Layout()
         self.Refresh()
 

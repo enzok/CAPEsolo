@@ -96,6 +96,13 @@ class CapesoloApp(wx.App):
             log.debug("MSWEnableDarkMode failed", exc_info=True)
 
     def OnInit(self):
+        # Reads [gui] theme from cfg.ini before is_dark() is consulted. Without this, the
+        # dark-mode opt-in below reads theme._mode's hardcoded module default (DARK) instead
+        # of the user's configured theme, permanently enabling Windows dark-mode chrome for a
+        # light-themed session - the opt-in cannot be reversed once windows exist.
+        from classes.theme import _init as _init_theme
+
+        _init_theme()
         self._EnableNativeDarkMode()
         # The splash closes itself after 2s (SPLASH_TIMEOUT); do not sleep here. A blocking sleep
         # stalls the GUI thread so the message loop never runs, and Windows will not grant

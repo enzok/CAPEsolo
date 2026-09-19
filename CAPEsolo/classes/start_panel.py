@@ -235,10 +235,6 @@ class _DownloadCredentialsDialog(ui.Dialog):
             border=dip(self, SP_MD),
         )
 
-        # Enter confirms OK from any field (SetDefault alone is unreliable while a text field
-        # has focus); Escape still cancels via the dialog's built-in ID_CANCEL handling.
-        self.Bind(wx.EVT_CHAR_HOOK, self._OnCharHook)
-
         # Theme first, then fit: apply_theme swaps in FONT_UI, so fitting beforehand would size
         # the dialog to the smaller default font and squish the controls and the button row.
         self.SetSizer(outer)
@@ -255,12 +251,6 @@ class _DownloadCredentialsDialog(ui.Dialog):
         # ShowModal's event loop - so the analyst can type straight away.
         firstField = self.pwdCtrl or self.vtCtrl
         wx.CallAfter(firstField.SetFocus)
-
-    def _OnCharHook(self, event):
-        if event.GetKeyCode() in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
-            self.EndModal(wx.ID_OK)
-            return
-        event.Skip()
 
     def GetCredentials(self):
         password = self.pwdCtrl.GetValue() if self.pwdCtrl else ""

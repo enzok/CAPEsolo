@@ -32,6 +32,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.BindKeyEvents()
         self.behaviorComplete = False
         self.mycalls = []
+        self._rowCategories = []
         self.filter = ""
         self.category = "all"
         self.numcalls = 0
@@ -675,8 +676,14 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         end_index = start_index + self.items_per_page
         paginated_calls = mycalls[start_index:end_index]
 
+        # Row -> category, kept so a later theme switch can recolour these rows from the
+        # new palette instead of leaving them painted with whichever palette was active
+        # when the page was built (see ApplyAlternateRowShading).
+        self._rowCategories = []
+
         for i, call in enumerate(paginated_calls):
             category = call.get("category", "none")
+            self._rowCategories.append(category)
             self.grid.AppendRows(1)
             self.grid.SetCellValue(i, 0, call.get("timestamp", ""))
             self.grid.SetCellValue(i, 1, str(call.get("thread_id", "")))
@@ -717,10 +724,24 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.grid.ForceRefresh()
 
     def ApplyAlternateRowShading(self):
+        """Stripe uncategorised rows and, on a theme switch, recolour categorised ones.
+
+        RefreshTheme() (main_frame.py) calls this by name after repainting the app to
+        rebuild whatever per-row colouring apply_theme() cannot reach on its own. A plain
+        SetDefaultCellTextColour/SetCellBackgroundColour repaint only updates the grid's
+        defaults; a row already coloured via SetCellBackgroundColour (below, and in
+        AddTableData) keeps the concrete wx.Colour it was given even after BACKGNDCLR is
+        mutated to the new palette, e.g. leaving light-palette near-black text sitting on
+        the old dark-palette's near-black row fills after a Dark -> Light toggle.
+        """
         numRows = self.grid.GetNumberRows()
 
         for row in range(numRows):
-            if row % 2 == 0:
+            category = self._rowCategories[row] if row < len(self._rowCategories) else None
+            rgbColor = BACKGNDCLR.get(category)
+            if rgbColor is not None:
+                self.ApplyBackgroundColor(row, wx.Colour(rgbColor))
+            elif row % 2 == 0:
                 attr = gridlib.GridCellAttr()
                 attr.SetBackgroundColour(GRID_ROW_ALT)
                 self.grid.SetRowAttr(row, attr)

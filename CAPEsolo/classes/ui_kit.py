@@ -853,10 +853,10 @@ class Radio(_Toggle):
 
         start = 0
         for index, sibling in enumerate(siblings):
-            if sibling is self:
-                break
             if sibling.startsGroup:
                 start = index
+            if sibling is self:
+                break
 
         group = []
         for sibling in siblings[start:]:
@@ -1443,6 +1443,33 @@ def _draw_glyph(context, name, x, y, size, colour, width):
         context.StrokePath(path)
 
 
+class _FieldTextCtrl(wx.TextCtrl):
+    """A wx.TextCtrl that never actually goes wx.WS_DISABLED.
+
+    On MSW, a *disabled* Edit control is always painted by Windows itself (routed through
+    WM_CTLCOLORSTATIC instead of WM_CTLCOLOREDIT), which ignores whatever
+    SetBackgroundColour/SetForegroundColour the app has set - the system's pale disabled
+    fill shows through no matter which of our palettes is active, and stripping the
+    control's UxTheme subtheme (see theme.py's _style_widget) does not change that: it is
+    which message Windows sends, not how the theme draws it, that is disabled-specific.
+    A read-only-but-still-enabled control keeps routing through WM_CTLCOLOREDIT, which
+    does honour custom colours, so Enable()/Disable() here toggle SetEditable() instead of
+    the real wx enabled state. IsEnabled() is overridden to match, so callers asking "is
+    this control enabled" (Field._OnPaint, theme.py's per-widget styling) see the same
+    answer they would have from a genuinely disabled control, without the paint problem.
+    """
+
+    def Enable(self, enable=True):
+        self.SetEditable(enable)
+        return super().Enable(True)
+
+    def Disable(self):
+        return self.Enable(False)
+
+    def IsEnabled(self):
+        return self.IsEditable()
+
+
 class Field(wx.Panel):
     """A native wx.TextCtrl inside a drawn, rounded, focus-aware border.
 
@@ -1472,7 +1499,7 @@ class Field(wx.Panel):
 
         if multiline:
             style |= wx.TE_MULTILINE
-        self.ctrl = wx.TextCtrl(self, value=value, style=style | wx.BORDER_NONE)
+        self.ctrl = _FieldTextCtrl(self, value=value, style=style | wx.BORDER_NONE)
         self.ctrl.SetBackgroundColour(BG_INPUT)
         self.ctrl.SetForegroundColour(FG_PRIMARY)
         lock_font(self.ctrl, FONT_UI)
@@ -1747,6 +1774,7 @@ class TabBar(_Themed):
 
     def _OnLeave(self, event):
         self.hoveredTab = -1
+        self.SetCursor(wx.Cursor(wx.CURSOR_ARROW))
         super()._OnLeave(event)
 
     def Draw(self, context, width, height):
@@ -1819,10 +1847,25 @@ class Dialog(wx.Dialog):
 
     def _OnCharHook(self, event):
         # The buttons are ui_kit controls, not wx.Button, so wxWidgets cannot find an
-        # ID_CANCEL button to map Escape onto. Do it here.
-        if event.GetKeyCode() == wx.WXK_ESCAPE and self.IsModal():
+        # ID_CANCEL/ID_OK button to map Escape/Enter onto - there is no native "default
+        # button" for it to click. Do both here.
+        key = event.GetKeyCode()
+        if key == wx.WXK_ESCAPE and self.IsModal():
             self.EndModal(self.escapeId)
             return
+
+        if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and self.IsModal():
+            focus = self.FindFocus()
+            # A focused Button handles its own Enter key (see Button._OnKey), and a
+            # multiline text control wants Enter as a newline, not a submit.
+            focusHandlesEnter = isinstance(focus, Button) or (
+                isinstance(focus, wx.TextCtrl) and focus.HasFlag(wx.TE_MULTILINE)
+            )
+            okButton = self.FindWindow(wx.ID_OK)
+            if not focusHandlesEnter and isinstance(okButton, Button) and okButton.IsEnabled():
+                okButton._Fire()
+                return
+
         event.Skip()
 
 

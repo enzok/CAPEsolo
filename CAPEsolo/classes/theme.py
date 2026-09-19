@@ -647,6 +647,16 @@ def apply_theme(widget):
     if isinstance(widget, wx.TopLevelWindow):
         apply_window_theme(widget)
     _style_widget(widget)
+    # Recolouring a widget (SetBackgroundColour, etc.) does not by itself repaint it, and an
+    # owner-drawn ui_kit control (Field, Button, Picker, TabBar, ...) reads the current
+    # palette only from its own _OnPaint - it has no other code path that would pick up the
+    # change. Invalidating the whole window from the top, as RefreshTheme() used to do
+    # alone, does not reach separate native child windows on MSW (each is its own HWND, and
+    # Refresh() there is a plain InvalidateRect on that one window). Explicitly refreshing
+    # every widget on the way down is what actually gets them all repainted - e.g. without
+    # this, a disabled ui.Field (the Start tab's download-path box) kept showing the
+    # palette's old BG_DISABLED fill after a Dark <-> Light toggle.
+    widget.Refresh()
     for child in widget.GetChildren():
         apply_theme(child)
 
@@ -676,11 +686,25 @@ def _log_style_change(w):
 
 def _style_widget(w):
     """Apply colours / font to a single widget based on its runtime type."""
-    # Native Windows subtheme for scrollbars, borders, native arrows, etc.
+    # ui_kit.Field builds its wx.TextCtrl with BORDER_NONE on purpose and draws its own
+    # rounded, focus-aware border around it (see Field's docstring) - forcing BORDER_SIMPLE
+    # back on below would draw a second, square native border inside that one, showing up
+    # as a hard grey box around the text on top of the intended rounded outline.
+    from . import ui_kit
+
+    isFieldCtrl = isinstance(w, wx.TextCtrl) and isinstance(w.GetParent(), ui_kit.Field)
+
+    # Native Windows subtheme for scrollbars, borders, native arrows, etc. A disabled
+    # Field's background used to stay the OS's pale disabled fill regardless of this -
+    # that turned out to be Windows routing a WS_DISABLED Edit control's painting through
+    # WM_CTLCOLORSTATIC (which ignores our colours) rather than anything UxTheme does, so
+    # it is fixed at the source in ui_kit._FieldTextCtrl instead (Enable/Disable toggle
+    # SetEditable() there, so the control never actually goes WS_DISABLED) and this can
+    # stay unconditional.
     apply_native_theme(w)
 
     # Apply solid borders around interactive controls to ensure clear boundaries and relief
-    if isinstance(w, (wx.TextCtrl, wx.ComboBox, wx.Choice, wx.ListBox, wx.ListCtrl, gridlib.Grid)):
+    if not isFieldCtrl and isinstance(w, (wx.TextCtrl, wx.ComboBox, wx.Choice, wx.ListBox, wx.ListCtrl, gridlib.Grid)):
         try:
             style = w.GetWindowStyleFlag()
             wanted = style & ~(
@@ -705,6 +729,14 @@ def _style_widget(w):
         _set_font(w, FONT_UI)
         return
 
+    # wx.SplitterWindow is not a wx.Panel, so it fell through this walk untouched, staying
+    # at the OS default background. That is the gutter/sash colour and also what a child
+    # (e.g. ui.Notice) reads via GetBackgroundColour() if it is parented directly to the
+    # splitter instead of a themed panel - so it must match BG_CARD too.
+    if isinstance(w, wx.SplitterWindow):
+        w.SetBackgroundColour(BG_CARD)
+        return
+
     # --- Static text labels ---
     if isinstance(w, wx.StaticText):
         w.SetForegroundColour(FG_PRIMARY)
@@ -718,8 +750,15 @@ def _style_widget(w):
 
     # --- Text controls (single-line and multiline) ---
     if isinstance(w, wx.TextCtrl):
-        w.SetBackgroundColour(BG_INPUT)
-        w.SetForegroundColour(FG_PRIMARY)
+        if w.IsEnabled():
+            w.SetBackgroundColour(BG_INPUT)
+            w.SetForegroundColour(FG_PRIMARY)
+        else:
+            # Matches the BG_DISABLED/FG_DISABLED look ui_kit.Field's own owner-drawn
+            # backdrop already uses for a disabled field - otherwise the native control
+            # inside it kept the enabled BG_INPUT fill no matter its enabled state.
+            w.SetBackgroundColour(BG_DISABLED)
+            w.SetForegroundColour(FG_DISABLED)
         # Preserve font if caller already set a code font (Consolas)
         if w.GetFont().GetFaceName().lower() not in ("consolas",):
             _set_font(w, FONT_UI)
