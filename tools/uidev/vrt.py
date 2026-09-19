@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Visual regression check: render the UI and diff it against a recorded baseline.
 
-    xvfb-run -a python3 tools/uidev/vrt.py            # compare
-    xvfb-run -a python3 tools/uidev/vrt.py --update   # re-record
+    python tools/uidev/vrt.py            # compare
+    python tools/uidev/vrt.py --update   # re-record
 
 Each shot in SHOTS is rendered by shoot.py in its own process (wx wants one frame per
 process) and compared with tools/uidev/baseline/<name>.png pixel by pixel. Changed pixels
 are written to an output directory as a red-on-grey diff so the move can be seen rather
-than guessed at.
+than guessed at. A shot with no baseline yet is recorded instead of compared.
 
-The baseline carries one machine's font stack, so a different GTK theme, fontconfig setup
-or DPI will shift text by a pixel and report a large difference. Read the diff image before
-concluding anything: this is a review aid, not a gate.
+The baseline is recorded by CI on Windows, because wxMSW is what ships; a GTK render of the
+same shot differs everywhere and comparing the two is meaningless. It also carries one
+machine's font stack, so a different DPI or font package will shift text by a pixel and
+report a large difference. Read the diff image before concluding anything: this is a review
+aid, not a gate.
 
 PNG handling is done here with zlib rather than through wx or Pillow, so a comparison needs
 no display and no third-party package.

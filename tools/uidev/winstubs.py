@@ -11,6 +11,7 @@ Import this module and call install() before anything from CAPEsolo.
 import importlib.machinery
 import os
 import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -118,7 +119,8 @@ def _preload(name):
     return module
 
 
-HOME = "/tmp/capesolo-uidev-home"
+# Fixed, and outside the user's profile, on both platforms: the path itself is rendered.
+HOME = "C:\\capesolo-uidev-home" if sys.platform == "win32" else "/tmp/capesolo-uidev-home"
 
 
 def install(analysisDir):
@@ -128,7 +130,13 @@ def install(analysisDir):
     # regression baseline differ on every machine. A fixed fake home keeps a render
     # byte-identical anywhere and keeps GTK off the developer's own configuration.
     home = Path(HOME)
-    (home / "Desktop").mkdir(parents=True, exist_ok=True)
+    try:
+        (home / "Desktop").mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # A locked-down host may refuse the drive root. The render then carries this
+        # machine's temp path, which is a visual-regression mismatch, not a failure.
+        home = Path(tempfile.gettempdir()) / "capesolo-uidev-home"
+        (home / "Desktop").mkdir(parents=True, exist_ok=True)
     os.environ["HOME"] = str(home)
 
     # The panels read cfg.ini through CAPEsolo.capelib.config_paths, which defaults to
@@ -139,9 +147,13 @@ def install(analysisDir):
 
     # The analyzer-side modules compute paths from the Windows environment at import time
     # (lib/common/constants.py builds ROOT from %SystemDrive%, and os.path.join raises on
-    # the None that getenv returns here). The values only have to be strings; nothing in a
-    # screenshot run touches the filesystem through them.
-    for name, value in (
+    # the None that getenv returns off Windows). The values only have to be strings; nothing
+    # in a screenshot run touches the filesystem through them.
+    #
+    # On Windows every one of these is already set and points at the real system, so only
+    # the two that decide where a render's download path comes from are redirected -
+    # overwriting SystemRoot or TEMP there would break subprocesses and the API itself.
+    fabricated = (
         ("SystemDrive", analysisDir),
         ("SystemRoot", analysisDir),
         ("windir", analysisDir),
@@ -154,8 +166,12 @@ def install(analysisDir):
         ("ProgramData", analysisDir),
         ("COMPUTERNAME", "HARNESS"),
         ("USERNAME", "analyst"),
-    ):
+    )
+    if sys.platform == "win32":
+        fabricated = (("USERPROFILE", str(home)), ("USERNAME", "analyst"))
+    for name, value in fabricated:
         os.environ[name] = value
+
 
     # Stubbed even where a module of that name is installed. "yara" is the example that
     # forced this: the dev box has yara-python, the GitHub runner has a different package
@@ -163,7 +179,12 @@ def install(analysisDir):
     # YaraProcessor before the first panel exists - so the harness died on a machine
     # difference that has nothing to do with the UI. None of these libraries can affect
     # layout; a render must not depend on which one a host happens to have.
-    for name in ("yara",):
+    #
+    # UIDEV_FORCE_STUB extends the list, which is how a developer machine reproduces a bare
+    # CI runner: there, nothing from pyproject is installed, so far more imports reach the
+    # stub finder than they do here.
+    forced = os.environ.get("UIDEV_FORCE_STUB", "")
+    for name in ("yara", *(n.strip() for n in forced.split(",") if n.strip())):
         _preload(name)
 
     # sflock.identify() is called on the selected target to auto-pick a package. Given a

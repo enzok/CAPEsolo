@@ -131,14 +131,26 @@ therefore completely unverified.**
 
 ## Tooling
 
-`tools/uidev/` builds the UI off screen under Xvfb and is wired into CI
-(`.github/workflows/ci.yml`). It is a Linux/GTK approximation by construction.
+`tools/uidev/` builds the UI off screen and is wired into CI
+(`.github/workflows/ci.yml`). The `ui` job runs on `windows-latest`, so the
+renders and the smoke test are wxMSW - the toolkit that ships. The `tests` job
+stays on Linux: it never opens a window.
 
-- [ ] Re-shoot the visual regression baseline on Windows, or record that the
-      baseline is GTK-only. `vrt.py --update` re-records; the shots carry the font
-      stack of whichever machine took them.
+The harness still runs on Linux under `xvfb-run` and is the faster loop for
+layout work, but it is a GTK approximation: native controls are drawn by GTK,
+nothing MSW-only can be exercised, and the live modal-dialog checks are skipped
+there (wxGTK's nested loop cannot be ended from code with no window manager).
+
+- [ ] Record the visual regression baseline from the first green Windows run.
+      The GTK baseline was deleted; `vrt.py` records any shot it has no baseline
+      for, and the `ui-renders` artifact carries the result. Commit those PNGs to
+      `tools/uidev/baseline/`.
+- [ ] Re-shoot `docs/images/frame-dark.png` and `frame-light.png` from the
+      Windows renders. The committed ones are GTK and do not show what a user
+      sees.
 - [ ] Decide whether the `ui` CI job should gate on `vrt.py` once the baseline is
       stable. It is `continue-on-error` today and only uploads the renders.
+
 
 ## Deferred cleanup
 

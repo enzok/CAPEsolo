@@ -37,6 +37,19 @@ WORKDIR = Path(tempfile.mkdtemp(prefix="capesolo-shoot-"))
 (WORKDIR / "analysis").mkdir(parents=True, exist_ok=True)
 winstubs.install(str(WORKDIR))
 
+# Force the X11 backend, before wx pulls GTK in.
+#
+# On a Wayland desktop GTK ignores the DISPLAY that xvfb-run sets and connects to the
+# compositor instead, so `xvfb-run -a shoot.py` quietly renders on the developer's real
+# session: their GTK theme, their fonts, their monitor work area capping the window size -
+# and nothing like CI, where there is no compositor. That difference hid a hang for a whole
+# CI run. Everything here must be reproducible, so the session is never used. GTK only
+# exists on the Unix build; on Windows wx talks to the Win32 API and neither variable means
+# anything.
+if sys.platform != "win32":
+    os.environ.pop("WAYLAND_DISPLAY", None)
+    os.environ["GDK_BACKEND"] = "x11"
+
 import wx  # noqa: E402
 
 

@@ -14,9 +14,11 @@ The Interface
 ![CAPEsolo, light theme](https://raw.githubusercontent.com/CAPESandbox/CAPEsolo/main/docs/images/frame-light.png)
 
 Working on the UI
-* `tools/uidev/` builds the real panels off screen under Xvfb on Linux, so a layout change
-  can be smoke-tested and screenshotted without a Windows VM. See `tools/uidev/README.md`.
-* The same scripts run in CI on every pull request.
+* `tools/uidev/` builds the real panels off screen and writes them to PNGs, so a layout
+  change can be smoke-tested and screenshotted without launching an analysis. See
+  `tools/uidev/README.md`.
+* The same scripts run in CI on every pull request, on a Windows runner, and upload the
+  renders as an artifact.
 
 * Create a Windows 10 VM that's suitable for running malware.
   * Use the CAPEv2 guest guide for configuration details.
