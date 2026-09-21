@@ -242,8 +242,16 @@ class ConsoleFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda evt: self.consolePanel.OnDialogSearch(), id=self.ID_SEARCH)
 
     def OnClose(self, event):
-        """Handles window close event gracefully."""
-        self.consolePanel.ShutdownConsole()
+        """Handles window close event gracefully.
+
+        Tears the console down directly rather than through ShutdownConsole, which closes
+        this window as its last step: called from here that is a second EVT_CLOSE, and the
+        two recursed into each other until the interpreter ran out of stack. The quit
+        command and Ctrl+Q still go through ShutdownConsole and still arrive here, where
+        close() runs a second time - the writer thread is already gone and ClosePipe only
+        acts once, so the repeat is a no-op.
+        """
+        self.consolePanel.close()
         self.Destroy()
 
     def OnBack(self, event):
