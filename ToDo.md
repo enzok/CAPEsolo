@@ -138,6 +138,18 @@ Bugs found and fixed:
   sites in the whole app `Enable()`/`Disable()` a `Field.ctrl` directly
   (`downloadPathInput`, `hashInput` in `start_panel.py`), so the blast radius is small.
 
+## Windows review findings (2026-09-21)
+
+- **`classes/start_panel.py` `StartAnalysis()`**: the Interactive Debug Console's initial
+  size was `wx.Size(int(mainFrame width * 2), mainFrame height)`, positioned at the main
+  frame's own on-screen origin, with no check against the actual display - reported as
+  the console opening wider than the screen. A 1117px-wide main frame doubles to 2234px,
+  already past a 1920px-wide display, and the console still starts at the main frame's
+  `x` position (not 0), so even a width that happens to fit the screen on its own can
+  still run off the right edge. Fixed by clamping both dimensions to `wx.DisplaySize()`
+  minus the main frame's position, the same pattern `cli.py`'s startup width correction
+  already uses for the main frame itself.
+
 ## Windows verification (GUI modernization)
 
 The GUI rework on `gui-modernize` was written and rendered on **wxGTK 4.2.4

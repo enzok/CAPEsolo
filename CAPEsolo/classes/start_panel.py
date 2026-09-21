@@ -1545,8 +1545,18 @@ class StartPanel(wx.Panel):
             self.analyzer.prepare()
             mainFrame = self.GetMainFrame()
             width, height = mainFrame.GetSize()
-            size = wx.Size(int(width * 2), height)
             position = mainFrame.GetPosition()
+            # The console wants extra horizontal room for its side-by-side disassembly,
+            # registers, memory and stack panes, but doubling the main frame's width
+            # unconditionally could - and did - exceed the screen (e.g. a 1117px-wide main
+            # frame doubles to 2234px, wider than a 1920px display), positioned starting at
+            # the main frame's own on-screen origin. Clamp to what is actually left of the
+            # screen from that origin.
+            screenWidth, screenHeight = wx.DisplaySize()
+            size = wx.Size(
+                min(int(width * 2), screenWidth - position.x),
+                min(height, screenHeight - position.y),
+            )
             if self.idbg:
                 self.dbgConsole = DebugConsole(self, "Debug Console", position, size)
                 self.dbgConsole.launch()
