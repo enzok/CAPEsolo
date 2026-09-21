@@ -234,7 +234,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
         self.pagination_sizer.Add(self.max_button, 0, wx.ALL, 5)
 
         vbox.Add(self.pagination_sizer, 0, wx.CENTER | wx.BOTTOM, 5)
-        self.pagination_sizer.Hide(True)
+        self.pagination_sizer.ShowItems(False)
 
         self.SetSizer(vbox)
         vbox.Fit(self)
@@ -603,7 +603,7 @@ class BehaviorPanel(wx.Panel, KeyEventHandlerMixin):
             height = 5 * self.resultsWindow.GetCharHeight()
             self.resultsWindow.SetSizeHints(-1, -1, -1, height)
             self.resultsWindow.SetMinSize((1, height))
-            self.pagination_sizer.Show(True)
+            self.pagination_sizer.ShowItems(True)
             self.grid.Show()
             self.Layout()
             self.ViewProcess(data)

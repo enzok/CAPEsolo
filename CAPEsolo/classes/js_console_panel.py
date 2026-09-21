@@ -138,7 +138,7 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
         self.pagination_sizer.Add(self.items_per_page_dropdown, 0, wx.ALL, 5)
 
         vbox.Add(self.pagination_sizer, 0, wx.CENTER | wx.BOTTOM, 5)
-        self.pagination_sizer.Hide(True)
+        self.pagination_sizer.ShowItems(False)
 
         self.SetSizer(vbox)
         apply_theme(self)
@@ -167,7 +167,7 @@ class JsConsolePanel(wx.Panel, KeyEventHandlerMixin):
                 + self._BuildEventRows(jslog)
             )
             self.LoadKindFilter()
-            self.pagination_sizer.Show(True)
+            self.pagination_sizer.ShowItems(True)
             self.current_page = 1
             self.AddTableData()
             self.grid.Show()
