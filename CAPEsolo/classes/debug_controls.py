@@ -21,6 +21,7 @@ from CAPEsolo.capelib.page_cache import (
 )
 from CAPEsolo.capelib.symbol_names import NAMES_FILENAME
 
+from . import ui_kit as ui
 from .patch_dialog import ConfirmPatchDialog, PatchDialog, PatchHistoryDialog
 from .patch_models import PatchEntry
 from .search_dialog import SearchDialog
@@ -34,6 +35,7 @@ from .theme import (
     FG_SECONDARY,
     FONT_CODE,
     apply_theme,
+    band_rows,
 )
 
 log = logging.getLogger(__name__)
@@ -641,7 +643,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
                 try:
                     int(target, 16)
                 except ValueError:
-                    wx.MessageBox(f"Invalid hex address: {entry}", "Error", wx.OK | wx.ICON_ERROR)
+                    ui.message(f"Invalid hex address: {entry}", "Error", wx.OK | wx.ICON_ERROR)
                     dialog.Destroy()
                     return
 
@@ -650,7 +652,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
                 # to push the target, so Escape went to the address just navigated to.
                 self.NavigateTo(int(target, 16))
             except Exception:
-                wx.MessageBox(f"Invalid register or hex address: {entry}", "Error", wx.OK | wx.ICON_ERROR)
+                ui.message(f"Invalid register or hex address: {entry}", "Error", wx.OK | wx.ICON_ERROR)
 
         dialog.Destroy()
 
@@ -675,7 +677,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
             payload = f"{cip}|{addr:#X}"
             self.parent.SendCommand(CMD_SET_REGISTER, payload)
         except ValueError:
-            wx.MessageBox(f"Invalid address for Set EIP/RIP: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Invalid address for Set EIP/RIP: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnStepInto(self, event):
         self.parent.SendCommand(CMD_STEP_INTO)
@@ -693,7 +695,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
             payload = f"{addr:#X}"
             self.parent.SendCommand(CMD_RUN_UNTIL, payload)
         except ValueError:
-            wx.MessageBox(f"Invalid address for Run Until: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Invalid address for Run Until: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnSetBreakpoint(self, row, slot):
         addrStr = self.GetItemText(row, 0).strip()
@@ -702,7 +704,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
             payload = f"{slot.lower()}|{addr:#X}"
             self.parent.SendCommand(CMD_SET_BREAKPOINT, payload)
         except ValueError:
-            wx.MessageBox(f"Invalid address for Set Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
+            ui.message(f"Invalid address for Set Breakpoint: {addrStr}", "Error", wx.OK | wx.ICON_ERROR)
 
     def OnDataBreakpoint(self, row):
         """Prefill with the address the instruction references, else its own address."""
@@ -924,7 +926,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
         # exactly the case it exists for. pushHistory=False or this would re-push what it is
         # leaving.
         if not self.NavigateTo(addr, pushHistory=False):
-            wx.MessageBox(f"Address {addr:#x} is no longer mapped.", "Info", wx.OK | wx.ICON_INFORMATION)
+            ui.message(f"Address {addr:#x} is no longer mapped.", "Info", wx.OK | wx.ICON_INFORMATION)
 
     def OperandAddressAt(self, row: int) -> int | None:
         """The address the instruction on `row` references, or None if it references none.
@@ -1062,7 +1064,7 @@ class DisassemblyListCtrl(wx.ListCtrl):
                         self.UpdatePatchHistory(newEntries, row)
                         self.parent.SendCommand(CMD_PATCH_BYTES, data)
                 else:
-                    wx.MessageBox(f"Instructions were not assembled: {codeHex}", "Info", wx.OK | wx.ICON_INFORMATION)
+                    ui.message(f"Instructions were not assembled: {codeHex}", "Info", wx.OK | wx.ICON_INFORMATION)
             else:
                 dlg.Destroy()
 
@@ -1225,7 +1227,7 @@ class RegsTextCtrl(wx.TextCtrl):
         try:
             val = int(valueStr, 0)
         except ValueError:
-            wx.MessageBox(f"'{valueStr}' is not a valid number.", "Error", wx.ICON_ERROR)
+            ui.message(f"'{valueStr}' is not a valid number.", "Error", wx.ICON_ERROR)
             return
 
         payload = f"{reg}|{val:#X}"
@@ -1671,10 +1673,10 @@ class MemDumpListCtrl(wx.ListCtrl):
                     f.write(":00000001FF\n")
 
                 else:
-                    wx.MessageBox("Unknown format selected.", "Error", wx.ICON_ERROR)
+                    ui.message("Unknown format selected.", "Error", wx.ICON_ERROR)
 
         except Exception as e:
-            wx.MessageBox(f"Failed to save file:\n{e}", "Error", wx.ICON_ERROR)
+            ui.message(f"Failed to save file:\n{e}", "Error", wx.ICON_ERROR)
 
 
 class ThreadListCtrl(wx.ListCtrl):
@@ -1703,6 +1705,8 @@ class ThreadListCtrl(wx.ListCtrl):
                 font = self.GetFont()
                 boldFont = wx.Font(font.GetPointSize(), font.GetFamily(), font.GetStyle(), wx.FONTWEIGHT_BOLD)
                 self.SetItemFont(row, boldFont)
+
+        band_rows(self)
 
     def OnContextMenu(self, event):
         pos = event.GetPosition()
@@ -1831,6 +1835,8 @@ class ModulesListCtrl(wx.ListCtrl):
             self.SetItem(row, 2, name)
             self.SetItem(row, 3, path)
 
+        band_rows(self)
+
     def OnContextMenu(self, event):
         pos = event.GetPosition()
         pos = self.ScreenToClient(pos)
@@ -1853,7 +1859,7 @@ class ModulesListCtrl(wx.ListCtrl):
                 matches.append((sym, addr))
 
         if not matches:
-            wx.MessageBox(f"No exports for module {modName}", "Info", wx.OK | wx.ICON_INFORMATION)
+            ui.message(f"No exports for module {modName}", "Info", wx.OK | wx.ICON_INFORMATION)
             return
 
         self.dlg = ExportsDialog(self, modName, matches)
@@ -1958,7 +1964,7 @@ class MemoryListCtrl(wx.ListCtrl):
             self.parent.SendCommand(CMD_MEM_DUMP, f"{addr:#x}", tag=self.parent.NextTag(TAG_DUMP))
 
 
-class ExportsDialog(wx.Dialog):
+class ExportsDialog(ui.Dialog):
     def __init__(self, parent, mod_name, exports):
         super().__init__(
             parent, title=f"Exports for {mod_name}", size=wx.Size(500, 600), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
@@ -1972,6 +1978,8 @@ class ExportsDialog(wx.Dialog):
         for i, (symName, addr) in enumerate(self.exports):
             row = self.listCtrl.InsertItem(i, f"{int(addr):#x}")
             self.listCtrl.SetItem(row, 1, symName)
+
+        band_rows(self.listCtrl)
 
         self.listCtrl.Bind(wx.EVT_KEY_DOWN, self.OnKeyDown)
         self.listCtrl.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
@@ -1988,7 +1996,7 @@ class ExportsDialog(wx.Dialog):
 
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(self.listCtrl, 1, wx.EXPAND | wx.ALL, 10)
-        btn = wx.Button(self, wx.ID_OK, "Close")
+        btn = ui.Button(self, wx.ID_OK, "Close", variant=ui.PRIMARY)
         sizer.Add(btn, 0, wx.ALIGN_CENTER | wx.ALL, 10)
         self.SetSizer(sizer)
         self.Layout()
@@ -2027,7 +2035,7 @@ class ExportsDialog(wx.Dialog):
         dlg.Destroy()
 
 
-class PrototypeDialog(wx.Dialog):
+class PrototypeDialog(ui.Dialog):
     """Paste a function declaration, in the form the documentation gives it.
 
     Deliberately free-text rather than a field per parameter: a declaration can be copied
@@ -2060,7 +2068,7 @@ class PrototypeDialog(wx.Dialog):
             wx.ALL,
             10,
         )
-        outer.Add(self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL), 0, wx.EXPAND | wx.ALL, 10)
+        outer.Add(ui.dialog_buttons(self), 0, wx.EXPAND | wx.ALL, 10)
         self.SetSizer(outer)
         apply_theme(self)
         self.textCtrl.SetFocus()
@@ -2069,7 +2077,7 @@ class PrototypeDialog(wx.Dialog):
         return self.textCtrl.GetValue()
 
 
-class BreakpointDialog(wx.Dialog):
+class BreakpointDialog(ui.Dialog):
     """Address, type, size and slot for a hardware breakpoint.
 
     Data watches are what debug registers are actually good at - break when a buffer is
@@ -2084,28 +2092,30 @@ class BreakpointDialog(wx.Dialog):
         grid.AddGrowableCol(1, 1)
 
         grid.Add(wx.StaticText(self, label="Address:"), flag=wx.ALIGN_CENTER_VERTICAL)
-        self.addressCtrl = wx.TextCtrl(self, value=address)
-        grid.Add(self.addressCtrl, flag=wx.EXPAND)
+        addressField = ui.Field(self, value=address)
+        # GetValues() reads the TextCtrl, so keep addressCtrl pointing at it.
+        self.addressCtrl = addressField.ctrl
+        grid.Add(addressField, flag=wx.EXPAND)
 
         grid.Add(wx.StaticText(self, label="Type:"), flag=wx.ALIGN_CENTER_VERTICAL)
-        self.typeCtrl = wx.Choice(self, choices=[BP_TYPE_LABELS[t] for t in self.types])
+        self.typeCtrl = ui.Picker(self, choices=[BP_TYPE_LABELS[t] for t in self.types])
         self.typeCtrl.SetSelection(0)
         self.typeCtrl.Bind(wx.EVT_CHOICE, self.OnTypeChanged)
         grid.Add(self.typeCtrl, flag=wx.EXPAND)
 
         grid.Add(wx.StaticText(self, label="Size:"), flag=wx.ALIGN_CENTER_VERTICAL)
-        self.sizeCtrl = wx.Choice(self, choices=[str(s) for s in BP_SIZES])
+        self.sizeCtrl = ui.Picker(self, choices=[str(s) for s in BP_SIZES])
         self.sizeCtrl.SetSelection(0)
         grid.Add(self.sizeCtrl, flag=wx.EXPAND)
 
         grid.Add(wx.StaticText(self, label="Slot:"), flag=wx.ALIGN_CENTER_VERTICAL)
-        self.slotCtrl = wx.Choice(self, choices=["next", "0", "1", "2", "3"])
+        self.slotCtrl = ui.Picker(self, choices=["next", "0", "1", "2", "3"])
         self.slotCtrl.SetSelection(0)
         grid.Add(self.slotCtrl, flag=wx.EXPAND)
 
         outer = wx.BoxSizer(wx.VERTICAL)
         outer.Add(grid, 1, wx.EXPAND | wx.ALL, 10)
-        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        buttons = ui.dialog_buttons(self)
         outer.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         self.SetSizer(outer)
         self.OnTypeChanged(None)
@@ -2143,7 +2153,7 @@ class BreakpointDialog(wx.Dialog):
         """Return (slot, type, size, address) or None, reporting why if it is invalid."""
         text = self.addressCtrl.GetValue().strip()
         if not IsValidHexAddress(text):
-            wx.MessageBox(f"'{text}' is not a valid address.", "Set Breakpoint", wx.OK | wx.ICON_ERROR)
+            ui.message(f"'{text}' is not a valid address.", "Set Breakpoint", wx.OK | wx.ICON_ERROR)
             return None
 
         address = int(text, 16)
@@ -2152,7 +2162,7 @@ class BreakpointDialog(wx.Dialog):
         # x86 requires a data breakpoint's address to be aligned to its length; a misaligned
         # one silently watches the wrong bytes rather than failing.
         if bpType != BP_EXEC and address % size:
-            wx.MessageBox(
+            ui.message(
                 f"A {size}-byte watch needs a {size}-byte aligned address.\n"
                 f"{address:#x} is not aligned; try {address - (address % size):#x}.",
                 "Set Breakpoint",
